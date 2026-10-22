@@ -1,0 +1,37 @@
+# spacehub server behind a Caddy TLS front.
+#
+#   docker compose up -d --build                           plain HTTP on :80
+#   SPACEHUB_DOMAIN=hub.example.com docker compose up -d   automatic HTTPS
+#
+# Clients: spacehub auth login --server wss://hub.example.com --username <you>
+# Admin (SQL, logs) stays inside the container:
+#   docker compose exec spacehub spacetime --root-dir /data logs --server http://127.0.0.1:3001 spacehub
+services:
+  spacehub:
+    build:
+      context: .
+      target: server
+    image: spacehub-server
+    environment:
+      SPACEHUB_DB: ${SPACEHUB_DB:-spacehub}
+    volumes:
+      - spacehub-data:/data
+    restart: unless-stopped
+
+  proxy:
+    image: caddy:2.8.4
+    environment:
+      SPACEHUB_DOMAIN: ${SPACEHUB_DOMAIN:-:80}
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    ports:
+      - "${SPACEHUB_HTTP_PORT:-80}:80"
+      - "${SPACEHUB_HTTPS_PORT:-443}:443"
+    depends_on:
+      - spacehub
+    restart: unless-stopped
+
+volumes:
+  spacehub-data:
+  caddy-data:

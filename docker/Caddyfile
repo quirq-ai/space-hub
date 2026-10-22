@@ -1,0 +1,9 @@
+# TLS front for docker compose. The server image already filters paths, so
+# this only terminates HTTPS and forwards.
+#
+# SPACEHUB_DOMAIN=hub.example.com gives automatic HTTPS (clients then use
+# wss://hub.example.com); the default ":80" serves plain HTTP.
+
+{$SPACEHUB_DOMAIN::80} {
+	reverse_proxy spacehub:3000
+}

@@ -1,0 +1,26 @@
+# Built into the server image. SpacetimeDB listens only inside the container;
+# this is the one public port. Clients need two endpoints: one swaps an
+# identity token for a short-lived websocket token, the other is the database
+# websocket. Publishing modules, SQL, logs and deletes stay unreachable.
+{
+	admin off
+	auto_https off
+	persist_config off
+}
+
+:{$PORT:3000} {
+	@client path /v1/identity/websocket-token /v1/database/{$SPACEHUB_DB:spacehub}/subscribe
+	handle @client {
+		reverse_proxy 127.0.0.1:{$SPACETIME_INTERNAL_PORT:3001}
+	}
+	handle /healthz {
+		rewrite * /v1/ping
+		reverse_proxy 127.0.0.1:{$SPACETIME_INTERNAL_PORT:3001}
+	}
+	handle / {
+		respond "spacehub server. Connect with: spacehub auth login --server <this URL as ws:// or wss://> --username <you>" 200
+	}
+	handle {
+		respond "not found" 404
+	}
+}

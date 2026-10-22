@@ -1,0 +1,16 @@
+{
+  "name": "spacehub-module",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SpacetimeDB module for spacehub: owners, spaces, refs and git objects",
+  "scripts": {
+    "build": "spacetime build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "spacetimedb": "2.12.*"
+  },
+  "devDependencies": {
+    "typescript": "~5.6.2"
+  }
+}
