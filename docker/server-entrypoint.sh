@@ -10,6 +10,23 @@ DB="${SPACEHUB_DB:-spacehub}"
 INTERNAL="127.0.0.1:${SPACETIME_INTERNAL_PORT:-3001}"
 export PORT="${PORT:-3000}"
 
+# Platform volumes usually arrive owned by root. Started as root, take the
+# data directory for the spacetime user, then drop root for everything else.
+if [ "$(id -u)" = 0 ]; then
+  mkdir -p "$ROOT"
+  if [ "$(stat -c %u "$ROOT")" != "$(id -u spacetime)" ]; then
+    echo "spacehub: giving $ROOT to the spacetime user"
+    chown -R spacetime:spacetime "$ROOT"
+  fi
+  export HOME=/home/spacetime
+  exec setpriv --reuid=spacetime --regid=spacetime --init-groups /usr/local/bin/spacehub-server "$@"
+fi
+if [ ! -w "$ROOT" ]; then
+  echo "spacehub: $ROOT is not writable by uid $(id -u). Mount writable storage there," >&2
+  echo "spacehub: give the pod an fsGroup of 1000, or let the container start as root so it can fix ownership." >&2
+  exit 1
+fi
+
 spacetime --root-dir "$ROOT" start --listen-addr "$INTERNAL" --non-interactive &
 server=$!
 proxy=""

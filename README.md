@@ -47,6 +47,11 @@ that would delete data makes startup fail rather than wipe spaces.
 | `SPACEHUB_DB` | `spacehub` | Database name clients pass with `--db` |
 | `/data` volume | | Databases, the server's signing keys, and the identity that owns the module. **Mount persistent storage here and back it up.** Without it, a restart forgets all spaces and invalidates every client token |
 
+The container starts as root only to take ownership of `/data`, because
+platform volumes usually mount root-owned. It then runs everything as uid
+1000. If your platform forces a non-root user, give the pod an `fsGroup` of
+1000 so `/data` is writable.
+
 Admin tasks run inside the container. For example, to follow the logs:
 `docker exec spacehub spacetime --root-dir /data logs --server http://127.0.0.1:3001 spacehub -f`.
 

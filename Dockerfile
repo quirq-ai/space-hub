@@ -69,7 +69,8 @@ RUN ln -s /opt/spacetime/spacetimedb-cli /usr/local/bin/spacetime
 COPY --from=module /src/module/dist/bundle.js /opt/spacehub/module.js
 COPY docker/server.Caddyfile /opt/spacehub/Caddyfile
 COPY --chmod=755 docker/server-entrypoint.sh /usr/local/bin/spacehub-server
-USER spacetime
+# The entrypoint starts as root only to take ownership of /data (platform
+# volumes usually mount root-owned), then runs everything as `spacetime`.
 # /data holds the databases, the server's signing keys and the identity that
 # owns the spacehub database. Mount persistent storage there, or every
 # restart forgets all spaces and logs every client out.
