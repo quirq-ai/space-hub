@@ -1,6 +1,8 @@
 #!/bin/sh
-# Start SpacetimeDB on an internal port, publish (or update) the spacehub
-# module, then open the public port through the allowlist proxy.
+# Start SpacetimeDB on an internal port and the allowlist proxy on the
+# public port, then publish (or update) the spacehub module. The proxy comes
+# up first so platform probes see an open port at once; /healthz only turns
+# 200 once SpacetimeDB answers.
 # Publishing never passes --delete-data: a breaking schema change makes
 # startup fail instead of wiping spaces.
 set -eu
@@ -29,9 +31,10 @@ fi
 
 spacetime --root-dir "$ROOT" start --listen-addr "$INTERNAL" --non-interactive &
 server=$!
-proxy=""
+caddy run --config /opt/spacehub/Caddyfile --adapter caddyfile &
+proxy=$!
 stop() {
-  kill -TERM "$server" $proxy 2>/dev/null || true
+  kill -TERM "$server" "$proxy" 2>/dev/null || true
   wait
 }
 trap 'stop; exit 0' TERM INT
@@ -52,8 +55,6 @@ done
 
 spacetime --root-dir "$ROOT" publish --server "http://$INTERNAL" "$DB" --js-path /opt/spacehub/module.js --yes
 
-caddy run --config /opt/spacehub/Caddyfile --adapter caddyfile &
-proxy=$!
 echo "spacehub: serving database \"$DB\" on port $PORT"
 
 while kill -0 "$server" 2>/dev/null && kill -0 "$proxy" 2>/dev/null; do
