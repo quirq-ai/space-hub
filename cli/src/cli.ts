@@ -26,6 +26,7 @@ AUTH
 SPACES (alias: repo)
   space create <name>             Create <you>/<name>
                                     [-d <text>] [--source <dir> [--remote <name>] [--push]] [--clone]
+                                    (--source adds the remote as origin, or "spacehub" if origin exists)
   space list [<owner>]            List spaces
   space view [<space>]            Default branch, size and refs
   space clone <space> [<dir>]     git clone a space (extra flags after --)
@@ -284,12 +285,21 @@ function authLogout(args: string[]) {
 async function spaceCreate(args: string[]) {
   const description = opt(args, '-d', '--description') ?? '';
   const source = opt(args, '--source', '-s');
-  const remote = opt(args, '--remote', '-r') ?? 'origin';
+  let remote = opt(args, '--remote', '-r');
   const pushAfter = bool(args, '--push');
   const cloneAfter = bool(args, '--clone', '-c');
   const name = (args[0] ?? die('usage: spacehub space create <name>')).replace(/\.git$/, '');
   if (name.includes('/')) die('create takes a bare name; spaces are created under your username');
   if (pushAfter && !source) die('--push needs --source <dir>');
+  if (source) {
+    // Settle the remote name before creating anything: keep origin for
+    // repos that already push elsewhere (GitHub) and use "spacehub" instead.
+    const existing = (await git(['-C', source, 'remote']).catch(() => die(`${source} is not a git repository`)))
+      .split('\n')
+      .filter(Boolean);
+    remote ??= existing.includes('origin') ? 'spacehub' : 'origin';
+    if (existing.includes(remote)) die(`${source} already has a remote named "${remote}"; choose another with --remote <name>`);
+  }
   const owner = await username();
   const { conn } = await open();
   await conn.reducers.createSpace({ name, description });
@@ -297,9 +307,9 @@ async function spaceCreate(args: string[]) {
   const url = `spacehub://${fullName}`;
   out(`Created space ${fullName}`);
   if (source) {
-    await runOrDie('git', ['-C', source, 'remote', 'add', remote, url]);
+    await runOrDie('git', ['-C', source, 'remote', 'add', remote!, url]);
     out(`Added remote ${remote} -> ${url}`);
-    if (pushAfter) await runOrDie('git', ['-C', source, 'push', '-u', remote, 'HEAD']);
+    if (pushAfter) await runOrDie('git', ['-C', source, 'push', '-u', remote!, 'HEAD']);
   } else if (cloneAfter) {
     await runOrDie('git', ['clone', url]);
   } else {

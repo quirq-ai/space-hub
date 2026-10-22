@@ -223,6 +223,13 @@ echo "create from an existing repo, edit"
 P="$WORK/p"; git init -q -b main "$P"; (cd "$P" && echo p >p.txt && git add . && commit -m p)
 check "space create --source --push" as alice spacehub space create proj --source "$P" --push
 same "pushed HEAD matches" "$(as alice git -C "$P" ls-remote origin refs/heads/main | cut -f1)" "$(git -C "$P" rev-parse HEAD)"
+Q="$WORK/q"; git init -q -b main "$Q"; (cd "$Q" && echo q >q.txt && git add . && commit -m q && git remote add origin https://example.com/q.git)
+check "create --source keeps an existing origin and adds \"spacehub\"" as alice spacehub space create withorigin --source "$Q" --push
+same "existing origin untouched" "$(git -C "$Q" remote get-url origin)" "https://example.com/q.git"
+same "spacehub remote holds HEAD" "$(as alice git -C "$Q" ls-remote spacehub refs/heads/main | cut -f1)" "$(git -C "$Q" rev-parse HEAD)"
+expect_fail "a taken --remote name is refused before creating" "already has a remote" as alice spacehub space create other --source "$Q" --remote origin
+expect_fail "so no space was created" "does not exist" as alice git ls-remote "spacehub://$ALICE/other"
+check "delete that space" as alice spacehub space delete withorigin --yes
 check "space edit" as alice spacehub space edit proj --description "edited" --default-branch main
 check "edit shows in view" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub space view $ALICE/proj | grep -q '^edited$'"
 
