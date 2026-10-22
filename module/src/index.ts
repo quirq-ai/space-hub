@@ -10,11 +10,11 @@
 // caller must own the space, every object must hash to its id, and a ref only
 // moves if the caller saw its current value (compare-and-swap) and, unless
 // forced, the move is a fast-forward.
-import { schema, table, t, SenderError, type InferSchema, type ReducerCtx } from 'spacetimedb/server';
+import { schema, table, t, Router, SenderError, SyncResponse, type InferSchema, type ReducerCtx } from 'spacetimedb/server';
 import { Sha1, objectHeader } from './sha1';
+import { CHUNK_SIZE, commitParents, objectKey, readObject, refKey } from './store';
+import { renderUi } from './ui';
 
-// Objects up to this size are stored inline; larger ones go to object_chunk.
-const CHUNK_SIZE = 1024 * 1024;
 const MAX_OBJECT_SIZE = 100 * 1024 * 1024;
 // Fetch windows are cut on `pos`, a running total of row weights per space.
 const ROW_OVERHEAD = 64;
@@ -105,18 +105,12 @@ const ObjectIn = t.object('ObjectIn', {
 });
 
 const USERNAME = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
+// First path segments the web UI and the server's proxy already use.
+const RESERVED_USERNAMES = new Set(['v1', 'healthz', 'api', 'static', 'assets', 'login', 'settings']);
 const SPACE_NAME = /^[A-Za-z0-9._-]{1,100}$/;
 const OID = /^[0-9a-f]{40}$/;
 const KINDS = new Set(['commit', 'tree', 'blob', 'tag']);
 const ZERO_OID = '';
-
-function objectKey(spaceId: bigint, oid: string) {
-  return `${spaceId}:${oid}`;
-}
-
-function refKey(spaceId: bigint, name: string) {
-  return `${spaceId}:${name}`;
-}
 
 function requireUser(ctx: Ctx) {
   const me = ctx.db.user.identity.find(ctx.sender);
@@ -146,39 +140,13 @@ function validRefName(name: string) {
   return !name.split('/').some(part => part === '' || part.startsWith('.'));
 }
 
-function readObject(ctx: Ctx, spaceId: bigint, oid: string): { kind: string; data: Uint8Array } | null {
-  const row = ctx.db.gitObject.key.find(objectKey(spaceId, oid));
-  if (!row) return null;
-  if (row.chunks === 0) return { kind: row.kind, data: row.data };
-  const data = new Uint8Array(Number(row.size));
-  for (const chunk of ctx.db.objectChunk.bySpaceOid.filter([spaceId, oid])) {
-    if (chunk.idx < row.chunks) data.set(chunk.data, chunk.idx * CHUNK_SIZE);
-  }
-  return { kind: row.kind, data };
-}
-
-// "parent <oid>" lines of a commit header, which ends at the first blank line.
-function commitParents(data: Uint8Array): string[] {
-  const parents: string[] = [];
-  let i = 0;
-  while (i < data.length && data[i] !== 0x0a) {
-    let end = i;
-    while (end < data.length && data[end] !== 0x0a) end++;
-    if (end - i === 47 && String.fromCharCode(...data.subarray(i, i + 7)) === 'parent ') {
-      parents.push(String.fromCharCode(...data.subarray(i + 7, end)));
-    }
-    i = end + 1;
-  }
-  return parents;
-}
-
 function isAncestor(ctx: Ctx, spaceId: bigint, ancestor: string, tip: string): boolean {
   const seen = new Set<string>([tip]);
   const queue = [tip];
   while (queue.length > 0) {
     const oid = queue.shift()!;
     if (oid === ancestor) return true;
-    const obj = readObject(ctx, spaceId, oid);
+    const obj = readObject(ctx.db, spaceId, oid);
     if (!obj || obj.kind !== 'commit') continue;
     for (const parent of commitParents(obj.data)) {
       if (!seen.has(parent)) {
@@ -210,6 +178,7 @@ export const registerUser = spacetimedb.reducer({ username: t.string() }, (ctx, 
   if (!USERNAME.test(username)) {
     throw new SenderError('username must be 1-39 lowercase letters, digits or inner hyphens');
   }
+  if (RESERVED_USERNAMES.has(username)) throw new SenderError(`username "${username}" is reserved`);
   const existing = ctx.db.user.identity.find(ctx.sender);
   if (existing) throw new SenderError(`this identity is already registered as "${existing.username}"`);
   if (ctx.db.user.username.find(username)) throw new SenderError(`username "${username}" is taken`);
@@ -374,3 +343,13 @@ export const updateRef = spacetimedb.reducer(
     ctx.db.space.id.update({ ...sp, defaultBranch, pushedAt: ctx.timestamp });
   }
 );
+
+// The web UI. Behind the server image's proxy every page lands here with
+// the original request URI in X-Spacehub-Uri; see ui.ts for the pages.
+export const ui = spacetimedb.httpHandler((ctx, req) => {
+  const now = Number(ctx.timestamp.microsSinceUnixEpoch / 1_000_000n);
+  const res = ctx.withTx(tx => renderUi(tx.db, req.uri, req.headers.get('x-spacehub-uri'), now));
+  return new SyncResponse(res.body, { status: res.status, headers: res.headers });
+});
+
+export const routes = spacetimedb.httpRouter(new Router().get('/ui', ui));

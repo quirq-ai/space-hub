@@ -1,0 +1,43 @@
+// Reading git data back out of the tables; shared by the push rules and the
+// web UI.
+import type { InferSchema, ReducerCtx } from 'spacetimedb/server';
+import type spacetimedb from './index';
+
+export type Db = ReducerCtx<InferSchema<typeof spacetimedb>>['db'];
+
+// Objects up to this size are stored inline; larger ones go to object_chunk.
+export const CHUNK_SIZE = 1024 * 1024;
+
+export function objectKey(spaceId: bigint, oid: string) {
+  return `${spaceId}:${oid}`;
+}
+
+export function refKey(spaceId: bigint, name: string) {
+  return `${spaceId}:${name}`;
+}
+
+export function readObject(db: Db, spaceId: bigint, oid: string): { kind: string; data: Uint8Array } | null {
+  const row = db.gitObject.key.find(objectKey(spaceId, oid));
+  if (!row) return null;
+  if (row.chunks === 0) return { kind: row.kind, data: row.data };
+  const data = new Uint8Array(Number(row.size));
+  for (const chunk of db.objectChunk.bySpaceOid.filter([spaceId, oid])) {
+    if (chunk.idx < row.chunks) data.set(chunk.data, chunk.idx * CHUNK_SIZE);
+  }
+  return { kind: row.kind, data };
+}
+
+// "parent <oid>" lines of a commit header, which ends at the first blank line.
+export function commitParents(data: Uint8Array): string[] {
+  const parents: string[] = [];
+  let i = 0;
+  while (i < data.length && data[i] !== 0x0a) {
+    let end = i;
+    while (end < data.length && data[end] !== 0x0a) end++;
+    if (end - i === 47 && String.fromCharCode(...data.subarray(i, i + 7)) === 'parent ') {
+      parents.push(String.fromCharCode(...data.subarray(i + 7, end)));
+    }
+    i = end + 1;
+  }
+  return parents;
+}

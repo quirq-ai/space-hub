@@ -35,7 +35,7 @@ public port (`$PORT`, default 3000) is a built-in Caddy allowlist. It serves:
 - the two client endpoints: the identity-token exchange and the database
   websocket;
 - `/healthz`, for health checks;
-- `/`, a short info page.
+- everything else: the web UI (see below).
 
 Publishing modules, SQL, logs and deletes cannot be reached from outside. On
 every start, the module is published or updated in place. A schema change
@@ -76,6 +76,29 @@ Clients then log in with `--server wss://<live url host>`.
 
 **Maincloud.** You can skip Docker and run on SpacetimeDB's hosted cloud
 instead: `scripts/setup.sh maincloud`. Pick a unique name with `SPACEHUB_DB`.
+
+## Web UI
+
+The server's URL is also a small, read-only, GitHub-style site. The module
+renders it straight from the tables, as plain HTML with no JavaScript.
+
+| Path | Shows |
+| --- | --- |
+| `/` | All spaces, most recently pushed first, plus people and how to connect |
+| `/<owner>` | An owner's spaces |
+| `/<owner>/<space>` | Files at the default branch, README, clone commands, branch and tag counts |
+| `/<owner>/<space>/tree/<ref>/<path>` | A folder at a branch, tag or commit |
+| `/<owner>/<space>/blob/<ref>/<path>` | A file with line numbers |
+| `/<owner>/<space>/raw/<ref>/<path>` | The file's bytes |
+| `/<owner>/<space>/commits/<ref>` | History (latest 100) |
+| `/<owner>/<space>/commit/<oid>` | One commit and the files it changed |
+| `/<owner>/<space>/refs` | Branches and tags |
+
+Raw files are served as `text/plain` or `application/octet-stream`, inside
+a sandbox, so a pushed HTML file can't run on the server's origin. On a bare
+`spacetime start`, open
+`http://127.0.0.1:3000/v1/database/spacehub/route/ui`, where links use
+`?p=<path>`.
 
 ## Install the client
 
@@ -128,7 +151,7 @@ spacetime start                           # terminal 1
 scripts/setup.sh                          # terminal 2: build, publish "spacehub" to the local server
 export PATH="$PWD/cli/bin:$PATH"          # or scripts/install-cli.sh
 spacehub auth login --username <you>      # defaults to ws://127.0.0.1:3000
-scripts/e2e.sh                            # 51 checks against a throwaway in-memory server
+scripts/e2e.sh                            # 63 checks against a throwaway in-memory server
 SPACEHUB_E2E_SERVER=ws://127.0.0.1:3000 scripts/e2e.sh   # against a running server, e.g. the Docker one
 ```
 
@@ -138,7 +161,9 @@ After changing the module, regenerate the client bindings with
 ## Layout
 
 ```
-module/src/index.ts      tables + reducers; runs inside SpacetimeDB
+module/src/index.ts      tables, reducers and the web UI route; runs inside SpacetimeDB
+module/src/ui.ts         the web UI pages
+module/src/store.ts      reads objects back out of the tables
 module/src/sha1.ts       lets the database verify every object id
 cli/src/cli.ts           spacehub (auth, space)
 cli/src/remote.ts        git-remote-spacehub

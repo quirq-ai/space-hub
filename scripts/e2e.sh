@@ -66,6 +66,25 @@ else
   ok "module published"
 fi
 
+# The web UI: through the server image's proxy it lives at the root; on a
+# bare SpacetimeDB it is the module's route, with the page path in ?p=.
+ui() { # ui <path> -> URL
+  if [[ -n "${SPACEHUB_E2E_SERVER:-}" ]]; then
+    local base="${SPACEHUB_SERVER/#ws/http}"
+    printf '%s/%s' "$base" "$1"
+  else
+    printf 'http://127.0.0.1:%s/v1/database/%s/route/ui?p=%s' "$PORT" "$SPACEHUB_DB" "$(python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1]))' "$1")"
+  fi
+}
+page_has() { # page_has <label> <path> <text>
+  local body
+  body="$(curl -sf "$(ui "$2")")" || fail "$1 (HTTP error)"
+  grep -qF -- "$3" <<<"$body" && ok "$1" || fail "$1 (no \"$3\")"
+}
+status_is() { # status_is <label> <path> <code>
+  same "$1" "$(curl -s -o /dev/null -w '%{http_code}' "$(ui "$2")")" "$3"
+}
+
 # Unique names so the suite can run repeatedly against a long-lived server.
 RUN="$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')"
 ALICE="alice$RUN"; BOB="bob$RUN"; NOTES="$ALICE/notes"
@@ -74,6 +93,7 @@ echo "auth"
 check "auth login creates the username" as alice spacehub auth login --username "$ALICE"
 check "a second user" as bob spacehub auth login --username "$BOB"
 expect_fail "usernames are unique" "taken" as carol spacehub auth login --username "$ALICE"
+expect_fail "reserved usernames are refused" "reserved" as carol spacehub auth login --username v1
 check "auth status shows the account" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub auth status | grep -q 'account   $ALICE'"
 check "same identity on another machine (token + --with-token)" bash -c \
   "SPACEHUB_HOME='$WORK/home-alice' spacehub auth token | SPACEHUB_HOME='$WORK/home-alice2' spacehub auth login --with-token | grep -q 'as $ALICE'"
@@ -185,6 +205,19 @@ rm -rf "$C/.git/spacehub"
 echo again >>"$A/tiny.txt"; git -C "$A" add tiny.txt; (cd "$A" && commit -m again && as alice git push -q origin main 2>/dev/null)
 as alice git fetch -q origin 2>/dev/null
 same "fetch without a fetch record still works" "$(git rev-parse origin/main)" "$(git -C "$A" rev-parse HEAD)"
+
+echo "web UI"
+page_has "home lists the space" "" "$NOTES"
+page_has "owner page lists the space" "$ALICE" "notes"
+page_has "space page shows the file tree" "$NOTES" "many"
+page_has "folder page" "$NOTES/tree/main/d/e" "b.txt"
+page_has "file page shows content" "$NOTES/blob/main/a.txt" "hello"
+page_has "branch with a tag ref" "$NOTES/tree/v2" "a.txt"
+page_has "commit log" "$NOTES/commits/main" "big file and many files"
+page_has "commit page lists changed files" "$NOTES/commit/$(git -C "$A" rev-parse HEAD)" "tiny.txt"
+page_has "branches and tags" "$NOTES/refs" "v2"
+same "raw binary is served as bytes" "$(curl -s -o /dev/null -w '%{content_type}' "$(ui "$NOTES/raw/main/bin.dat")")" "application/octet-stream"
+status_is "unknown space is a 404" "$ALICE/nope" 404
 
 echo "create from an existing repo, edit"
 P="$WORK/p"; git init -q -b main "$P"; (cd "$P" && echo p >p.txt && git add . && commit -m p)
