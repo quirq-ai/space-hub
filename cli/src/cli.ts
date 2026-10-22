@@ -26,7 +26,7 @@ AUTH
 SPACES (alias: repo)
   space create <name>             Create <you>/<name>
                                     [-d <text>] [--source <dir> [--remote <name>] [--push]] [--clone]
-                                    (--source adds the remote as origin, or "spacehub" if origin exists)
+                                    (git remotes for spacehub are always named "spacehub")
   space list [<owner>]            List spaces
   space view [<space>]            Default branch, size and refs
   space clone <space> [<dir>]     git clone a space (extra flags after --)
@@ -40,9 +40,10 @@ SPACES (alias: repo)
   defaults to the repository's spacehub remote.
 
 GIT
-  git clone spacehub://<owner>/<name>
-  git remote add origin spacehub://<owner>/<name>
-  git push | git fetch | git pull
+  spacehub's remote is always named "spacehub", so origin stays free for GitHub:
+  git clone -o spacehub spacehub://<owner>/<name>
+  git remote add spacehub spacehub://<owner>/<name>
+  git push spacehub | git fetch spacehub | git pull spacehub main
 
 ENVIRONMENT
   SPACEHUB_SERVER, SPACEHUB_DB, SPACEHUB_TOKEN, SPACEHUB_HOME override the saved settings.`;
@@ -131,7 +132,7 @@ function parseSpaceUrl(url: string): string | null {
 }
 
 // The spacehub remote of the repository in `cwd`: the one named `prefer`,
-// else origin, else the first remote with a spacehub:// URL.
+// else "spacehub", else origin (older clones), else any spacehub:// remote.
 async function spaceRemote(prefer?: string, cwd?: string): Promise<{ remote: string; space: string } | null> {
   let names: string[];
   try {
@@ -140,7 +141,7 @@ async function spaceRemote(prefer?: string, cwd?: string): Promise<{ remote: str
     return null;
   }
   if (prefer && !names.includes(prefer)) die(`no remote named "${prefer}"`);
-  const order = [...new Set([prefer, 'origin', ...names].filter((n): n is string => !!n && names.includes(n)))];
+  const order = [...new Set([prefer, 'spacehub', 'origin', ...names].filter((n): n is string => !!n && names.includes(n)))];
   for (const remote of order) {
     const url = (await git(['-C', cwd ?? '.', 'remote', 'get-url', remote]).catch(() => '')).trim();
     const space = parseSpaceUrl(url);
@@ -292,12 +293,12 @@ async function spaceCreate(args: string[]) {
   if (name.includes('/')) die('create takes a bare name; spaces are created under your username');
   if (pushAfter && !source) die('--push needs --source <dir>');
   if (source) {
-    // Settle the remote name before creating anything: keep origin for
-    // repos that already push elsewhere (GitHub) and use "spacehub" instead.
+    // Check the remote name before creating anything. It defaults to
+    // "spacehub" so origin is never touched (it is usually GitHub).
     const existing = (await git(['-C', source, 'remote']).catch(() => die(`${source} is not a git repository`)))
       .split('\n')
       .filter(Boolean);
-    remote ??= existing.includes('origin') ? 'spacehub' : 'origin';
+    remote ??= 'spacehub';
     if (existing.includes(remote)) die(`${source} already has a remote named "${remote}"; choose another with --remote <name>`);
   }
   const owner = await username();
@@ -311,9 +312,9 @@ async function spaceCreate(args: string[]) {
     out(`Added remote ${remote} -> ${url}`);
     if (pushAfter) await runOrDie('git', ['-C', source, 'push', '-u', remote!, 'HEAD']);
   } else if (cloneAfter) {
-    await runOrDie('git', ['clone', url]);
+    await runOrDie('git', ['clone', '--origin', 'spacehub', url]);
   } else {
-    out(`\n  git clone ${url}\n  # or, in an existing repository:\n  git remote add origin ${url} && git push -u origin HEAD`);
+    out(`\n  spacehub space clone ${fullName}\n  # or, in an existing repository:\n  git remote add spacehub ${url} && git push -u spacehub HEAD`);
   }
 }
 
@@ -355,7 +356,8 @@ async function spaceClone(args: string[]) {
   const extra = dash >= 0 ? args.splice(dash).slice(1) : [];
   const fullName = await resolveSpace(args[0] ?? die('usage: spacehub space clone <space> [<dir>]'));
   const dir = args[1];
-  await runOrDie('git', ['clone', ...extra, `spacehub://${fullName}`, ...(dir ? [dir] : [])]);
+  const named = extra.some(f => f === '-o' || f.startsWith('--origin'));
+  await runOrDie('git', ['clone', ...(named ? [] : ['--origin', 'spacehub']), ...extra, `spacehub://${fullName}`, ...(dir ? [dir] : [])]);
 }
 
 async function spaceEdit(args: string[]) {

@@ -379,7 +379,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}
 
   aside(sp: Space) {
     const refs = refsOf(this.db, sp);
-    return `<aside><h2>Clone</h2><code class="clone">git clone spacehub://${esc(sp.fullName)}</code>
+    return `<aside><h2>Clone</h2><code class="clone">git clone -o spacehub spacehub://${esc(sp.fullName)}</code>
 <code class="clone">spacehub space clone ${esc(sp.fullName)}</code>
 <h2>About</h2><dl><dt>Owner</dt><dd>${this.a(sp.owner, esc(sp.owner))}</dd><dt>Default</dt><dd>${esc(sp.defaultBranch)}</dd>
 <dt>Branches</dt><dd>${refs.filter(r => r.name.startsWith('refs/heads/')).length}</dd><dt>Tags</dt><dd>${refs.filter(r => r.name.startsWith('refs/tags/')).length}</dd>
@@ -406,7 +406,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}
     return this.page(
       sp.fullName,
       `${this.spaceHead(sp, 'code', sp.defaultBranch)}<div class="grid"><div class="box"><div class="empty">This space is empty. Push to it:<br><br>
-<code>git remote add origin spacehub://${esc(sp.fullName)}<br>git push -u origin ${esc(sp.defaultBranch)}</code></div></div>${this.aside(sp)}</div>`
+<code>git remote add spacehub spacehub://${esc(sp.fullName)}<br>git push -u spacehub ${esc(sp.defaultBranch)}</code></div></div>${this.aside(sp)}</div>`
     );
   }
 

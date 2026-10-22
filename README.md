@@ -16,7 +16,7 @@ sandboxes, agents) in sync.
 spacehub auth login --server wss://hub.example.com --username suraj
 spacehub space create notes --source . --push
 spacehub space clone suraj/notes
-git push / git pull                 # plain git from here on
+git push spacehub / git pull spacehub main   # plain git from here on
 spacehub space sync --watch         # follow every push live
 ```
 
@@ -133,8 +133,12 @@ docker run --rm -it -e SPACEHUB_SERVER=wss://hub.example.com \
 | `gh repo sync` | `spacehub space sync [--push] [--watch]` |
 | | `spacehub space watch [space] [--exec cmd]` streams ref changes live |
 
-`space create --source` adds the remote as `origin`, or as `spacehub` when
-the repo already has an `origin` (GitHub, say). `repo` is an alias for `space`. A space is `owner/name`, or just `name` for
+**The git remote is always named `spacehub`**, never `origin`, so a repo
+can push to GitHub (`origin`) and spacehub side by side without conflict.
+`space create --source` adds a `spacehub` remote, and `space clone` names
+the clone's remote `spacehub`. With plain git, use
+`git clone -o spacehub spacehub://owner/name` or
+`git remote add spacehub spacehub://owner/name`. `repo` is an alias for `space`. A space is `owner/name`, or just `name` for
 your own spaces. Inside a clone, commands default to the repository's
 spacehub remote.
 
@@ -152,7 +156,7 @@ spacetime start                           # terminal 1
 scripts/setup.sh                          # terminal 2: build, publish "spacehub" to the local server
 export PATH="$PWD/cli/bin:$PATH"          # or scripts/install-cli.sh
 spacehub auth login --username <you>      # defaults to ws://127.0.0.1:3000
-scripts/e2e.sh                            # 69 checks against a throwaway in-memory server
+scripts/e2e.sh                            # 70 checks against a throwaway in-memory server
 SPACEHUB_E2E_SERVER=ws://127.0.0.1:3000 scripts/e2e.sh   # against a running server, e.g. the Docker one
 ```
 
