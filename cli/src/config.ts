@@ -74,3 +74,12 @@ export function removeToken(server: string) {
   if (data.tokens) delete data.tokens[server];
   writeFile(data);
 }
+
+// A builder's grouping key from a display name or a GitHub profile URL.
+export function builderFrom(input: string): { handle: string; name: string; url: string } {
+  const gh = /^https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9-]{1,39})\/?$/.exec(input.trim());
+  if (gh) return { handle: gh[1].toLowerCase(), name: gh[1], url: `https://github.com/${gh[1]}` };
+  const name = input.trim();
+  const handle = name.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[-._]+|-+$/g, '').slice(0, 100);
+  return { handle, name, url: '' };
+}

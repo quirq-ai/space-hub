@@ -66,6 +66,14 @@ export const Space = __t.object("Space", {
 });
 export type Space = __Infer<typeof Space>;
 
+export const SpaceBuilder = __t.object("SpaceBuilder", {
+  spaceId: __t.u64(),
+  handle: __t.string(),
+  name: __t.string(),
+  url: __t.string(),
+});
+export type SpaceBuilder = __Infer<typeof SpaceBuilder>;
+
 export const SpaceImport = __t.object("SpaceImport", {
   spaceId: __t.u64(),
   source: __t.string(),

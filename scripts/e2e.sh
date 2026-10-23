@@ -232,6 +232,22 @@ page_has "file history" "$NOTES/commits/main/a.txt" "second"
 page_has "commit page shows line diffs" "$NOTES/commit/$(git -C "$A" rev-parse HEAD)" 'class="add"'
 page_has "empty file is browsable" "$NOTES/blob/main/empty.txt" "0 lines"
 
+echo "builders"
+view_has() { # view_has <label> <space> <text>
+  check "$1" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub space view '$2' | grep -qF -- '$3'"
+}
+view_has "the owner is the default builder" "$NOTES" "builder   $ALICE (owner)"
+check "set a builder" as alice spacehub space edit "$NOTES" --builder "Octo Team $RUN"
+page_has "space page credits the builder" "$NOTES" "Built by"
+page_has "builder page lists the space" "builders/octo-team-$RUN" "$NOTES"
+page_has "home lists builders" "" "octo-team-$RUN"
+page_has "builders page" "builders" "octo-team-$RUN"
+check "a GitHub profile as builder" as alice spacehub space edit "$NOTES" --builder https://github.com/octocat
+view_has "view shows the GitHub builder" "$NOTES" "builder   octocat (https://github.com/octocat)"
+check "reset the builder" as alice spacehub space edit "$NOTES" --builder ""
+view_has "back to the owner" "$NOTES" "builder   $ALICE (owner)"
+expect_fail "non-owner cannot set the builder" "permission denied" as bob spacehub space edit "$NOTES" --builder x
+
 echo "web service (sign up, create, import)"
 if [[ -n "${SPACEHUB_E2E_SERVER:-}" ]]; then
   WEB="${SPACEHUB_SERVER/#ws/http}"
@@ -254,6 +270,8 @@ same "create an empty space from the browser" "$(form /-/new name=fromweb 'descr
 check "the CLI sees it" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub space list $WEBUSER | grep -q '$WEBUSER/fromweb'"
 same "forms from another site are refused" "$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" -X POST "$WEB/-/new" --data name=x)" "403"
 same "only GitHub URLs can be imported" "$(form /-/new github=https://example.com/a/b | cut -d' ' -f1)" "400"
+same "create with a builder" "$(form /-/new name=withbuilder "builder=Ada Lovelace $RUN")" "303 $WEB/$WEBUSER/withbuilder"
+page_has "the form's builder is credited" "builders/ada-lovelace-$RUN" "$WEBUSER/withbuilder"
 WEBTOKEN="$(python3 -c "import sys,urllib.parse;[print(urllib.parse.unquote(l.split()[-1])) for l in open(sys.argv[1]) if 'spacehub_session' in l]" "$JAR")"
 same "sign out" "$(form /-/logout | cut -d' ' -f1)" "303"
 same "signed-out users are sent to sign in" "$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' -b "$JAR" "$WEB/-/new")" "303 $WEB/-/login?next=%2F-%2Fnew"
@@ -266,6 +284,8 @@ if [[ "${SPACEHUB_E2E_GITHUB:-}" == 1 ]]; then
     sleep 1
   done
   check "imported branches are there" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub space view $WEBUSER/Hello-World | grep -q heads/master"
+  page_has "the GitHub owner is the builder" "builders/octocat" "$WEBUSER/Hello-World"
+  page_has "with GitHub's display name" "$WEBUSER/Hello-World" "The Octocat"
 fi
 
 echo "create from an existing repo, edit"

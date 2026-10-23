@@ -11,6 +11,7 @@
 //   /<owner>/<space>/commits/<ref>/<path> history, optionally of one path (?page=N)
 //   /<owner>/<space>/commit/<oid>         one commit with line diffs
 //   /<owner>/<space>/refs                 branches and tags
+//   /builders, /builders/<handle>         who built the spaces' code
 //
 // Behind the server's proxy the original request URI arrives in an
 // X-Spacehub-Uri header and links are written as /<path>. Opened directly on
@@ -58,6 +59,14 @@ interface Entry {
   name: string;
   oid: string;
   type: 'tree' | 'blob' | 'commit';
+}
+
+// Who built a space's code: an explicit space_builder row, else the GitHub
+// owner of the space's import source, else the space's owner.
+interface Builder {
+  handle: string;
+  name: string;
+  url: string;
 }
 
 interface Change {
@@ -259,7 +268,9 @@ class Renderer {
     this.host = hostOf(req.uri);
     this.secure = req.proto === 'https' || !/^(localhost|127\.|\[::1\])/.test(this.host);
     const who = proxied ? cookie(req.cookie, 'spacehub_user') : null;
-    this.viewer = who && /^[a-z0-9-]{1,39}$/.test(who) ? who : null;
+    // Display only (the web service checks the real session); still, never
+    // show a username this database does not know.
+    this.viewer = who && /^[a-z0-9-]{1,39}$/.test(who) && db.user.username.find(who) ? who : null;
     this.now = req.now;
   }
 
@@ -431,6 +442,36 @@ class Renderer {
     return this.db.spaceImport.spaceId.find(sp.id) ?? null;
   }
 
+  builderOf(sp: Space): Builder {
+    const row = this.db.spaceBuilder.spaceId.find(sp.id);
+    if (row) return { handle: row.handle, name: row.name, url: row.url };
+    const source = this.importRow(sp)?.source ?? '';
+    const gh = /^https:\/\/github\.com\/([^/]+)\//.exec(source);
+    if (gh) return { handle: gh[1].toLowerCase(), name: gh[1], url: `https://github.com/${gh[1]}` };
+    return { handle: sp.owner, name: sp.owner, url: '' };
+  }
+
+  builderLink(b: Builder) {
+    return this.a(`builders/${b.handle}`, esc(b.name));
+  }
+
+  // "built by X" for listings, when someone other than the owner built it.
+  builtBy(sp: Space) {
+    const b = this.builderOf(sp);
+    return b.handle === sp.owner ? '' : `<div class="muted">built by ${this.builderLink(b)}</div>`;
+  }
+
+  builders() {
+    const groups = new Map<string, { builder: Builder; spaces: Space[] }>();
+    for (const sp of this.db.space.iter()) {
+      const b = this.builderOf(sp);
+      const g = groups.get(b.handle) ?? { builder: b, spaces: [] };
+      g.spaces.push(sp);
+      groups.set(b.handle, g);
+    }
+    return [...groups.values()].sort((x, y) => y.spaces.length - x.spaces.length || x.builder.name.localeCompare(y.builder.name));
+  }
+
   syncForm(sp: Space, label: string) {
     if (this.base === null || this.viewer !== sp.owner) return '';
     return `<form method="post" action="/-/sync/${encodeURIComponent(sp.owner)}/${encodeURIComponent(sp.name)}" class="inline"><button class="btn" type="submit">${esc(label)}</button></form>`;
@@ -459,7 +500,7 @@ class Renderer {
     const tags = refs.filter(r => r.name.startsWith('refs/tags/')).length;
     const tabLink = (key: string, path: string, label: string) => this.a(path, label, key === tab ? 'on' : '');
     return `<h1>${this.a(sp.owner, esc(sp.owner))} / <b>${this.a(sp.fullName, esc(sp.name))}</b></h1>
-${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}
+${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.builtByLine(sp)}
 <nav class="tabs">${tabLink('code', `${sp.fullName}/tree/${ref}`, 'Code')}${tabLink('commits', `${sp.fullName}/commits/${ref}`, 'Commits')}${tabLink('refs', `${sp.fullName}/refs`, `Branches ${branches} · Tags ${tags}`)}</nav>${this.importBanner(sp)}`;
   }
 
@@ -501,7 +542,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}
     const count = commits >= COUNT_CAP ? `${COUNT_CAP.toLocaleString('en-US')}+` : commits.toLocaleString('en-US');
     return `<aside><h2>Clone</h2><code class="clone">spacehub space clone ${esc(sp.fullName)}</code>
 <code class="clone">git clone -o spacehub spacehub://${esc(sp.fullName)}</code>
-<h2>About</h2><dl><dt>Owner</dt><dd>${this.a(sp.owner, esc(sp.owner))}</dd><dt>Default</dt><dd>${esc(sp.defaultBranch)}</dd>
+<h2>About</h2><dl><dt>Owner</dt><dd>${this.a(sp.owner, esc(sp.owner))}</dd><dt>Builder</dt><dd>${this.builderLink(this.builderOf(sp))}</dd><dt>Default</dt><dd>${esc(sp.defaultBranch)}</dd>
 <dt>Commits</dt><dd>${this.a(`${sp.fullName}/commits/${ref}`, count)}</dd>
 <dt>Branches</dt><dd>${this.a(`${sp.fullName}/refs`, String(refs.filter(r => r.name.startsWith('refs/heads/')).length))}</dd><dt>Tags</dt><dd>${this.a(`${sp.fullName}/refs`, String(refs.filter(r => r.name.startsWith('refs/tags/')).length))}</dd>
 <dt>Objects</dt><dd>${sp.objectCount}</dd><dt>Created</dt><dd>${this.ago(seconds(sp.createdAt))}</dd><dt>Pushed</dt><dd>${this.ago(seconds(sp.pushedAt))}</dd>${source}</dl>${sync}</aside>`;
@@ -528,6 +569,13 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}
     };
   }
 
+  builtByLine(sp: Space) {
+    const b = this.builderOf(sp);
+    if (b.handle === sp.owner) return '';
+    const profile = b.url ? ` <span class="muted">·</span> <a href="${esc(b.url)}">${esc(b.url.replace(/^https?:\/\//, ''))}</a>` : '';
+    return `<p class="desc">Built by <b>${this.builderLink(b)}</b>${profile}</p>`;
+  }
+
   // ------------------------------------------------------------ pages
 
   home() {
@@ -537,12 +585,17 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}
     for (const s of spaces) counts.set(s.owner, (counts.get(s.owner) ?? 0) + 1);
     const rows = spaces
       .map(
-        s => `<tr><td>${this.a(s.fullName, `<b>${esc(s.fullName)}</b>`)}${s.description ? `<div class="muted">${esc(s.description)}</div>` : ''}</td>
+        s => `<tr><td>${this.a(s.fullName, `<b>${esc(s.fullName)}</b>`)}${s.description ? `<div class="muted">${esc(s.description)}</div>` : ''}${this.builtBy(s)}</td>
 <td class="r"><span class="pill">${esc(s.defaultBranch)}</span></td><td class="r muted">Updated ${this.ago(seconds(s.pushedAt))}</td></tr>`
       )
       .join('');
     const people = users
       .map(u => `<tr><td>${this.a(u.username, esc(u.username))}</td><td class="r muted">${plural(counts.get(u.username) ?? 0, 'space')}</td></tr>`)
+      .join('');
+    const builders = this.builders();
+    const builderRows = builders
+      .slice(0, 20)
+      .map(g => `<tr><td>${this.builderLink(g.builder)}</td><td class="r muted">${plural(g.spaces.length, 'space')}</td></tr>`)
       .join('');
     const scheme = this.secure ? 'wss' : 'ws';
     const create = this.viewer ? `<a class="btn primary" href="/-/new">New space</a>` : '';
@@ -554,7 +607,8 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}
 <aside><h2>Connect</h2><p class="muted">With the spacehub CLI:</p>
 <code class="clone">spacehub auth login --server ${esc(`${scheme}://${this.host}`)} --username &lt;you&gt;</code>
 <code class="clone">spacehub space create &lt;name&gt; --source . --push</code>
-<h2>People <span class="muted">${users.length}</span></h2><div class="box">${people ? `<table>${people}</table>` : '<div class="empty">Nobody yet.</div>'}</div></aside></div>`
+<h2>People <span class="muted">${users.length}</span></h2><div class="box">${people ? `<table>${people}</table>` : '<div class="empty">Nobody yet.</div>'}</div>
+<h2>${this.a('builders', 'Builders')} <span class="muted">${builders.length}</span></h2><div class="box">${builderRows ? `<table>${builderRows}</table>` : '<div class="empty">No builders yet.</div>'}</div></aside></div>`
     );
   }
 
@@ -564,7 +618,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}
     if (!user && spaces.length === 0) return this.notFound(`No user "${name}".`);
     const rows = spaces
       .map(
-        s => `<tr><td>${this.a(s.fullName, `<b>${esc(s.name)}</b>`)}${s.description ? `<div class="muted">${esc(s.description)}</div>` : ''}</td>
+        s => `<tr><td>${this.a(s.fullName, `<b>${esc(s.name)}</b>`)}${s.description ? `<div class="muted">${esc(s.description)}</div>` : ''}${this.builtBy(s)}</td>
 <td class="r muted">Updated ${this.ago(seconds(s.pushedAt))}</td></tr>`
       )
       .join('');
@@ -861,8 +915,43 @@ ${bodyText ? `<pre>${esc(bodyText)}</pre>` : ''}
     );
   }
 
+  buildersPage() {
+    const rows = this.builders()
+      .map(
+        g => `<tr><td>${this.builderLink(g.builder)}${g.builder.url ? `<div class="muted">${esc(g.builder.url.replace(/^https?:\/\//, ''))}</div>` : ''}</td>
+<td class="r muted">${plural(g.spaces.length, 'space')}</td></tr>`
+      )
+      .join('');
+    return this.page(
+      'Builders · spacehub',
+      `<h1><b>Builders</b></h1><p class="desc">Who built the code in this server's spaces. A space imported from GitHub is credited to its GitHub owner; others to the space's owner unless set with <code>spacehub space edit --builder</code>.</p>
+<div class="box">${rows ? `<table>${rows}</table>` : '<div class="empty">No builders yet.</div>'}</div>`
+    );
+  }
+
+  builderPage(handle: string) {
+    const group = this.builders().find(g => g.builder.handle === handle.toLowerCase());
+    if (!group) return this.notFound(`No builder "${handle}".`);
+    const b = group.builder;
+    const rows = group.spaces
+      .sort((x, y) => seconds(y.pushedAt) - seconds(x.pushedAt))
+      .map(
+        s => `<tr><td>${this.a(s.fullName, `<b>${esc(s.fullName)}</b>`)}${s.description ? `<div class="muted">${esc(s.description)}</div>` : ''}</td>
+<td class="r muted">Updated ${this.ago(seconds(s.pushedAt))}</td></tr>`
+      )
+      .join('');
+    const profile = b.url ? `<a href="${esc(b.url)}">${esc(b.url.replace(/^https?:\/\//, ''))}</a> · ` : '';
+    const user = this.db.user.username.find(b.handle) ? `${this.a(b.handle, 'spacehub profile')} · ` : '';
+    return this.page(
+      `${b.name} · builders`,
+      `<h1><b>${esc(b.name)}</b> <span class="muted">${esc(b.handle)}</span></h1><p class="desc">${profile}${user}built ${plural(group.spaces.length, 'space')} on this server</p>
+<div class="box"><table>${rows}</table></div>`
+    );
+  }
+
   route(segs: string[]): UiResponse {
     if (segs.length === 0) return this.home();
+    if (segs[0] === 'builders' && segs.length <= 2) return segs[1] ? this.builderPage(segs[1]) : this.buildersPage();
     if (segs.length === 1) return this.owner(segs[0]);
     const sp = this.db.space.fullName.find(`${segs[0]}/${segs[1]}`);
     if (!sp) return this.notFound(`No space "${segs[0]}/${segs[1]}".`);

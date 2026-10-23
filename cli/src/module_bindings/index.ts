@@ -41,6 +41,7 @@ import FinishObjectReducer from "./finish_object_reducer";
 import PutChunkReducer from "./put_chunk_reducer";
 import PutObjectsReducer from "./put_objects_reducer";
 import RegisterUserReducer from "./register_user_reducer";
+import SetBuilderReducer from "./set_builder_reducer";
 import StartImportReducer from "./start_import_reducer";
 import UpdateImportReducer from "./update_import_reducer";
 import UpdateRefReducer from "./update_ref_reducer";
@@ -52,6 +53,7 @@ import GitObjectRow from "./git_object_table";
 import GitRefRow from "./git_ref_table";
 import ObjectChunkRow from "./object_chunk_table";
 import SpaceRow from "./space_table";
+import SpaceBuilderRow from "./space_builder_table";
 import SpaceImportRow from "./space_import_table";
 import UserRow from "./user_table";
 
@@ -133,6 +135,20 @@ const tablesSchema = __schema({
       { name: 'space_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, SpaceRow),
+  spaceBuilder: __table({
+    name: 'space_builder',
+    indexes: [
+      { accessor: 'handle', name: 'space_builder_handle_idx_btree', algorithm: 'btree', columns: [
+        'handle',
+      ] },
+      { accessor: 'spaceId', name: 'space_builder_space_id_idx_btree', algorithm: 'btree', columns: [
+        'spaceId',
+      ] },
+    ],
+    constraints: [
+      { name: 'space_builder_space_id_key', constraint: 'unique', columns: ['spaceId'] },
+    ],
+  }, SpaceBuilderRow),
   spaceImport: __table({
     name: 'space_import',
     indexes: [
@@ -170,6 +186,7 @@ const reducersSchema = __reducers(
   __reducerSchema("put_chunk", PutChunkReducer),
   __reducerSchema("put_objects", PutObjectsReducer),
   __reducerSchema("register_user", RegisterUserReducer),
+  __reducerSchema("set_builder", SetBuilderReducer),
   __reducerSchema("start_import", StartImportReducer),
   __reducerSchema("update_import", UpdateImportReducer),
   __reducerSchema("update_ref", UpdateRefReducer),

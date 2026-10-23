@@ -3,7 +3,7 @@
 // code is plain git through git-remote-spacehub (spacehub://owner/name).
 import { spawn } from 'node:child_process';
 import readline from 'node:readline/promises';
-import { configFile, loadConfig, removeToken, saveSettings, saveToken } from './config';
+import { builderFrom, configFile, loadConfig, removeToken, saveSettings, saveToken } from './config';
 import { connect, errorMessage, findSpace, findUser, listRefs, quietSdkLogs, snapshot, tables, type Conn } from './conn';
 import { git } from './git';
 
@@ -31,6 +31,8 @@ SPACES (alias: repo)
   space view [<space>]            Default branch, size and refs
   space clone <space> [<dir>]     git clone a space (extra flags after --)
   space edit [<space>]            [--description <text>] [--default-branch <name>]
+                                    [--builder <name or github.com/user URL>] [--builder-url <url>]
+                                    (--builder "" goes back to the default: the owner or GitHub source)
   space delete <space> --yes      Delete a space and all its history
   space sync                      Fast-forward the current branch from its spacehub remote
                                     [--remote <name>] [--push] [--watch]
@@ -333,6 +335,20 @@ async function spaceList(args: string[]) {
   }
 }
 
+// Same rule as the web UI: explicit builder, else the GitHub source's
+// owner, else the space's owner.
+async function builderLine(conn: Conn, sp: { id: bigint; owner: string }) {
+  const row = await snapshot(conn, tables.spaceBuilder.where(r => r.spaceId.eq(sp.id)), () =>
+    [...conn.db.spaceBuilder.iter()].find(r => r.spaceId === sp.id)
+  );
+  if (row) return `${row.name}${row.url ? ` (${row.url})` : ''}`;
+  const imp = await snapshot(conn, tables.spaceImport.where(r => r.spaceId.eq(sp.id)), () =>
+    [...conn.db.spaceImport.iter()].find(r => r.spaceId === sp.id)
+  );
+  const gh = imp ? /^https:\/\/github\.com\/([^/]+)\//.exec(imp.source) : null;
+  return gh ? `${gh[1]} (https://github.com/${gh[1]})` : `${sp.owner} (owner)`;
+}
+
 async function spaceView(args: string[]) {
   const fullName = await resolveSpace(args[0]);
   const sp = await requireSpace(fullName);
@@ -343,6 +359,7 @@ async function spaceView(args: string[]) {
   out();
   out(`url       spacehub://${sp.fullName}`);
   out(`default   ${sp.defaultBranch}`);
+  out(`builder   ${await builderLine(conn, sp)}`);
   out(`objects   ${sp.objectCount}`);
   out(`created   ${when(sp.createdAt)}`);
   out(`pushed    ${when(sp.pushedAt)}`);
@@ -363,12 +380,21 @@ async function spaceClone(args: string[]) {
 async function spaceEdit(args: string[]) {
   const description = opt(args, '--description', '-d');
   const defaultBranch = opt(args, '--default-branch');
-  if (description === undefined && defaultBranch === undefined) {
-    die('nothing to change; pass --description and/or --default-branch');
+  const builder = opt(args, '--builder');
+  const builderUrl = opt(args, '--builder-url');
+  if (description === undefined && defaultBranch === undefined && builder === undefined) {
+    die('nothing to change; pass --description, --default-branch and/or --builder');
   }
   const fullName = await resolveSpace(args[0]);
   const { conn } = await open();
-  await conn.reducers.editSpace({ space: fullName, description, defaultBranch });
+  if (description !== undefined || defaultBranch !== undefined) {
+    await conn.reducers.editSpace({ space: fullName, description, defaultBranch });
+  }
+  if (builder !== undefined) {
+    const b = builderFrom(builder);
+    if (builder.trim() && !b.handle) die(`"${builder}" has no letters or digits to use as a builder handle`);
+    await conn.reducers.setBuilder({ space: fullName, handle: b.handle, name: b.name, url: builderUrl ?? b.url });
+  }
   out(`Updated ${fullName}`);
 }
 

@@ -17,7 +17,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { connectTo, errorMessage, findSpace, findUser, quietSdkLogs, snapshot, tables, type Conn } from './conn';
-import { normalizeServer } from './config';
+import { builderFrom, normalizeServer } from './config';
 import { esc, navFor, PAGE_CSP, shell } from '../../module/src/style';
 
 quietSdkLogs();
@@ -148,12 +148,32 @@ async function githubInfo(owner: string, repo: string) {
     });
     if (res.status === 404) throw new Fail(`github.com/${owner}/${repo} was not found (only public repositories can be imported)`);
     if (!res.ok) return null;
-    const info = (await res.json()) as { description?: string | null; size?: number; private?: boolean };
-    return { description: info.description ?? '', sizeKb: info.size ?? 0, private: !!info.private };
+    const info = (await res.json()) as { description?: string | null; size?: number; private?: boolean; owner?: { login?: string } };
+    return { description: info.description ?? '', sizeKb: info.size ?? 0, private: !!info.private, ownerLogin: info.owner?.login ?? owner };
   } catch (err) {
     if (err instanceof Fail) throw err;
     return null;
   }
+}
+
+// The GitHub account that built a repository, with its display name when
+// GitHub has one ("Anthropic" for anthropics).
+async function githubBuilder(login: string) {
+  let name = login;
+  try {
+    const res = await fetch(`https://api.github.com/users/${login}`, {
+      headers: { accept: 'application/vnd.github+json', 'user-agent': 'spacehub' },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (res.ok) {
+      const user = (await res.json()) as { login?: string; name?: string | null };
+      login = user.login ?? login;
+      name = user.name?.trim() || login;
+    }
+  } catch {
+    // keep the login as the name
+  }
+  return { handle: login.toLowerCase(), name, url: `https://github.com/${login}` };
 }
 
 // ---------------------------------------------------------------- imports
@@ -272,6 +292,8 @@ ${error ? `<div class="banner err">${esc(error)}</div>` : ''}
 <div style="display:flex;gap:8px;align-items:center"><span class="muted nowrap">${esc(viewer)} /</span><input type="text" id="name" name="name" value="${v('name')}" pattern="[A-Za-z0-9._-]{1,100}"></div>
 <label for="description">Description <span class="muted">optional; defaults to GitHub's</span></label>
 <input type="text" id="description" name="description" value="${v('description')}" maxlength="500">
+<label for="builder">Built by <span class="muted">optional; a name or https://github.com/user. Defaults to the GitHub owner when importing, otherwise you</span></label>
+<input type="text" id="builder" name="builder" value="${v('builder')}" maxlength="100">
 <p><button class="btn primary" type="submit">Create space</button></p></form>`
   );
 }
@@ -339,22 +361,26 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     if (!session) return redirect(res, `/-/login?next=${encodeURIComponent('/-/new')}`);
     if (req.method === 'GET') return send(res, 200, newPage(session.username));
     const form = await readForm(req);
-    const values = Object.fromEntries(['github', 'name', 'description'].map(k => [k, (form.get(k) ?? '').trim()]));
+    const values = Object.fromEntries(['github', 'name', 'description', 'builder'].map(k => [k, (form.get(k) ?? '').trim()]));
     try {
       const source = values.github ? parseGithub(values.github) : null;
       if (values.github && !source) throw new Fail('Use a GitHub repository URL like https://github.com/owner/repo.');
       const name = (values.name || source?.repo || '').replace(/\.git$/, '');
       if (!SPACE_NAME.test(name)) throw new Fail('Pick a space name: letters, digits, ".", "_" and "-".');
       let description = values.description;
+      let builder = values.builder ? builderFrom(values.builder) : null;
+      if (builder && !builder.handle) throw new Fail('Built by needs some letters or digits.');
       if (source) {
         const info = await githubInfo(source.owner, source.repo);
         if (info?.private) throw new Fail('Only public GitHub repositories can be imported.');
         if (info && info.sizeKb > MAX_IMPORT_MB * 1024) throw new Fail(`That repository is about ${Math.round(info.sizeKb / 1024)} MB; this server imports up to ${MAX_IMPORT_MB} MB.`);
         description ||= info?.description ?? '';
+        builder ??= await githubBuilder(info?.ownerLogin ?? source.owner);
       }
       const space = `${session.username}/${name}`;
       await withConn(session.token, async conn => {
         await conn.reducers.createSpace({ name, description });
+        if (builder) await conn.reducers.setBuilder({ space, ...builder });
         if (source) await conn.reducers.startImport({ space, source: source.url });
       });
       if (source) {
@@ -382,6 +408,12 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
         );
         if (!row) throw new Fail(`${space} was not imported from GitHub.`);
         await conn.reducers.startImport({ space, source: row.source });
+        // Spaces imported before builders existed get theirs on first sync.
+        const credited = await snapshot(conn, tables.spaceBuilder.where(r => r.spaceId.eq(sp.id)), () =>
+          [...conn.db.spaceBuilder.iter()].some(r => r.spaceId === sp.id)
+        );
+        const owner = /^https:\/\/github\.com\/([^/]+)\//.exec(row.source)?.[1];
+        if (!credited && owner) await conn.reducers.setBuilder({ space, ...(await githubBuilder(owner)) }).catch(() => undefined);
         return row.source;
       });
       queue.push({ token: session.token, space, source, sync: true });

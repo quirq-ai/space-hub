@@ -107,7 +107,20 @@ const spaceImport = table(
   }
 );
 
-const spacetimedb = schema({ user, space, gitRef, gitObject, objectChunk, spaceImport });
+// Who built a space's code, when that is not simply its owner: for a GitHub
+// import, the GitHub owner. Spaces without a row are built by their owner
+// (or, if imported, by the owner of the import's GitHub source).
+const spaceBuilder = table(
+  { name: 'space_builder', public: true },
+  {
+    spaceId: t.u64().primaryKey(),
+    handle: t.string().index('btree'), // groups spaces by builder, lowercase
+    name: t.string(), // display name
+    url: t.string(), // profile link, or ""
+  }
+);
+
+const spacetimedb = schema({ user, space, gitRef, gitObject, objectChunk, spaceImport, spaceBuilder });
 export default spacetimedb;
 
 type Ctx = ReducerCtx<InferSchema<typeof spacetimedb>>;
@@ -120,7 +133,8 @@ const ObjectIn = t.object('ObjectIn', {
 
 const USERNAME = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
 // First path segments the web UI and the server's proxy already use.
-const RESERVED_USERNAMES = new Set(['v1', 'healthz', 'api', 'static', 'assets', 'login', 'settings']);
+const RESERVED_USERNAMES = new Set(['v1', 'healthz', 'api', 'static', 'assets', 'login', 'settings', 'builders']);
+const BUILDER_HANDLE = /^[a-z0-9][a-z0-9._-]{0,99}$/;
 const SPACE_NAME = /^[A-Za-z0-9._-]{1,100}$/;
 const OID = /^[0-9a-f]{40}$/;
 const KINDS = new Set(['commit', 'tree', 'blob', 'tag']);
@@ -230,10 +244,30 @@ export const deleteSpace = spacetimedb.reducer({ space: t.string() }, (ctx, { sp
   for (const obj of [...ctx.db.gitObject.bySpacePos.filter(sp.id)]) ctx.db.gitObject.id.delete(obj.id);
   for (const chunk of [...ctx.db.objectChunk.bySpaceOid.filter(sp.id)]) ctx.db.objectChunk.id.delete(chunk.id);
   ctx.db.spaceImport.spaceId.delete(sp.id);
+  ctx.db.spaceBuilder.spaceId.delete(sp.id);
   ctx.db.space.id.delete(sp.id);
 });
 
 // Change a space's description and/or default branch; omitted fields stay.
+// Credit who built the space's code. An empty handle clears it, so the
+// space falls back to its owner (or its GitHub source).
+export const setBuilder = spacetimedb.reducer(
+  { space: t.string(), handle: t.string(), name: t.string(), url: t.string() },
+  (ctx, { space: fullName, handle, name, url }) => {
+    const sp = requireWritable(ctx, fullName);
+    const key = handle.trim().toLowerCase();
+    if (key === '') {
+      ctx.db.spaceBuilder.spaceId.delete(sp.id);
+      return;
+    }
+    if (!BUILDER_HANDLE.test(key)) throw new SenderError('builder handle may use letters, digits, ".", "_" and "-"');
+    if (url && !/^https?:\/\/[^\s"<>]{1,300}$/.test(url)) throw new SenderError('builder url must be an http(s) link');
+    const row = { spaceId: sp.id, handle: key, name: (name.trim() || handle.trim()).slice(0, 100), url };
+    if (ctx.db.spaceBuilder.spaceId.find(sp.id)) ctx.db.spaceBuilder.spaceId.update(row);
+    else ctx.db.spaceBuilder.insert(row);
+  }
+);
+
 export const editSpace = spacetimedb.reducer(
   { space: t.string(), description: t.option(t.string()), defaultBranch: t.option(t.string()) },
   (ctx, { space: fullName, description, defaultBranch }) => {

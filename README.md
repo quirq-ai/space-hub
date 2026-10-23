@@ -97,6 +97,17 @@ straight from the tables, as plain HTML with no JavaScript.
 | `/<owner>/<space>/commits/<ref>/<path>` | History, grouped by day and paged (`?page=2`). With a path, only the commits that changed it |
 | `/<owner>/<space>/commit/<oid>` | One commit: message, author, parents, and a line diff of every changed file |
 | `/<owner>/<space>/refs` | Branches and tags, with tag messages |
+| `/builders`, `/builders/<handle>` | Who built the spaces' code, and everything each builder built |
+
+**Builders.** Every space has an owner (who hosts it here) and a builder
+(who made the code). A GitHub import is credited to its GitHub owner, with
+GitHub's display name: importing `anthropics/claude-code` shows "Built by
+Anthropic". Any other space is credited to its owner, unless set with
+`spacehub space edit <space> --builder <name or https://github.com/user>`
+or the New space form's **Built by** field. `--builder ""` goes back to the
+default. The home page lists builders under People. Spaces imported before
+builders existed show the GitHub handle until their next **Sync from
+GitHub**, which fills in the display name.
 
 **Add from the browser**
 
@@ -181,7 +192,7 @@ spacetime start                           # terminal 1
 scripts/setup.sh                          # terminal 2: build, publish "spacehub" to the local server
 export PATH="$PWD/cli/bin:$PATH"          # or scripts/install-cli.sh
 spacehub auth login --username <you>      # defaults to ws://127.0.0.1:3000
-scripts/e2e.sh                            # 89 checks against a throwaway in-memory server
+scripts/e2e.sh                            # 104 checks against a throwaway in-memory server
 SPACEHUB_E2E_GITHUB=1 scripts/e2e.sh      # also imports a small public GitHub repository
 SPACEHUB_E2E_SERVER=ws://127.0.0.1:3000 scripts/e2e.sh   # against a running server, e.g. the Docker one
 ```
