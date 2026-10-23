@@ -6,6 +6,8 @@
 //   POST     /-/logout           forget the session
 //   GET/POST /-/new              create a space, optionally imported from GitHub
 //   POST     /-/sync/<o>/<name>  pull the space's GitHub source again
+//   *        /-/api/xo/v1/...    xo.quirq.dev's store and agents (xo.ts), only
+//                                with SPACEHUB_XO_KEY set
 //
 // Pages are read by the module (ui.ts); this service only acts. A session is
 // the user's identity token in an HttpOnly cookie, so every action runs as
@@ -19,6 +21,7 @@ import { fileURLToPath } from 'node:url';
 import { connectTo, errorMessage, findSpace, findUser, quietSdkLogs, snapshot, tables, type Conn } from './conn';
 import { githubLogin, normalizeServer } from './config';
 import { esc, navFor, PAGE_CSP, shell } from '../../module/src/style';
+import { handleXo, xoConfig } from './xo';
 
 quietSdkLogs();
 
@@ -31,6 +34,7 @@ const MAX_CONCURRENT_IMPORTS = 2;
 // git finds git-remote-quirq on PATH; also look next to this bundle.
 const HELPER_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../bin');
 const YEAR = 60 * 60 * 24 * 365;
+const XO = xoConfig(DB);
 
 const USERNAME = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
 const SPACE_NAME = /^[A-Za-z0-9._-]{1,100}$/;
@@ -319,6 +323,8 @@ function welcomePage(username: string, token: string) {
 async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   const url = new URL(req.url ?? '/', 'http://local');
   const route = url.pathname;
+  // Called by xo.quirq.dev with its key, not from the site's forms.
+  if (await handleXo(XO, req, res)) return;
   if (req.method === 'POST' && !sameOrigin(req)) return send(res, 403, page('Forbidden', null, '<h1>Forbidden</h1><p class="desc">This form must be sent from this site.</p>'));
 
   if (route === '/-/login') {
@@ -446,4 +452,4 @@ http
       else res.end();
     });
   })
-  .listen(PORT, '127.0.0.1', () => process.stderr.write(`spacehub-web: listening on 127.0.0.1:${PORT} (database ${DB} at ${SERVER})\n`));
+  .listen(PORT, '127.0.0.1', () => process.stderr.write(`spacehub-web: listening on 127.0.0.1:${PORT} (database ${DB} at ${SERVER})${XO ? ', xo API on' : ''}\n`));

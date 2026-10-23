@@ -60,7 +60,29 @@ spacetime --root-dir "$ROOT" publish --server "http://$INTERNAL" "$DB" --js-path
 spacetime --root-dir "$ROOT" call --server "http://$INTERNAL" "$DB" backfill_activity >/dev/null 2>&1 \
   || echo "spacehub: could not rebuild the activity history; the feed starts from now" >&2
 
-SPACEHUB_SERVER="ws://$INTERNAL" SPACEHUB_DB="$DB" node /opt/spacehub/cli/dist/web.mjs &
+# The identity that owns the database is the hub's admin (it alone writes the
+# xo tables and switches sign-up). Claim it on every start: the first claim
+# sticks, and if another identity holds it, stop rather than serve.
+if ! claim="$(spacetime --root-dir "$ROOT" call --server "http://$INTERNAL" "$DB" claim_admin 2>&1)"; then
+  echo "spacehub: could not claim the hub admin: $claim" >&2
+  echo "spacehub: refusing to start; if another identity holds it, the database was tampered with" >&2
+  exit 1
+fi
+
+# xo.quirq.dev's API (/-/api/xo/v1/) is on only with SPACEHUB_XO_KEY. It acts
+# as the admin, and agents then come from xo only.
+if [ -n "${SPACEHUB_XO_KEY:-}" ]; then
+  SPACEHUB_ADMIN_TOKEN="$( { spacetime --root-dir "$ROOT" login show --token 2>/dev/null; cat "$ROOT/config/cli.toml" 2>/dev/null; } \
+    | grep -oE 'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+' | head -n 1)"
+  if [ -z "$SPACEHUB_ADMIN_TOKEN" ]; then
+    echo "spacehub: SPACEHUB_XO_KEY is set but the admin's token could not be read" >&2
+    exit 1
+  fi
+  export SPACEHUB_ADMIN_TOKEN
+  spacetime --root-dir "$ROOT" call --server "http://$INTERNAL" "$DB" set_accounts '"xo"' >/dev/null
+fi
+
+SPACEHUB_SERVER="ws://$INTERNAL" SPACEHUB_INTERNAL_HTTP="http://$INTERNAL" SPACEHUB_DB="$DB" node /opt/spacehub/cli/dist/web.mjs &
 web=$!
 echo "spacehub: serving database \"$DB\" on port $PORT"
 

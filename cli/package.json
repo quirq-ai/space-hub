@@ -19,7 +19,8 @@
   "scripts": {
     "build": "esbuild src/cli.ts src/remote.ts src/web.ts --bundle --platform=node --format=esm --target=node22 --out-extension:.js=.mjs --outdir=dist --log-level=warning",
     "typecheck": "tsc --noEmit -p .",
-    "generate": "spacetime generate --yes --lang typescript --out-dir src/module_bindings --module-path ../module"
+    "generate": "spacetime generate --yes --lang typescript --out-dir src/module_bindings --module-path ../module",
+    "test": "node --experimental-strip-types --test test/*.test.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

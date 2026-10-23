@@ -11,7 +11,7 @@
 // moves if the caller saw its current value (compare-and-swap) and, unless
 // forced, the move is a fast-forward.
 import { schema, table, t, Router, SenderError, SyncResponse, type InferSchema, type ReducerCtx } from 'spacetimedb/server';
-import type { Timestamp } from 'spacetimedb';
+import { Identity, type Timestamp } from 'spacetimedb';
 import { Sha1, objectHeader } from './sha1';
 import { CHUNK_SIZE, commitParents, objectKey, readObject, refKey } from './store';
 import { renderUi } from './ui';
@@ -138,10 +138,41 @@ const activity = table(
   }
 );
 
-// Flags for one-off jobs, e.g. rebuilding the activity feed's history.
+// Flags for one-off jobs, e.g. rebuilding the activity feed's history, and
+// the hub's settings: who its admin is ("admin") and where accounts come from
+// ("accounts": "xo" once xo makes them).
 const hubState = table({ name: 'hub_state' }, { key: t.string().primaryKey(), value: t.string() });
 
-const spacetimedb = schema({ user, space, gitRef, gitObject, objectChunk, spaceImport, spaceBuilder, activity, hubState });
+// What xo.quirq.dev keeps for each xo user (Clerk only says who they are):
+// their projects, spaces and invites, as one JSON document per Clerk user id.
+// Private: only the admin (the server's own web service, for xo.quirq.dev)
+// reads or writes it. `version` moves by one on every write, and a write must
+// name the version it read (compare-and-swap).
+const xoRecord = table(
+  { name: 'xo_record' },
+  {
+    subject: t.string().primaryKey(),
+    doc: t.string(),
+    version: t.u64(),
+    updatedAt: t.timestamp(),
+  }
+);
+
+// The hub agent that xo made for a Clerk user: its name is the user's xo
+// username, and its token is handed back to that user's xo on every machine.
+// Private, like xo_record.
+const xoAgent = table(
+  { name: 'xo_agent' },
+  {
+    subject: t.string().primaryKey(),
+    username: t.string().unique(),
+    identity: t.identity().unique(),
+    token: t.string(),
+    createdAt: t.timestamp(),
+  }
+);
+
+const spacetimedb = schema({ user, space, gitRef, gitObject, objectChunk, spaceImport, spaceBuilder, activity, hubState, xoRecord, xoAgent });
 export default spacetimedb;
 
 type Ctx = ReducerCtx<InferSchema<typeof spacetimedb>>;
@@ -283,17 +314,101 @@ function insertObject(ctx: Ctx, sp: { id: bigint; objectCount: bigint; objectPos
   });
 }
 
-export const registerUser = spacetimedb.reducer({ username: t.string() }, (ctx, { username }) => {
+function checkAgentName(ctx: Ctx, username: string) {
   if (!USERNAME.test(username)) {
     throw new SenderError('an agent name is 1-39 lowercase letters, digits or inner hyphens');
   }
   if (RESERVED_USERNAMES.has(username)) throw new SenderError(`agent name "${username}" is reserved`);
+  if (ctx.db.user.username.find(username)) throw new SenderError(`agent name "${username}" is taken`);
+}
+
+export const registerUser = spacetimedb.reducer({ username: t.string() }, (ctx, { username }) => {
+  if (ctx.db.hubState.key.find('accounts')?.value === 'xo') {
+    throw new SenderError('agents on this hub are made by xo: run xo login');
+  }
   const existing = ctx.db.user.identity.find(ctx.sender);
   if (existing) throw new SenderError(`this identity is already the agent "${existing.username}"`);
-  if (ctx.db.user.username.find(username)) throw new SenderError(`agent name "${username}" is taken`);
+  checkAgentName(ctx, username);
   ctx.db.user.insert({ identity: ctx.sender, username, createdAt: ctx.timestamp });
   logActivity(ctx, { kind: 'agent_registered', agent: username });
 });
+
+// ---------------------------------------------------------------- admin and xo
+
+// The first identity to call this becomes the hub's admin, for good. The
+// server's entrypoint calls it right after publishing, as the identity that
+// owns the database, and refuses to start if someone else holds it.
+export const claimAdmin = spacetimedb.reducer(ctx => {
+  const admin = ctx.db.hubState.key.find('admin');
+  if (admin) {
+    if (admin.value !== ctx.sender.toHexString()) throw new SenderError('the hub admin is already another identity');
+    return;
+  }
+  ctx.db.hubState.insert({ key: 'admin', value: ctx.sender.toHexString() });
+});
+
+function requireAdmin(ctx: Ctx) {
+  if (ctx.db.hubState.key.find('admin')?.value !== ctx.sender.toHexString()) {
+    throw new SenderError('permission denied: only the hub admin can do this');
+  }
+}
+
+// "xo": only xo makes agents (sign-up is off); "open": anyone can register.
+export const setAccounts = spacetimedb.reducer({ source: t.string() }, (ctx, { source }) => {
+  requireAdmin(ctx);
+  if (source !== 'xo' && source !== 'open') throw new SenderError('accounts come from "xo" or are "open"');
+  const row = ctx.db.hubState.key.find('accounts');
+  if (row) ctx.db.hubState.key.update({ ...row, value: source });
+  else ctx.db.hubState.insert({ key: 'accounts', value: source });
+});
+
+// Clerk user ids, as Clerk writes them (user_2abc...).
+const XO_SUBJECT = /^[A-Za-z0-9_]{1,64}$/;
+const MAX_XO_DOC = 256 * 1024;
+
+function checkSubject(subject: string) {
+  if (!XO_SUBJECT.test(subject)) throw new SenderError(`invalid xo user id "${subject}"`);
+}
+
+export const xoPutRecord = spacetimedb.reducer(
+  { subject: t.string(), version: t.u64(), doc: t.string() },
+  (ctx, { subject, version, doc }) => {
+    requireAdmin(ctx);
+    checkSubject(subject);
+    if (doc.length > MAX_XO_DOC) throw new SenderError(`record is larger than ${MAX_XO_DOC} bytes`);
+    try {
+      const parsed: unknown = JSON.parse(doc);
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error();
+    } catch {
+      throw new SenderError('record must be a JSON object');
+    }
+    const current = ctx.db.xoRecord.subject.find(subject);
+    const at = current?.version ?? 0n;
+    if (at !== version) throw new SenderError(`stale: the record of ${subject} is at version ${at}`);
+    const row = { subject, doc, version: at + 1n, updatedAt: ctx.timestamp };
+    if (current) ctx.db.xoRecord.subject.update(row);
+    else ctx.db.xoRecord.insert(row);
+  }
+);
+
+// Make `identity` (a new identity whose token the admin holds) the agent
+// `username` for the xo user `subject`.
+export const xoLinkAgent = spacetimedb.reducer(
+  { subject: t.string(), username: t.string(), identity: t.string(), token: t.string() },
+  (ctx, { subject, username, identity: hex, token }) => {
+    requireAdmin(ctx);
+    checkSubject(subject);
+    if (ctx.db.xoAgent.subject.find(subject)) throw new SenderError(`xo user ${subject} already has an agent`);
+    if (!/^(0x)?[0-9a-fA-F]{64}$/.test(hex)) throw new SenderError('identity must be 64 hex digits');
+    if (!token || token.length > 4096) throw new SenderError('invalid token');
+    const identity = Identity.fromString(hex.replace(/^0x/, '').toLowerCase());
+    if (ctx.db.user.identity.find(identity)) throw new SenderError('that identity is already an agent');
+    checkAgentName(ctx, username);
+    ctx.db.user.insert({ identity, username, createdAt: ctx.timestamp });
+    ctx.db.xoAgent.insert({ subject, username, identity, token, createdAt: ctx.timestamp });
+    logActivity(ctx, { kind: 'agent_registered', agent: username });
+  }
+);
 
 export const createSpace = spacetimedb.reducer(
   { name: t.string(), description: t.string() },

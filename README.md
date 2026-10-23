@@ -10,17 +10,17 @@ Like GitHub, spacehub has two halves:
 - **Server**: a SpacetimeDB instance running the spacehub module, which holds
   agents, spaces, refs and git objects and enforces the push rules. It ships
   as a Docker image.
-- **Client**: `spacehub`, a gh-style CLI, plus `git-remote-spacehub`, which
-  makes plain git understand `spacehub://agent/space`.
+- **Client**: `spacehub`, a gh-style CLI, plus `git-remote-quirq`, which
+  makes plain git understand `quirq://hub.quirq.dev/agent/space`.
 
 Its main job is to keep the git trees of different spaces (machines,
 sandboxes, agents) in sync.
 
 ```sh
-spacehub auth login --server wss://hub.example.com --agent suraj
+spacehub auth login --agent suraj  # wss://hub.quirq.dev; another with --server
 spacehub space create notes --source . --push
 spacehub space clone suraj/notes
-git push spacehub / git pull spacehub main   # plain git from here on
+git push quirq / git pull quirq main   # plain git from here on
 spacehub space sync --watch         # follow every push live
 ```
 
@@ -51,6 +51,7 @@ that would delete data makes startup fail rather than wipe spaces.
 | `PORT` | `3000` | Public port |
 | `SPACEHUB_DB` | `spacehub` | Database name clients pass with `--db` |
 | `SPACEHUB_IMPORT_MAX_MB` | `500` | Largest GitHub repository the UI will import |
+| `SPACEHUB_XO_KEY` | unset | Turns on xo.quirq.dev's API and makes xo the only source of agents (see xo below) |
 | `/data` volume | | Databases, the server's signing keys, and the identity that owns the module. **Mount persistent storage here and back it up.** Without it, a restart forgets all spaces and invalidates every client token |
 
 The container starts as root only to take ownership of `/data`, because
@@ -199,14 +200,20 @@ docker run --rm -it -e SPACEHUB_SERVER=wss://hub.example.com \
 | `gh repo sync` | `spacehub space sync [--push] [--watch]` |
 | | `spacehub space watch [space] [--exec cmd]` streams ref changes live |
 
-**The git remote is always named `spacehub`**, never `origin`, so a repo
-can push to GitHub (`origin`) and spacehub side by side without conflict.
-`space create --source` adds a `spacehub` remote, and `space clone` names
-the clone's remote `spacehub`. With plain git, use
-`git clone -o spacehub spacehub://agent/name` or
-`git remote add spacehub spacehub://agent/name`. `repo` is an alias for `space`. A space is `agent/name`, or just `name` for
+**The git remote is always named `quirq` and always points at a quirq URL**,
+`quirq://<hub host>/<agent>/<name>`, never at `origin`, so a repo can push to
+GitHub (`origin`) and the hub side by side without conflict. `space create
+--source` adds a `quirq` remote (and `--push` pushes without setting an
+upstream, so your branches keep tracking what they tracked), and `space
+clone` names the clone's remote `quirq`. With plain git, use
+`git clone -o quirq quirq://hub.quirq.dev/agent/name` or
+`git remote add quirq quirq://hub.quirq.dev/agent/name`. The URL names the
+hub, so the remote keeps working whatever server the CLI is logged in to;
+`quirq://agent/name` means the hub you are logged in to. Remotes of older
+clones (`spacehub://agent/name`, often named `spacehub`) keep working through
+`git-remote-spacehub`. `repo` is an alias for `space`. A space is `agent/name`, or just `name` for
 the signed-in agent's spaces. Inside a clone, commands default to the repository's
-spacehub remote.
+quirq remote.
 
 The agent's identity is a token in `~/.spacehub/config.json`, kept per
 server. There are no passwords: the token is the agent. To be the same agent
@@ -221,14 +228,16 @@ override the saved settings.
 spacetime start                           # terminal 1
 scripts/setup.sh                          # terminal 2: build, publish "spacehub" to the local server
 export PATH="$PWD/cli/bin:$PATH"          # or scripts/install-cli.sh
-spacehub auth login --agent <name>        # defaults to ws://127.0.0.1:3000
+spacehub auth login --server ws://127.0.0.1:3000 --agent <name>
 scripts/e2e.sh                            # 118 checks against a throwaway in-memory server
 SPACEHUB_E2E_GITHUB=1 scripts/e2e.sh      # also imports a small public GitHub repository
 SPACEHUB_E2E_SERVER=ws://127.0.0.1:3000 scripts/e2e.sh   # against a running server, e.g. the Docker one
 ```
 
 After changing the module, regenerate the client bindings with
-`cd cli && npm run generate`.
+`cd cli && npm run generate`. Unit tests need no server: `cd module && npm
+test` runs the reducers in SpacetimeDB's in-process harness, and `cd cli &&
+npm test` runs the xo API against a stand-in database.
 
 ## Layout
 
@@ -241,7 +250,9 @@ module/src/style.ts      look and page frame, shared with the web service
 module/src/store.ts      reads objects back out of the tables
 module/src/sha1.ts       lets the database verify every object id
 cli/src/cli.ts           spacehub (auth, space)
-cli/src/remote.ts        git-remote-spacehub
+cli/src/remote.ts        git-remote-quirq (and git-remote-spacehub, for older clones)
+cli/src/url.ts           quirq:// URLs
+cli/src/xo.ts            xo.quirq.dev's API: xo's per-user records and agents
 cli/src/git.ts           git plumbing: rev-list, cat-file, packfile writer
 cli/src/web.ts           web service: sign in/up, create and import spaces
 cli/src/module_bindings  generated, do not edit
@@ -289,12 +300,31 @@ the whole space.
 **Sync.** Refs are rows, so `space watch` and `space sync --watch` hear about
 a push as soon as it commits. No polling is involved.
 
+## xo
+
+xo.quirq.dev checks who an xo user is with Clerk and keeps everything else
+here: each user's projects, spaces with their refs, and invites, as one JSON
+record per Clerk user in the private `xo_record` table. It also asks the hub
+for the user's agent (named after their xo username, in the private
+`xo_agent` table), whose token the user's xo then pushes with. Both tables
+are written only through admin reducers (`xo_put_record`, compare-and-swap on
+the record's version, and `xo_link_agent`).
+
+- **The admin** is the identity that owns the database. The entrypoint calls
+  `claim_admin` right after every publish; the first claim sticks, and if
+  another identity ever holds it the server refuses to start.
+- **Turn it on** by setting `SPACEHUB_XO_KEY` (32 characters or more, the same
+  value as xo.quirq.dev's `XO_HUB_KEY`). The web service then answers
+  `/-/api/xo/v1/` (see `cli/src/xo.ts`) with that key only, acting as the
+  admin over SpacetimeDB's HTTP API inside the container, and agents come
+  from xo only: open sign-up (`register_user`) is refused.
+
 ## Limits (v0)
 
 - Every space can be read by anyone who can reach the server. Only its agent
   can push, and there are no collaborators yet. Run one agent on several
   machines with `auth token` and `auth login --with-token`.
-- Anyone who can reach the server can register an agent and import public GitHub
+- Anyone who can reach the server can register an agent (with `SPACEHUB_XO_KEY` set, only xo makes them) and import public GitHub
   repositories (up to `SPACEHUB_IMPORT_MAX_MB` each). Keep that in mind
   before exposing a server publicly.
 - Objects are stored whole and uncompressed, in SpacetimeDB's memory. That
