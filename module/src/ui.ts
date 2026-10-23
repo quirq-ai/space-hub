@@ -14,6 +14,7 @@
 //   /<owner>/<space>/activity             that space's activity (?page=N); the home
 //                                         page shows the whole hub's (?page=N)
 //   /builders, /builders/<login>          who built the spaces' code (GitHub accounts and agents)
+//   /guide                                what the hub is, who can use it, how, use cases
 //
 // Behind the server's proxy the original request URI arrives in an
 // X-Spacehub-Uri header and links are written as /<path>. Opened directly on
@@ -24,6 +25,7 @@ import { readObject, type Db } from './store';
 import { DELETE, INSERT, diffLines, toHunks } from './diff';
 import { renderMarkdown, type Resolve } from './markdown';
 import { esc, navFor, PAGE_CSP, shell } from './style';
+import { guideHome, guidePage } from './guide';
 
 export interface UiRequest {
   uri: string;
@@ -712,17 +714,15 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
       .map(g => `<tr><td>${this.builderLink(g.builder)} ${this.builderKind(g.builder)}</td><td class="r muted">${plural(g.spaces.length, 'space')}</td></tr>`)
       .join('');
     const scheme = this.secure ? 'wss' : 'ws';
+    const guide = guideHome({ server: `${scheme}://${this.host}`, host: this.host, link: p => this.link(p) });
     const create = this.viewer ? `<a class="btn primary" href="/-/new">New space</a>` : '';
     return this.page(
       'spacehub',
-      `<div class="grid"><div><div class="bar" style="background:none;border:0;padding:0 0 8px"><h1 class="grow"><b>Spaces</b> <span class="muted">${spaces.length}</span></h1>${create}</div>
+      `${guide}<div class="grid"><div><div class="bar" style="background:none;border:0;padding:0 0 8px"><h1 class="grow"><b>Spaces</b> <span class="muted">${spaces.length}</span></h1>${create}</div>
 <p class="desc">Git spaces on this server, most recently pushed first.</p>
 <div class="box">${rows ? `<table>${rows}</table>` : '<div class="empty">No spaces yet.</div>'}</div>
 <h2 style="margin:24px 0 8px">Activity</h2>${this.activityFeed([...this.db.activity.iter()], '')}</div>
-<aside><h2>Connect</h2><p class="muted">With the spacehub CLI:</p>
-<code class="clone">spacehub auth login --server ${esc(`${scheme}://${this.host}`)} --agent &lt;name&gt;</code>
-<code class="clone">spacehub space create &lt;name&gt; --source . --push</code>
-<h2>Agents <span class="muted">${users.length}</span></h2><div class="box">${people ? `<table>${people}</table>` : '<div class="empty">No agents yet.</div>'}</div>
+<aside><h2>Agents <span class="muted">${users.length}</span></h2><div class="box">${people ? `<table>${people}</table>` : '<div class="empty">No agents yet.</div>'}</div>
 <h2>${this.a('builders', 'Builders')} <span class="muted">${builders.length}</span></h2><div class="box">${builderRows ? `<table>${builderRows}</table>` : '<div class="empty">No builders yet.</div>'}</div></aside></div>`
     );
   }
@@ -1071,6 +1071,10 @@ ${bodyText ? `<pre>${esc(bodyText)}</pre>` : ''}
 
   route(segs: string[]): UiResponse {
     if (segs.length === 0) return this.home();
+    if (segs.length === 1 && segs[0] === 'guide') {
+      const scheme = this.secure ? 'wss' : 'ws';
+      return this.page('Guide · spacehub', guidePage({ server: `${scheme}://${this.host}`, host: this.host, link: p => this.link(p) }));
+    }
     if (segs[0] === 'builders' && segs.length <= 2) return segs[1] ? this.builderPage(segs[1]) : this.buildersPage();
     if (segs.length === 1) return this.owner(segs[0]);
     const sp = this.db.space.fullName.find(`${segs[0]}/${segs[1]}`);

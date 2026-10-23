@@ -185,7 +185,7 @@ const ObjectIn = t.object('ObjectIn', {
 
 const USERNAME = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
 // First path segments the web UI and the server's proxy already use.
-const RESERVED_USERNAMES = new Set(['v1', 'healthz', 'api', 'static', 'assets', 'login', 'settings', 'builders']);
+const RESERVED_USERNAMES = new Set(['v1', 'healthz', 'api', 'static', 'assets', 'login', 'settings', 'builders', 'guide']);
 const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
 const SPACE_NAME = /^[A-Za-z0-9._-]{1,100}$/;
 const OID = /^[0-9a-f]{40}$/;

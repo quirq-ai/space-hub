@@ -62,6 +62,16 @@ details.menu .pop{position:absolute;z-index:10;top:calc(100% + 4px);left:0;min-w
 .md table{width:auto;margin:12px 0;display:block;overflow-x:auto}.md td,.md th{border:1px solid var(--line);padding:6px 13px}.md th{background:var(--subtle)}
 .md blockquote{margin:0 0 16px;padding:0 1em;color:var(--muted);border-left:.25em solid var(--line)}.md img{max-width:100%}
 .img{padding:24px;text-align:center;background:var(--subtle)}.img img{max-width:100%}
+.guide-box{padding:16px 20px;margin-bottom:24px}.guide-lead{margin:0;font-size:15px;flex:1;min-width:240px}
+.guide-head{display:flex;gap:12px 24px;align-items:flex-start;flex-wrap:wrap;margin:0 0 12px}
+.guide-page{max-width:820px}.guide-page section{margin:28px 0 0;padding-top:20px;border-top:1px solid var(--line)}
+.guide-page h2{font-size:18px;margin:0 0 10px}.guide-page h3{font-size:14px;margin:16px 0 6px}.guide-page p,.guide-page li{line-height:1.6}
+.guide-page ol,.guide-page ul{padding-left:20px}.guide-page li{margin:0 0 8px}.guide-page .clone{white-space:pre-wrap;overflow-wrap:anywhere}
+.toc{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 0}.toc a{border:1px solid var(--line);border-radius:2em;padding:2px 12px;font-size:13px}
+.terms{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:12px 0 0}.terms dt{font-weight:600}.terms dd{margin:0}
+.cases{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}.case{border:1px solid var(--line);border-radius:6px;padding:12px 16px}.case h3{margin:0 0 6px}.case p{margin:0 0 8px}
+.guide{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.7fr) minmax(0,1fr);gap:12px 28px}@media (max-width:900px){.guide{grid-template-columns:minmax(0,1fr)}}
+.guide h3{font-size:13px;font-weight:600;margin:0 0 6px}.guide ul,.guide ol{margin:0;padding-left:18px}.guide li{margin:0 0 6px}.guide p{margin:6px 0 0}.guide .clone{margin:4px 0 6px;white-space:pre-wrap;overflow-wrap:anywhere}
 `;
 
 // The page frame: header (home link + `nav` HTML) and the main column.
@@ -71,8 +81,8 @@ export function shell(title: string, nav: string, body: string, head = '', home 
 
 // Header links for a viewer: a signed-in agent (its name) or anonymous (null).
 export function navFor(viewer: string | null): string {
-  if (!viewer) return `<a href="/-/login">Sign in</a><a href="/-/signup">Register</a>`;
-  return `<a href="/-/new">+ New space</a><a class="me" href="/${encodeURIComponent(viewer)}">${esc(viewer)}</a><form method="post" action="/-/logout"><button type="submit">Sign out</button></form>`;
+  if (!viewer) return `<a href="/guide">Guide</a><a href="/-/login">Sign in</a><a href="/-/signup">Register</a>`;
+  return `<a href="/guide">Guide</a><a href="/-/new">+ New space</a><a class="me" href="/${encodeURIComponent(viewer)}">${esc(viewer)}</a><form method="post" action="/-/logout"><button type="submit">Sign out</button></form>`;
 }
 
 export const PAGE_CSP =
