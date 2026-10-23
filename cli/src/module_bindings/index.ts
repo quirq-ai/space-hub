@@ -41,6 +41,8 @@ import FinishObjectReducer from "./finish_object_reducer";
 import PutChunkReducer from "./put_chunk_reducer";
 import PutObjectsReducer from "./put_objects_reducer";
 import RegisterUserReducer from "./register_user_reducer";
+import StartImportReducer from "./start_import_reducer";
+import UpdateImportReducer from "./update_import_reducer";
 import UpdateRefReducer from "./update_ref_reducer";
 
 // Import all procedure arg schemas
@@ -50,6 +52,7 @@ import GitObjectRow from "./git_object_table";
 import GitRefRow from "./git_ref_table";
 import ObjectChunkRow from "./object_chunk_table";
 import SpaceRow from "./space_table";
+import SpaceImportRow from "./space_import_table";
 import UserRow from "./user_table";
 
 /** Type-only namespace exports for generated type groups. */
@@ -130,6 +133,17 @@ const tablesSchema = __schema({
       { name: 'space_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, SpaceRow),
+  spaceImport: __table({
+    name: 'space_import',
+    indexes: [
+      { accessor: 'spaceId', name: 'space_import_space_id_idx_btree', algorithm: 'btree', columns: [
+        'spaceId',
+      ] },
+    ],
+    constraints: [
+      { name: 'space_import_space_id_key', constraint: 'unique', columns: ['spaceId'] },
+    ],
+  }, SpaceImportRow),
   user: __table({
     name: 'user',
     indexes: [
@@ -156,6 +170,8 @@ const reducersSchema = __reducers(
   __reducerSchema("put_chunk", PutChunkReducer),
   __reducerSchema("put_objects", PutObjectsReducer),
   __reducerSchema("register_user", RegisterUserReducer),
+  __reducerSchema("start_import", StartImportReducer),
+  __reducerSchema("update_import", UpdateImportReducer),
   __reducerSchema("update_ref", UpdateRefReducer),
 );
 

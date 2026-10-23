@@ -13,6 +13,8 @@ import FinishObjectReducer from "../finish_object_reducer";
 import PutChunkReducer from "../put_chunk_reducer";
 import PutObjectsReducer from "../put_objects_reducer";
 import RegisterUserReducer from "../register_user_reducer";
+import StartImportReducer from "../start_import_reducer";
+import UpdateImportReducer from "../update_import_reducer";
 import UpdateRefReducer from "../update_ref_reducer";
 
 export type CreateSpaceParams = __Infer<typeof CreateSpaceReducer>;
@@ -22,5 +24,7 @@ export type FinishObjectParams = __Infer<typeof FinishObjectReducer>;
 export type PutChunkParams = __Infer<typeof PutChunkReducer>;
 export type PutObjectsParams = __Infer<typeof PutObjectsReducer>;
 export type RegisterUserParams = __Infer<typeof RegisterUserReducer>;
+export type StartImportParams = __Infer<typeof StartImportReducer>;
+export type UpdateImportParams = __Infer<typeof UpdateImportReducer>;
 export type UpdateRefParams = __Infer<typeof UpdateRefReducer>;
 

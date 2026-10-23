@@ -9,8 +9,9 @@
 #   docker run --rm -it -e SPACEHUB_SERVER=wss://hub.example.com -v spacehub-home:/home/node/.spacehub spacehub auth status
 #
 # The server is SpacetimeDB with the spacehub module published on every start,
-# behind a built-in allowlist proxy on $PORT. The client is git plus the
-# spacehub CLI and git-remote-spacehub.
+# the web service (sign in, sign up, GitHub import) and a built-in allowlist
+# proxy on $PORT. The client is git plus the spacehub CLI and
+# git-remote-spacehub.
 
 ARG SPACETIME_VERSION=v2.12.0
 ARG NODE_VERSION=22
@@ -21,6 +22,7 @@ ARG CADDY_VERSION=2.8.4
 FROM --platform=$BUILDPLATFORM clockworklabs/spacetime:${SPACETIME_VERSION} AS spacetime-tools
 FROM clockworklabs/spacetime:${SPACETIME_VERSION} AS spacetime
 FROM caddy:${CADDY_VERSION} AS caddy
+FROM node:${NODE_VERSION}-bookworm-slim AS node-runtime
 
 FROM --platform=$BUILDPLATFORM node:${NODE_VERSION}-bookworm-slim AS module
 COPY --from=spacetime-tools /opt/spacetime/spacetimedb-cli /usr/local/bin/spacetime
@@ -37,6 +39,8 @@ COPY cli/package.json cli/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY cli/tsconfig.json ./
 COPY cli/src ./src
+# The web service shares the UI's stylesheet with the module.
+COPY module/src/style.ts /src/module/src/style.ts
 RUN npm run build
 
 # ------------------------------------------------------------------ client
@@ -54,18 +58,24 @@ ENTRYPOINT ["spacehub"]
 CMD ["help"]
 
 # ------------------------------------------------------------------ server (default)
-# Only the SpacetimeDB binaries and Caddy; the stock SpacetimeDB image also
-# carries Rust and .NET toolchains for building modules.
+# SpacetimeDB's binaries, Caddy, and Node + git for the web service's GitHub
+# imports; the stock SpacetimeDB image also carries Rust and .NET toolchains
+# for building modules, which a server does not need.
 FROM debian:bookworm-slim AS server
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl \
+ && apt-get install -y --no-install-recommends ca-certificates curl git \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --create-home --uid 1000 spacetime \
  && mkdir -p /data /opt/spacehub \
  && chown spacetime:spacetime /data
 COPY --from=spacetime /opt/spacetime /opt/spacetime
 COPY --from=caddy /usr/bin/caddy /usr/local/bin/caddy
-RUN ln -s /opt/spacetime/spacetimedb-cli /usr/local/bin/spacetime
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=cli /src/cli/dist /opt/spacehub/cli/dist
+COPY cli/bin /opt/spacehub/cli/bin
+RUN ln -s /opt/spacetime/spacetimedb-cli /usr/local/bin/spacetime \
+ && ln -s /opt/spacehub/cli/bin/spacehub /usr/local/bin/spacehub \
+ && ln -s /opt/spacehub/cli/bin/git-remote-spacehub /usr/local/bin/git-remote-spacehub
 COPY --from=module /src/module/dist/bundle.js /opt/spacehub/module.js
 COPY docker/server.Caddyfile /opt/spacehub/Caddyfile
 COPY --chmod=755 docker/server-entrypoint.sh /usr/local/bin/spacehub-server
@@ -77,6 +87,7 @@ COPY --chmod=755 docker/server-entrypoint.sh /usr/local/bin/spacehub-server
 ENV SPACEHUB_DB=spacehub \
     SPACETIME_ROOT=/data \
     SPACETIME_INTERNAL_PORT=3001 \
+    SPACEHUB_WEB_PORT=3002 \
     PORT=3000
 VOLUME ["/data"]
 EXPOSE 3000

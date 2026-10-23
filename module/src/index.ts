@@ -93,7 +93,21 @@ const objectChunk = table(
   }
 );
 
-const spacetimedb = schema({ user, space, gitRef, gitObject, objectChunk });
+// Where a space was imported from (GitHub) and how the last import went.
+// Written by the web service on behalf of the space's owner.
+const spaceImport = table(
+  { name: 'space_import', public: true },
+  {
+    spaceId: t.u64().primaryKey(),
+    source: t.string(),
+    status: t.string(), // running | done | failed
+    message: t.string(),
+    startedAt: t.timestamp(),
+    updatedAt: t.timestamp(),
+  }
+);
+
+const spacetimedb = schema({ user, space, gitRef, gitObject, objectChunk, spaceImport });
 export default spacetimedb;
 
 type Ctx = ReducerCtx<InferSchema<typeof spacetimedb>>;
@@ -215,6 +229,7 @@ export const deleteSpace = spacetimedb.reducer({ space: t.string() }, (ctx, { sp
   for (const ref of [...ctx.db.gitRef.spaceId.filter(sp.id)]) ctx.db.gitRef.id.delete(ref.id);
   for (const obj of [...ctx.db.gitObject.bySpacePos.filter(sp.id)]) ctx.db.gitObject.id.delete(obj.id);
   for (const chunk of [...ctx.db.objectChunk.bySpaceOid.filter(sp.id)]) ctx.db.objectChunk.id.delete(chunk.id);
+  ctx.db.spaceImport.spaceId.delete(sp.id);
   ctx.db.space.id.delete(sp.id);
 });
 
@@ -344,11 +359,49 @@ export const updateRef = spacetimedb.reducer(
   }
 );
 
+const GITHUB_SOURCE = /^https:\/\/github\.com\/[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/;
+const IMPORT_STALE_MICROS = 3_600_000_000n;
+
+// Record that an import into the space has started.
+export const startImport = spacetimedb.reducer(
+  { space: t.string(), source: t.string() },
+  (ctx, { space: fullName, source }) => {
+    const sp = requireWritable(ctx, fullName);
+    if (!GITHUB_SOURCE.test(source)) throw new SenderError('only https://github.com/<owner>/<repo> can be imported');
+    const row = ctx.db.spaceImport.spaceId.find(sp.id);
+    if (row && row.status === 'running' && ctx.timestamp.microsSinceUnixEpoch - row.updatedAt.microsSinceUnixEpoch < IMPORT_STALE_MICROS) {
+      throw new SenderError('an import into this space is already running');
+    }
+    const next = { spaceId: sp.id, source, status: 'running', message: 'starting', startedAt: ctx.timestamp, updatedAt: ctx.timestamp };
+    if (row) ctx.db.spaceImport.spaceId.update(next);
+    else ctx.db.spaceImport.insert(next);
+  }
+);
+
+// Report progress or the outcome of an import.
+export const updateImport = spacetimedb.reducer(
+  { space: t.string(), status: t.string(), message: t.string() },
+  (ctx, { space: fullName, status, message }) => {
+    const sp = requireWritable(ctx, fullName);
+    if (!['running', 'done', 'failed'].includes(status)) throw new SenderError(`invalid import status "${status}"`);
+    const row = ctx.db.spaceImport.spaceId.find(sp.id);
+    if (!row) throw new SenderError(`no import recorded for "${fullName}"`);
+    ctx.db.spaceImport.spaceId.update({ ...row, status, message: message.slice(0, 2000), updatedAt: ctx.timestamp });
+  }
+);
+
 // The web UI. Behind the server image's proxy every page lands here with
 // the original request URI in X-Spacehub-Uri; see ui.ts for the pages.
 export const ui = spacetimedb.httpHandler((ctx, req) => {
-  const now = Number(ctx.timestamp.microsSinceUnixEpoch / 1_000_000n);
-  const res = ctx.withTx(tx => renderUi(tx.db, req.uri, req.headers.get('x-spacehub-uri'), now));
+  const res = ctx.withTx(tx =>
+    renderUi(tx.db, {
+      uri: req.uri,
+      forwardedUri: req.headers.get('x-spacehub-uri'),
+      cookie: req.headers.get('cookie'),
+      proto: req.headers.get('x-forwarded-proto'),
+      now: Number(ctx.timestamp.microsSinceUnixEpoch / 1_000_000n),
+    })
+  );
   return new SyncResponse(res.body, { status: res.status, headers: res.headers });
 });
 

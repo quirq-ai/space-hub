@@ -3,13 +3,18 @@
 #   - the two endpoints clients need: one swaps an identity token for a
 #     short-lived websocket token, the other is the database websocket;
 #   - /healthz;
-#   - everything else as the read-only web UI, which the module renders
-#     (original request URI passed in X-Spacehub-Uri).
+#   - /-/* : the web service (sign in, sign up, create and import spaces);
+#   - everything else as the web UI, which the module renders (original
+#     request URI passed in X-Spacehub-Uri).
 # Publishing modules, SQL, logs and deletes stay unreachable.
 {
 	admin off
 	auto_https off
 	persist_config off
+	servers {
+		# The platform's ingress terminates TLS; trust its X-Forwarded-Proto.
+		trusted_proxies static private_ranges
+	}
 }
 
 :{$PORT:3000} {
@@ -20,6 +25,9 @@
 	handle /healthz {
 		rewrite * /v1/ping
 		reverse_proxy 127.0.0.1:{$SPACETIME_INTERNAL_PORT:3001}
+	}
+	handle /-/* {
+		reverse_proxy 127.0.0.1:{$SPACEHUB_WEB_PORT:3002}
 	}
 	handle {
 		rewrite * /v1/database/{$SPACEHUB_DB:spacehub}/route/ui

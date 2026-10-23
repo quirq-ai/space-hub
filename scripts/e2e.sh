@@ -12,9 +12,11 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PORT="${PORT:-3197}"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/spacehub-e2e.XXXXXX")"
 SERVER_PID=""
+WEB_PID=""
 PASS=0
 
 cleanup() {
+  if [[ -n "$WEB_PID" ]]; then kill "$WEB_PID" 2>/dev/null; wait "$WEB_PID" 2>/dev/null; fi
   if [[ -n "$SERVER_PID" ]]; then kill "$SERVER_PID" 2>/dev/null; wait "$SERVER_PID" 2>/dev/null; fi
   rm -rf "$WORK"
 }
@@ -68,12 +70,14 @@ fi
 
 # The web UI: through the server image's proxy it lives at the root; on a
 # bare SpacetimeDB it is the module's route, with the page path in ?p=.
-ui() { # ui <path> -> URL
+ui() { # ui <path>[?query] -> URL
+  local page="${1%%\?*}" query=""
+  [[ "$1" == *\?* ]] && query="${1#*\?}"
   if [[ -n "${SPACEHUB_E2E_SERVER:-}" ]]; then
     local base="${SPACEHUB_SERVER/#ws/http}"
-    printf '%s/%s' "$base" "$1"
+    printf '%s/%s%s' "$base" "$page" "${query:+?$query}"
   else
-    printf 'http://127.0.0.1:%s/v1/database/%s/route/ui?p=%s' "$PORT" "$SPACEHUB_DB" "$(python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1]))' "$1")"
+    printf 'http://127.0.0.1:%s/v1/database/%s/route/ui?p=%s%s' "$PORT" "$SPACEHUB_DB" "$(python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1]))' "$page")" "${query:+&$query}"
   fi
 }
 page_has() { # page_has <label> <path> <text>
@@ -113,7 +117,8 @@ echo "first push and clone"
 A="$WORK/a"; B="$WORK/b"
 git init -q -b main "$A"
 cd "$A"
-echo hello >a.txt; mkdir -p d/e; echo deep >d/e/b.txt; printf '\x00\x01binary' >bin.dat
+echo hello >a.txt; mkdir -p d/e; echo deep >d/e/b.txt; printf '\x00\x01binary' >bin.dat; : >empty.txt
+printf '# Notes\n\nSome *notes* and a [link](d/e/b.txt).\n\n| key | value |\n|-----|-------|\n| a   | 1     |\n' >README.md
 git add . && commit -m first
 echo two >>a.txt && commit -am second
 git remote add spacehub "spacehub://$NOTES"
@@ -219,6 +224,49 @@ page_has "commit page lists changed files" "$NOTES/commit/$(git -C "$A" rev-pars
 page_has "branches and tags" "$NOTES/refs" "v2"
 same "raw binary is served as bytes" "$(curl -s -o /dev/null -w '%{content_type}' "$(ui "$NOTES/raw/main/bin.dat")")" "application/octet-stream"
 status_is "unknown space is a 404" "$ALICE/nope" 404
+page_has "README renders as Markdown" "$NOTES" "<td>1</td>"
+page_has "README links are real links" "$NOTES" ">link</a>"
+page_has "Markdown source view" "$NOTES/blob/main/README.md?plain=1" 'id="L1"'
+page_has "branch and tag picker" "$NOTES/tree/main" 'class="menu"'
+page_has "file history" "$NOTES/commits/main/a.txt" "second"
+page_has "commit page shows line diffs" "$NOTES/commit/$(git -C "$A" rev-parse HEAD)" 'class="add"'
+page_has "empty file is browsable" "$NOTES/blob/main/empty.txt" "0 lines"
+
+echo "web service (sign up, create, import)"
+if [[ -n "${SPACEHUB_E2E_SERVER:-}" ]]; then
+  WEB="${SPACEHUB_SERVER/#ws/http}"
+else
+  WEB_PORT=$((PORT + 1))
+  SPACEHUB_WEB_PORT=$WEB_PORT node "$ROOT/cli/dist/web.mjs" >"$WORK/web.log" 2>&1 &
+  WEB_PID=$!
+  WEB="http://127.0.0.1:$WEB_PORT"
+  for _ in $(seq 1 50); do curl -s -o /dev/null "$WEB/-/login" && break; sleep 0.1; done
+fi
+JAR="$WORK/jar"; WEBUSER="web$RUN"
+form() { # form <path> key=value... -> "<status> <location>"
+  local url="$1"; shift; local args=()
+  for kv in "$@"; do args+=(--data-urlencode "$kv"); done
+  curl -s -o "$WORK/form.html" -w '%{http_code} %{redirect_url}' -b "$JAR" -c "$JAR" -H "Origin: $WEB" -X POST "$WEB$url" ${args[@]+"${args[@]}"}
+}
+same "sign up from the browser" "$(form /-/signup "username=$WEBUSER" | cut -d' ' -f1)" "200"
+grep -q "spacehub_session" "$JAR" && ok "session cookie set" || fail "session cookie set"
+same "create an empty space from the browser" "$(form /-/new name=fromweb 'description=made in the UI')" "303 $WEB/$WEBUSER/fromweb"
+check "the CLI sees it" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub space list $WEBUSER | grep -q '$WEBUSER/fromweb'"
+same "forms from another site are refused" "$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" -X POST "$WEB/-/new" --data name=x)" "403"
+same "only GitHub URLs can be imported" "$(form /-/new github=https://example.com/a/b | cut -d' ' -f1)" "400"
+WEBTOKEN="$(python3 -c "import sys,urllib.parse;[print(urllib.parse.unquote(l.split()[-1])) for l in open(sys.argv[1]) if 'spacehub_session' in l]" "$JAR")"
+same "sign out" "$(form /-/logout | cut -d' ' -f1)" "303"
+same "signed-out users are sent to sign in" "$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' -b "$JAR" "$WEB/-/new")" "303 $WEB/-/login?next=%2F-%2Fnew"
+same "a bad token is refused" "$(form /-/login token=nonsense | cut -d' ' -f1)" "400"
+same "sign in with the token" "$(form /-/login "token=$WEBTOKEN" next=/)" "303 $WEB/"
+if [[ "${SPACEHUB_E2E_GITHUB:-}" == 1 ]]; then
+  same "import from GitHub" "$(form /-/new github=https://github.com/octocat/Hello-World)" "303 $WEB/$WEBUSER/Hello-World"
+  for _ in $(seq 1 60); do
+    SPACEHUB_HOME="$WORK/home-alice" spacehub space view "$WEBUSER/Hello-World" 2>/dev/null | grep -q "heads/master" && break
+    sleep 1
+  done
+  check "imported branches are there" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub space view $WEBUSER/Hello-World | grep -q heads/master"
+fi
 
 echo "create from an existing repo, edit"
 P="$WORK/p"; git init -q -b main "$P"; (cd "$P" && echo p >p.txt && git add . && commit -m p)

@@ -16,7 +16,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "esbuild src/cli.ts src/remote.ts --bundle --platform=node --format=esm --target=node22 --out-extension:.js=.mjs --outdir=dist --log-level=warning",
+    "build": "esbuild src/cli.ts src/remote.ts src/web.ts --bundle --platform=node --format=esm --target=node22 --out-extension:.js=.mjs --outdir=dist --log-level=warning",
     "typecheck": "tsc --noEmit -p .",
     "generate": "spacetime generate --yes --lang typescript --out-dir src/module_bindings --module-path ../module"
   },

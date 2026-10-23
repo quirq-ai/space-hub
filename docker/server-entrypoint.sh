@@ -1,8 +1,9 @@
 #!/bin/sh
 # Start SpacetimeDB on an internal port and the allowlist proxy on the
-# public port, then publish (or update) the spacehub module. The proxy comes
-# up first so platform probes see an open port at once; /healthz only turns
-# 200 once SpacetimeDB answers.
+# public port, publish (or update) the spacehub module, then start the web
+# service (sign in, sign up, GitHub import). The proxy comes up first so
+# platform probes see an open port at once; /healthz only turns 200 once
+# SpacetimeDB answers.
 # Publishing never passes --delete-data: a breaking schema change makes
 # startup fail instead of wiping spaces.
 set -eu
@@ -33,8 +34,9 @@ spacetime --root-dir "$ROOT" start --listen-addr "$INTERNAL" --non-interactive &
 server=$!
 caddy run --config /opt/spacehub/Caddyfile --adapter caddyfile &
 proxy=$!
+web=""
 stop() {
-  kill -TERM "$server" "$proxy" 2>/dev/null || true
+  kill -TERM "$server" "$proxy" $web 2>/dev/null || true
   wait
 }
 trap 'stop; exit 0' TERM INT
@@ -55,9 +57,11 @@ done
 
 spacetime --root-dir "$ROOT" publish --server "http://$INTERNAL" "$DB" --js-path /opt/spacehub/module.js --yes
 
+SPACEHUB_SERVER="ws://$INTERNAL" SPACEHUB_DB="$DB" node /opt/spacehub/cli/dist/web.mjs &
+web=$!
 echo "spacehub: serving database \"$DB\" on port $PORT"
 
-while kill -0 "$server" 2>/dev/null && kill -0 "$proxy" 2>/dev/null; do
+while kill -0 "$server" 2>/dev/null && kill -0 "$proxy" 2>/dev/null && kill -0 "$web" 2>/dev/null; do
   sleep 2
 done
 echo "spacehub: a server process exited; stopping" >&2

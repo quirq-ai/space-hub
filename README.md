@@ -35,6 +35,7 @@ public port (`$PORT`, default 3000) is a built-in Caddy allowlist. It serves:
 - the two client endpoints: the identity-token exchange and the database
   websocket;
 - `/healthz`, for health checks;
+- `/-/*`: the web service (sign in, sign up, create and import spaces);
 - everything else: the web UI (see below).
 
 Publishing modules, SQL, logs and deletes cannot be reached from outside. On
@@ -45,6 +46,7 @@ that would delete data makes startup fail rather than wipe spaces.
 | --- | --- | --- |
 | `PORT` | `3000` | Public port |
 | `SPACEHUB_DB` | `spacehub` | Database name clients pass with `--db` |
+| `SPACEHUB_IMPORT_MAX_MB` | `500` | Largest GitHub repository the UI will import |
 | `/data` volume | | Databases, the server's signing keys, and the identity that owns the module. **Mount persistent storage here and back it up.** Without it, a restart forgets all spaces and invalidates every client token |
 
 The container starts as root only to take ownership of `/data`, because
@@ -79,26 +81,49 @@ instead: `scripts/setup.sh maincloud`. Pick a unique name with `SPACEHUB_DB`.
 
 ## Web UI
 
-The server's URL is also a small, read-only, GitHub-style site. The module
-renders it straight from the tables, as plain HTML with no JavaScript.
+The server's URL is also a GitHub-style site. The module renders every page
+straight from the tables, as plain HTML with no JavaScript.
+
+**Browse**
 
 | Path | Shows |
 | --- | --- |
 | `/` | All spaces, most recently pushed first, plus people and how to connect |
 | `/<owner>` | An owner's spaces |
-| `/<owner>/<space>` | Files at the default branch, README, clone commands, branch and tag counts |
-| `/<owner>/<space>/tree/<ref>/<path>` | A folder at a branch, tag or commit |
-| `/<owner>/<space>/blob/<ref>/<path>` | A file with line numbers |
+| `/<owner>/<space>` | Files at the default branch, each with its last commit; the README rendered as Markdown; clone commands, commit, branch and tag counts |
+| `/<owner>/<space>/tree/<ref>/<path>` | A folder at a branch, tag or commit, with a branch/tag picker |
+| `/<owner>/<space>/blob/<ref>/<path>` | A file. Code has linkable line numbers (`#L12`); Markdown is rendered (`?plain=1` shows the source); images are shown |
 | `/<owner>/<space>/raw/<ref>/<path>` | The file's bytes |
-| `/<owner>/<space>/commits/<ref>` | History (latest 100) |
-| `/<owner>/<space>/commit/<oid>` | One commit and the files it changed |
-| `/<owner>/<space>/refs` | Branches and tags |
+| `/<owner>/<space>/commits/<ref>/<path>` | History, grouped by day and paged (`?page=2`). With a path, only the commits that changed it |
+| `/<owner>/<space>/commit/<oid>` | One commit: message, author, parents, and a line diff of every changed file |
+| `/<owner>/<space>/refs` | Branches and tags, with tag messages |
 
-Raw files are served as `text/plain` or `application/octet-stream`, inside
-a sandbox, so a pushed HTML file can't run on the server's origin. On a bare
-`spacetime start`, open
-`http://127.0.0.1:3000/v1/database/spacehub/route/ui`, where links use
-`?p=<path>`.
+**Add from the browser**
+
+- **Sign up** (`/-/signup`) picks a username and creates your identity. The
+  token is shown once: it is your account, and you can use it with the CLI
+  (`spacehub auth login --with-token`).
+- **Sign in** (`/-/login`) takes an existing token, for example from
+  `spacehub auth token`.
+- **New space** (`/-/new`) creates an empty space, or imports a public
+  GitHub repository. Paste `https://github.com/owner/repo`, and the server
+  clones it with all branches, tags and history into `<you>/<repo>`, using
+  GitHub's description and default branch. The space page shows the import's
+  progress.
+- **Sync from GitHub**, on an imported space, pulls GitHub's latest branches
+  and tags again. Moved or deleted branches follow GitHub.
+
+The web service runs inside the server container and acts as the signed-in
+user, so the database's ownership rules apply to every action. Your session
+is your token in an `HttpOnly` cookie. Forms only work from the site itself.
+Only `github.com` URLs are accepted, which keeps the server from being
+pointed at internal addresses. Private repositories can't be imported yet.
+
+Raw files are served as `text/plain`, an image type, or
+`application/octet-stream`, inside a sandbox, so a pushed HTML file can't
+run on the server's origin. On a bare `spacetime start` (no web service),
+browse at `http://127.0.0.1:3000/v1/database/spacehub/route/ui`, where links
+use `?p=<path>`.
 
 ## Install the client
 
@@ -156,7 +181,8 @@ spacetime start                           # terminal 1
 scripts/setup.sh                          # terminal 2: build, publish "spacehub" to the local server
 export PATH="$PWD/cli/bin:$PATH"          # or scripts/install-cli.sh
 spacehub auth login --username <you>      # defaults to ws://127.0.0.1:3000
-scripts/e2e.sh                            # 70 checks against a throwaway in-memory server
+scripts/e2e.sh                            # 89 checks against a throwaway in-memory server
+SPACEHUB_E2E_GITHUB=1 scripts/e2e.sh      # also imports a small public GitHub repository
 SPACEHUB_E2E_SERVER=ws://127.0.0.1:3000 scripts/e2e.sh   # against a running server, e.g. the Docker one
 ```
 
@@ -168,11 +194,15 @@ After changing the module, regenerate the client bindings with
 ```
 module/src/index.ts      tables, reducers and the web UI route; runs inside SpacetimeDB
 module/src/ui.ts         the web UI pages
+module/src/markdown.ts   safe Markdown for READMEs and .md files
+module/src/diff.ts       line diffs for commit pages
+module/src/style.ts      look and page frame, shared with the web service
 module/src/store.ts      reads objects back out of the tables
 module/src/sha1.ts       lets the database verify every object id
 cli/src/cli.ts           spacehub (auth, space)
 cli/src/remote.ts        git-remote-spacehub
 cli/src/git.ts           git plumbing: rev-list, cat-file, packfile writer
+cli/src/web.ts           web service: sign in/up, create and import spaces
 cli/src/module_bindings  generated, do not edit
 Dockerfile               targets: server (default), client
 docker-compose.yml       server + Caddy TLS front
@@ -220,6 +250,9 @@ a push as soon as it commits. No polling is involved.
 - Every space can be read by anyone who can reach the server. Only the owner
   can push, and there are no collaborators yet. Share one identity across
   machines with `auth token` and `auth login --with-token`.
+- Anyone who can reach the server can sign up and import public GitHub
+  repositories (up to `SPACEHUB_IMPORT_MAX_MB` each). Keep that in mind
+  before exposing a server publicly.
 - Objects are stored whole and uncompressed, in SpacetimeDB's memory. That
   suits code, not big binaries. The object size cap is 100 MiB.
 - Transfers carry whole objects, not deltas. There are no shallow clones.

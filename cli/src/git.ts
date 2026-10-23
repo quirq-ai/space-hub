@@ -102,6 +102,7 @@ class StreamReader {
   }
 
   async read(n: number): Promise<Buffer> {
+    if (n === 0) return Buffer.alloc(0);
     while (this.length < n) {
       if (!(await this.pull())) throw new Error('unexpected end of git output');
     }
@@ -142,8 +143,11 @@ export async function* readObjects(oids: string[]): AsyncGenerator<RawObject> {
       yield { oid, kind, data };
     }
   } finally {
+    // Unread output keeps the pipe (and the 'close' event) open, so drop it
+    // rather than wait for it.
+    child.stdout.destroy();
     child.kill();
-    await exited;
+    await Promise.race([exited, new Promise(resolve => setTimeout(resolve, 1000))]);
   }
 }
 

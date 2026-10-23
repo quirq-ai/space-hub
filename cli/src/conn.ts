@@ -20,28 +20,37 @@ export function quietSdkLogs() {
   console.debug = toStderr;
 }
 
-export async function connect(): Promise<{ conn: Conn; identity: Identity; server: string; database: string }> {
-  const cfg = loadConfig();
+// Connect with an explicit token (or none, which creates a new identity).
+export function connectTo(
+  server: string,
+  database: string,
+  token?: string
+): Promise<{ conn: Conn; identity: Identity; token: string }> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error(`timed out connecting to ${cfg.server} (database "${cfg.database}")`)),
-      15_000
-    );
+    const timer = setTimeout(() => reject(new Error(`timed out connecting to ${server} (database "${database}")`)), 15_000);
     DbConnection.builder()
-      .withUri(cfg.server)
-      .withDatabaseName(cfg.database)
-      .withToken(cfg.token)
-      .onConnect((conn, identity, token) => {
+      .withUri(server)
+      .withDatabaseName(database)
+      .withToken(token)
+      .onConnect((conn, identity, issued) => {
         clearTimeout(timer);
-        if (!cfg.token && !process.env.SPACEHUB_TOKEN) saveToken(cfg.server, token);
-        resolve({ conn, identity, server: cfg.server, database: cfg.database });
+        resolve({ conn, identity, token: issued });
       })
       .onConnectError((_ctx, err) => {
         clearTimeout(timer);
-        reject(new Error(`cannot connect to ${cfg.server} (database "${cfg.database}"): ${err?.message ?? err}`));
+        reject(new Error(`cannot connect to ${server} (database "${database}"): ${err?.message ?? err}`));
       })
       .build();
   });
+}
+
+// Connect as the identity saved for the configured server, creating and
+// saving one on first use.
+export async function connect(): Promise<{ conn: Conn; identity: Identity; server: string; database: string }> {
+  const cfg = loadConfig();
+  const { conn, identity, token } = await connectTo(cfg.server, cfg.database, cfg.token);
+  if (!cfg.token && !process.env.SPACEHUB_TOKEN) saveToken(cfg.server, token);
+  return { conn, identity, server: cfg.server, database: cfg.database };
 }
 
 // Subscribe to `query`, run `read` once the rows are in the cache, then drop
