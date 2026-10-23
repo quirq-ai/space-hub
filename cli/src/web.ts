@@ -6,6 +6,8 @@
 //   POST     /-/logout           forget the session
 //   GET/POST /-/new              create a space, optionally imported from GitHub
 //   POST     /-/sync/<o>/<name>  pull the space's GitHub source again
+//   *        /-/api/xo/v1/...    xo.quirq.dev's store and agents (xo.ts), only
+//                                with SPACEHUB_XO_KEY set
 //
 // Pages are read by the module (ui.ts); this service only acts. A session is
 // the user's identity token in an HttpOnly cookie, so every action runs as
@@ -19,6 +21,7 @@ import { fileURLToPath } from 'node:url';
 import { connectTo, errorMessage, findSpace, findUser, quietSdkLogs, snapshot, tables, type Conn } from './conn';
 import { githubLogin, normalizeServer } from './config';
 import { esc, navFor, PAGE_CSP, shell } from '../../module/src/style';
+import { handleXo, xoConfig } from './xo';
 
 quietSdkLogs();
 
@@ -28,9 +31,10 @@ const DB = process.env.SPACEHUB_DB ?? 'spacehub';
 const MAX_IMPORT_MB = Number(process.env.SPACEHUB_IMPORT_MAX_MB ?? 500);
 const IMPORT_TIMEOUT_MS = 30 * 60 * 1000;
 const MAX_CONCURRENT_IMPORTS = 2;
-// git finds git-remote-spacehub on PATH; also look next to this bundle.
+// git finds git-remote-quirq on PATH; also look next to this bundle.
 const HELPER_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../bin');
 const YEAR = 60 * 60 * 24 * 365;
+const XO = xoConfig(DB);
 
 const USERNAME = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
 const SPACE_NAME = /^[A-Za-z0-9._-]{1,100}$/;
@@ -191,10 +195,17 @@ interface Job {
 const queue: Job[] = [];
 let running = 0;
 
+// Imports run git on repositories from anywhere: they never see the xo key or
+// the admin's token.
+function childEnv() {
+  const { SPACEHUB_XO_KEY: _key, SPACEHUB_ADMIN_TOKEN: _admin, ...rest } = process.env;
+  return rest;
+}
+
 function run(cmd: string, args: string[], env: Record<string, string> = {}): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, {
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', PATH: `${HELPER_DIR}:${process.env.PATH ?? ''}`, ...env },
+      env: { ...childEnv(), GIT_TERMINAL_PROMPT: '0', PATH: `${HELPER_DIR}:${process.env.PATH ?? ''}`, ...env },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     const out: Buffer[] = [];
@@ -226,7 +237,7 @@ async function runJob(job: Job) {
       await report('running', 'uploading to spacehub');
       await run(
         'git',
-        ['-C', repo, 'push', '--quiet', ...(job.sync ? ['--force', '--prune'] : []), `spacehub://${job.space}`, 'refs/heads/*:refs/heads/*', 'refs/tags/*:refs/tags/*'],
+        ['-C', repo, 'push', '--quiet', ...(job.sync ? ['--force', '--prune'] : []), `quirq://${job.space}`, 'refs/heads/*:refs/heads/*', 'refs/tags/*:refs/tags/*'],
         { SPACEHUB_TOKEN: job.token, SPACEHUB_SERVER: SERVER, SPACEHUB_DB: DB, SPACEHUB_HOME: path.join(tmp, 'home') }
       );
       const head = (await run('git', ['-C', repo, 'symbolic-ref', '--short', 'HEAD']).catch(() => '')).trim();
@@ -319,6 +330,8 @@ function welcomePage(username: string, token: string) {
 async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   const url = new URL(req.url ?? '/', 'http://local');
   const route = url.pathname;
+  // Called by xo.quirq.dev with its key, not from the site's forms.
+  if (await handleXo(XO, req, res)) return;
   if (req.method === 'POST' && !sameOrigin(req)) return send(res, 403, page('Forbidden', null, '<h1>Forbidden</h1><p class="desc">This form must be sent from this site.</p>'));
 
   if (route === '/-/login') {
@@ -446,4 +459,4 @@ http
       else res.end();
     });
   })
-  .listen(PORT, '127.0.0.1', () => process.stderr.write(`spacehub-web: listening on 127.0.0.1:${PORT} (database ${DB} at ${SERVER})\n`));
+  .listen(PORT, '127.0.0.1', () => process.stderr.write(`spacehub-web: listening on 127.0.0.1:${PORT} (database ${DB} at ${SERVER})${XO ? ', xo API on' : ''}\n`));

@@ -11,7 +11,7 @@
 # The server is SpacetimeDB with the spacehub module published on every start,
 # the web service (sign in, sign up, GitHub import) and a built-in allowlist
 # proxy on $PORT. The client is git plus the spacehub CLI and
-# git-remote-spacehub.
+# git-remote-quirq.
 
 ARG SPACETIME_VERSION=v2.12.0
 ARG NODE_VERSION=22
@@ -49,6 +49,7 @@ RUN apk add --no-cache git openssh-client ca-certificates
 COPY --from=cli /src/cli/dist /opt/spacehub/dist
 COPY cli/bin /opt/spacehub/bin
 RUN ln -s /opt/spacehub/bin/spacehub /usr/local/bin/spacehub \
+ && ln -s /opt/spacehub/bin/git-remote-quirq /usr/local/bin/git-remote-quirq \
  && ln -s /opt/spacehub/bin/git-remote-spacehub /usr/local/bin/git-remote-spacehub
 USER node
 # Your identity lives in ~/.spacehub; mount a volume there to keep it.
@@ -75,9 +76,11 @@ COPY --from=cli /src/cli/dist /opt/spacehub/cli/dist
 COPY cli/bin /opt/spacehub/cli/bin
 RUN ln -s /opt/spacetime/spacetimedb-cli /usr/local/bin/spacetime \
  && ln -s /opt/spacehub/cli/bin/spacehub /usr/local/bin/spacehub \
+ && ln -s /opt/spacehub/cli/bin/git-remote-quirq /usr/local/bin/git-remote-quirq \
  && ln -s /opt/spacehub/cli/bin/git-remote-spacehub /usr/local/bin/git-remote-spacehub
 COPY --from=module /src/module/dist/bundle.js /opt/spacehub/module.js
 COPY docker/server.Caddyfile /opt/spacehub/Caddyfile
+COPY docker/starting.Caddyfile /opt/spacehub/starting.Caddyfile
 COPY --chmod=755 docker/server-entrypoint.sh /usr/local/bin/spacehub-server
 # The entrypoint starts as root only to take ownership of /data (platform
 # volumes usually mount root-owned), then runs everything as `spacetime`.

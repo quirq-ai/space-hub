@@ -1,11 +1,13 @@
 // spacehub: the client for a spacehub server, shaped like gh. `auth` manages
 // who you are on which server; `space` (alias `repo`) manages spaces. Moving
-// code is plain git through git-remote-spacehub (spacehub://owner/name).
+// code is plain git through git-remote-quirq, on a remote always named quirq
+// that always points at a quirq URL (quirq://hub.quirq.dev/owner/name).
 import { spawn } from 'node:child_process';
 import readline from 'node:readline/promises';
 import { configFile, githubLogin, loadConfig, removeToken, saveSettings, saveToken } from './config';
 import { connect, errorMessage, findSpace, findUser, listRefs, quietSdkLogs, snapshot, tables, type Conn } from './conn';
 import { git } from './git';
+import { hubUrl, parseHubUrl, REMOTE } from './url';
 
 quietSdkLogs();
 
@@ -27,7 +29,7 @@ AUTH
 SPACES (alias: repo)
   space create <name>             Create <agent>/<name>
                                     [-d <text>] [--source <dir> [--remote <name>] [--push]] [--clone]
-                                    (git remotes for spacehub are always named "spacehub")
+                                    (the hub's git remote is always named "quirq")
   space list [<owner>]            List spaces
   space view [<space>]            Default branch, size and refs
   space clone <space> [<dir>]     git clone a space (extra flags after --)
@@ -35,18 +37,20 @@ SPACES (alias: repo)
                                     [--builder <GitHub user/org or github.com URL>]
                                     (--builder "" goes back to the default: the GitHub source, else the agent)
   space delete <space> --yes      Delete a space and all its history
-  space sync                      Fast-forward the current branch from its spacehub remote
+  space sync                      Fast-forward the current branch from its quirq remote
                                     [--remote <name>] [--push] [--watch]
   space watch [<space>]           Stream ref changes live  [--exec <command>]
 
   <space> is agent/name, or just name for this agent's spaces. Inside a clone it
-  defaults to the repository's spacehub remote.
+  defaults to the repository's quirq remote.
 
 GIT
-  spacehub's remote is always named "spacehub", so origin stays free for GitHub:
-  git clone -o spacehub spacehub://<owner>/<name>
-  git remote add spacehub spacehub://<owner>/<name>
-  git push spacehub | git fetch spacehub | git pull spacehub main
+  The hub's remote is always named "quirq" and points at a quirq URL, so origin
+  stays free for GitHub:
+  git clone -o quirq quirq://hub.quirq.dev/<owner>/<name>
+  git remote add quirq quirq://hub.quirq.dev/<owner>/<name>
+  git push quirq | git fetch quirq | git pull quirq main
+  (the default server is wss://hub.quirq.dev)
 
 ENVIRONMENT
   SPACEHUB_SERVER, SPACEHUB_DB, SPACEHUB_TOKEN, SPACEHUB_HOME override the saved settings.`;
@@ -130,12 +134,11 @@ async function username(): Promise<string> {
 // ---------------------------------------------------------------- spaces in git
 
 function parseSpaceUrl(url: string): string | null {
-  const m = /^spacehub:(?:\/\/)?([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/.exec(url.trim());
-  return m ? `${m[1]}/${m[2]}` : null;
+  return parseHubUrl(url)?.space ?? null;
 }
 
-// The spacehub remote of the repository in `cwd`: the one named `prefer`,
-// else "spacehub", else origin (older clones), else any spacehub:// remote.
+// The hub remote of the repository in `cwd`: the one named `prefer`, else
+// "quirq", else "spacehub" or origin (older clones), else any quirq:// remote.
 async function spaceRemote(prefer?: string, cwd?: string): Promise<{ remote: string; space: string } | null> {
   let names: string[];
   try {
@@ -144,19 +147,21 @@ async function spaceRemote(prefer?: string, cwd?: string): Promise<{ remote: str
     return null;
   }
   if (prefer && !names.includes(prefer)) die(`no remote named "${prefer}"`);
-  const order = [...new Set([prefer, 'spacehub', 'origin', ...names].filter((n): n is string => !!n && names.includes(n)))];
+  const order = [...new Set([prefer, REMOTE, 'spacehub', 'origin', ...names].filter((n): n is string => !!n && names.includes(n)))];
   for (const remote of order) {
     const url = (await git(['-C', cwd ?? '.', 'remote', 'get-url', remote]).catch(() => '')).trim();
     const space = parseSpaceUrl(url);
     if (space) return { remote, space };
-    if (prefer && remote === prefer) die(`remote "${prefer}" is not a spacehub remote`);
+    if (prefer && remote === prefer) die(`remote "${prefer}" is not a quirq remote`);
   }
   return null;
 }
 
 async function resolveSpace(arg: string | undefined): Promise<string> {
   if (arg) {
-    const name = arg.replace(/^spacehub:(\/\/)?/, '').replace(/\.git$/, '');
+    const parsed = parseHubUrl(arg);
+    if (parsed) return parsed.space;
+    const name = arg.replace(/\.git$/, '');
     if (name.includes('/')) {
       if (!/^[^/\s]+\/[^/\s]+$/.test(name)) die(`"${arg}" is not owner/name`);
       return name;
@@ -164,7 +169,7 @@ async function resolveSpace(arg: string | undefined): Promise<string> {
     return `${await username()}/${name}`;
   }
   const found = await spaceRemote();
-  if (!found) die('no space given and this directory has no spacehub remote');
+  if (!found) die('no space given and this directory has no quirq remote');
   return found.space;
 }
 
@@ -297,27 +302,27 @@ async function spaceCreate(args: string[]) {
   if (pushAfter && !source) die('--push needs --source <dir>');
   if (source) {
     // Check the remote name before creating anything. It defaults to
-    // "spacehub" so origin is never touched (it is usually GitHub).
+    // "quirq" so origin is never touched (it is usually GitHub).
     const existing = (await git(['-C', source, 'remote']).catch(() => die(`${source} is not a git repository`)))
       .split('\n')
       .filter(Boolean);
-    remote ??= 'spacehub';
+    remote ??= REMOTE;
     if (existing.includes(remote)) die(`${source} already has a remote named "${remote}"; choose another with --remote <name>`);
   }
   const owner = await username();
   const { conn } = await open();
   await conn.reducers.createSpace({ name, description });
   const fullName = `${owner}/${name}`;
-  const url = `spacehub://${fullName}`;
+  const url = hubUrl(loadConfig().server, fullName);
   out(`Created space ${fullName}`);
   if (source) {
     await runOrDie('git', ['-C', source, 'remote', 'add', remote!, url]);
     out(`Added remote ${remote} -> ${url}`);
-    if (pushAfter) await runOrDie('git', ['-C', source, 'push', '-u', remote!, 'HEAD']);
+    if (pushAfter) await runOrDie('git', ['-C', source, 'push', remote!, 'HEAD']);
   } else if (cloneAfter) {
-    await runOrDie('git', ['clone', '--origin', 'spacehub', url]);
+    await runOrDie('git', ['clone', '--origin', REMOTE, url]);
   } else {
-    out(`\n  spacehub space clone ${fullName}\n  # or, in an existing repository:\n  git remote add spacehub ${url} && git push -u spacehub HEAD`);
+    out(`\n  spacehub space clone ${fullName}\n  # or, in an existing repository:\n  git remote add ${REMOTE} ${url} && git push ${REMOTE} HEAD`);
   }
 }
 
@@ -358,7 +363,7 @@ async function spaceView(args: string[]) {
   out(sp.fullName);
   if (sp.description) out(sp.description);
   out();
-  out(`url       spacehub://${sp.fullName}`);
+  out(`url       ${hubUrl(loadConfig().server, sp.fullName)}`);
   out(`default   ${sp.defaultBranch}`);
   out(`agent     ${sp.owner}`);
   out(`builder   ${await builderLine(conn, sp)}`);
@@ -376,7 +381,7 @@ async function spaceClone(args: string[]) {
   const fullName = await resolveSpace(args[0] ?? die('usage: spacehub space clone <space> [<dir>]'));
   const dir = args[1];
   const named = extra.some(f => f === '-o' || f.startsWith('--origin'));
-  await runOrDie('git', ['clone', ...(named ? [] : ['--origin', 'spacehub']), ...extra, `spacehub://${fullName}`, ...(dir ? [dir] : [])]);
+  await runOrDie('git', ['clone', ...(named ? [] : ['--origin', REMOTE]), ...extra, hubUrl(loadConfig().server, fullName), ...(dir ? [dir] : [])]);
 }
 
 async function spaceEdit(args: string[]) {
@@ -413,7 +418,7 @@ async function spaceSync(args: string[]) {
   const prefer = opt(args, '--remote', '-r');
   const pushToo = bool(args, '--push');
   const watch = bool(args, '--watch', '-w');
-  const found = (await spaceRemote(prefer)) ?? die('this directory has no spacehub remote');
+  const found = (await spaceRemote(prefer)) ?? die('this directory has no quirq remote');
   const branch = (await git(['symbolic-ref', '--short', 'HEAD']).catch(() => '')).trim();
   if (!branch) die('not on a branch');
   const sync = async () => {

@@ -1,9 +1,10 @@
 #!/bin/sh
 # Start SpacetimeDB on an internal port and the allowlist proxy on the
 # public port, publish (or update) the spacehub module, then start the web
-# service (sign in, sign up, GitHub import). The proxy comes up first so
-# platform probes see an open port at once; /healthz only turns 200 once
-# SpacetimeDB answers.
+# service (sign in, sign up, GitHub import). A starting proxy holds the public
+# port at once, so platform probes see it open, but answers 503 to everything:
+# nobody reaches SpacetimeDB until the module is published and the hub admin
+# claimed. Only then does the real allowlist proxy take the port over.
 # Publishing never passes --delete-data: a breaking schema change makes
 # startup fail instead of wiping spaces.
 set -eu
@@ -32,7 +33,7 @@ fi
 
 spacetime --root-dir "$ROOT" start --listen-addr "$INTERNAL" --non-interactive &
 server=$!
-caddy run --config /opt/spacehub/Caddyfile --adapter caddyfile &
+caddy run --config /opt/spacehub/starting.Caddyfile --adapter caddyfile &
 proxy=$!
 web=""
 stop() {
@@ -60,7 +61,41 @@ spacetime --root-dir "$ROOT" publish --server "http://$INTERNAL" "$DB" --js-path
 spacetime --root-dir "$ROOT" call --server "http://$INTERNAL" "$DB" backfill_activity >/dev/null 2>&1 \
   || echo "spacehub: could not rebuild the activity history; the feed starts from now" >&2
 
-SPACEHUB_SERVER="ws://$INTERNAL" SPACEHUB_DB="$DB" node /opt/spacehub/cli/dist/web.mjs &
+# The identity that owns the database is the hub's admin (it alone writes the
+# xo tables and switches sign-up). Claim it on every start, while only this
+# script can reach SpacetimeDB: the first claim sticks, and if another identity
+# holds it, stop rather than serve.
+if ! claim="$(spacetime --root-dir "$ROOT" call --server "http://$INTERNAL" "$DB" claim_admin 2>&1)"; then
+  echo "spacehub: could not claim the hub admin: $claim" >&2
+  echo "spacehub: refusing to start; if another identity holds it, the database was tampered with" >&2
+  exit 1
+fi
+
+# xo.quirq.dev's API (/-/api/xo/v1/) is on only with SPACEHUB_XO_KEY. It acts
+# as the admin, and agents then come from xo only.
+if [ -n "${SPACEHUB_XO_KEY:-}" ]; then
+  # The CLI keeps the owner's token as spacetimedb_token in its cli.toml.
+  SPACEHUB_ADMIN_TOKEN="$(sed -n 's/^[[:space:]]*spacetimedb_token[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
+    "$ROOT/config/cli.toml" 2>/dev/null | head -n 1)"
+  if [ -z "$SPACEHUB_ADMIN_TOKEN" ]; then
+    SPACEHUB_ADMIN_TOKEN="$(spacetime --root-dir "$ROOT" login show --token 2>/dev/null \
+      | grep -oE 'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+' | head -n 1)"
+  fi
+  if [ -z "$SPACEHUB_ADMIN_TOKEN" ]; then
+    echo "spacehub: SPACEHUB_XO_KEY is set but the admin's token could not be read" >&2
+    exit 1
+  fi
+  export SPACEHUB_ADMIN_TOKEN
+  spacetime --root-dir "$ROOT" call --server "http://$INTERNAL" "$DB" set_accounts '"xo"' >/dev/null
+fi
+
+# Ready: hand the public port to the allowlist proxy.
+kill -TERM "$proxy" 2>/dev/null || true
+wait "$proxy" 2>/dev/null || true
+caddy run --config /opt/spacehub/Caddyfile --adapter caddyfile &
+proxy=$!
+
+SPACEHUB_SERVER="ws://$INTERNAL" SPACEHUB_INTERNAL_HTTP="http://$INTERNAL" SPACEHUB_DB="$DB" node /opt/spacehub/cli/dist/web.mjs &
 web=$!
 echo "spacehub: serving database \"$DB\" on port $PORT"
 

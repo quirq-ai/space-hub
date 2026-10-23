@@ -1,10 +1,11 @@
-// git-remote-spacehub: lets plain git talk to spacehub.
+// git-remote-quirq: lets plain git talk to a quirq hub.
 //
-//   git clone spacehub://alice/notes
-//   git push origin main
-//   git fetch origin
+//   git clone -o quirq quirq://hub.quirq.dev/alice/notes
+//   git push quirq main
+//   git fetch quirq
 //
-// git starts this program for any spacehub:// URL and speaks the remote
+// git starts this program for any quirq:// URL (and, as git-remote-spacehub,
+// for spacehub:// URLs of older clones) and speaks the remote
 // helper protocol on stdin/stdout (see `man gitremote-helpers`). We implement
 // the `list`, `fetch` and `push` capabilities on top of the spacehub reducers
 // and subscriptions.
@@ -12,6 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { connect, errorMessage, findSpace, listRefs, quietSdkLogs, snapshot, tables, type Conn } from './conn';
+import { parseHubUrl } from './url';
 import { git, objectsToSend, PackWriter, presentObjects, readObjects, type RawObject } from './git';
 
 const CHUNK_SIZE = 1024 * 1024; // must match the module
@@ -22,29 +24,24 @@ const FETCH_WINDOW = 8 * 1024 * 1024;
 quietSdkLogs();
 
 const [, , remoteName, url] = process.argv;
-const fullName = parseUrl(url ?? remoteName ?? '');
+const { server: hubServer, space: fullName } = parseUrl(url ?? remoteName ?? '');
 let verbosity = 1;
 const leases = new Map<string, string>();
 
 let session: Promise<Conn> | null = null;
 let remoteRefs = new Map<string, string>();
 
-function parseUrl(raw: string): string {
-  const rest = raw.replace(/^spacehub:(\/\/)?/, '').replace(/\/+$/, '').replace(/\.git$/, '');
-  const parts = rest.split('/');
-  if (parts.length !== 2 || !parts[0] || !parts[1]) {
-    fail(`expected a URL like spacehub://owner/space, got "${raw}"`);
-  }
-  return `${parts[0]}/${parts[1]}`;
+function parseUrl(raw: string) {
+  return parseHubUrl(raw) ?? fail(`expected a URL like quirq://hub.quirq.dev/owner/space, got "${raw}"`);
 }
 
 function fail(message: string): never {
-  process.stderr.write(`fatal: spacehub: ${message}\n`);
+  process.stderr.write(`fatal: quirq: ${message}\n`);
   process.exit(128);
 }
 
 function progress(message: string) {
-  if (verbosity > 0) process.stderr.write(`spacehub: ${message}\n`);
+  if (verbosity > 0) process.stderr.write(`quirq: ${message}\n`);
 }
 
 function mb(bytes: number) {
@@ -52,7 +49,7 @@ function mb(bytes: number) {
 }
 
 function conn(): Promise<Conn> {
-  session ??= connect().then(c => c.conn);
+  session ??= connect(hubServer).then(c => c.conn);
   return session;
 }
 

@@ -568,7 +568,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     const sync = row && row.status !== 'running' ? this.syncForm(sp, 'Sync from GitHub') : '';
     const count = commits >= COUNT_CAP ? `${COUNT_CAP.toLocaleString('en-US')}+` : commits.toLocaleString('en-US');
     return `<aside><h2>Clone</h2><code class="clone">spacehub space clone ${esc(sp.fullName)}</code>
-<code class="clone">git clone -o spacehub spacehub://${esc(sp.fullName)}</code>
+<code class="clone">git clone -o quirq quirq://${esc(this.host)}/${esc(sp.fullName)}</code>
 <h2>About</h2><dl><dt>Agent</dt><dd>${this.a(sp.owner, esc(sp.owner))}</dd><dt>Builder</dt><dd>${this.builderLink(this.builderOf(sp))}</dd><dt>Default</dt><dd>${esc(sp.defaultBranch)}</dd>
 <dt>Commits</dt><dd>${this.a(`${sp.fullName}/commits/${ref}`, count)}</dd>
 <dt>Branches</dt><dd>${this.a(`${sp.fullName}/refs`, String(refs.filter(r => r.name.startsWith('refs/heads/')).length))}</dd><dt>Tags</dt><dd>${this.a(`${sp.fullName}/refs`, String(refs.filter(r => r.name.startsWith('refs/tags/')).length))}</dd>
@@ -743,7 +743,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
 
   emptySpace(sp: Space) {
     const head = this.spaceHead(sp, 'code', sp.defaultBranch);
-    const pushHint = `<code>git remote add spacehub spacehub://${esc(sp.fullName)}<br>git push -u spacehub ${esc(sp.defaultBranch)}</code>`;
+    const pushHint = `<code>git remote add quirq quirq://${esc(this.host)}/${esc(sp.fullName)}<br>git push quirq ${esc(sp.defaultBranch)}</code>`;
     const body =
       this.importRow(sp)?.status === 'running'
         ? '<div class="empty">Waiting for the import to finish.</div>'

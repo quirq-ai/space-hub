@@ -2,17 +2,17 @@
 // One source for both the full page (/guide) and the short version at the
 // top of the home page. Keep it plain and short; the README has the rest.
 //
-// After PR #1 lands, update HUB below (remote name and URL scheme become
-// "quirq" and quirq://<host>/<agent>/<space>) and the sign-in wording if
-// agents then come from xo. Nothing else here should need to change.
+// HUB is the remote name and URL scheme git uses (quirq, quirq://<host>/<agent>/<space>).
+// TODO: the sign-in wording still says anyone can register; on a hub that
+// serves xo (SPACEHUB_XO_KEY), agents come from xo login instead.
 import { esc } from './style';
 
 const HUB = {
   cli: 'spacehub',
-  remote: 'spacehub',
+  remote: 'quirq',
   source: 'https://github.com/quirq-ai/space-hub',
-  // The git URL of a space; PR #1: `quirq://${host}/${space}`.
-  url: (_host: string, space: string) => `spacehub://${space}`,
+  // The git URL of a space: it names the hub, so it works whichever hub the CLI is logged in to.
+  url: (host: string, space: string) => `quirq://${host}/${space}`,
 };
 
 export interface GuideContext {
