@@ -11,6 +11,8 @@
 //   /<owner>/<space>/commits/<ref>/<path> history, optionally of one path (?page=N)
 //   /<owner>/<space>/commit/<oid>         one commit with line diffs
 //   /<owner>/<space>/refs                 branches and tags
+//   /<owner>/<space>/activity             that space's activity (?page=N); the home
+//                                         page shows the whole hub's (?page=N)
 //   /builders, /builders/<login>          who built the spaces' code (GitHub accounts and agents)
 //
 // Behind the server's proxy the original request URI arrives in an
@@ -38,6 +40,7 @@ export interface UiResponse {
 }
 
 type Space = NonNullable<ReturnType<Db['space']['fullName']['find']>>;
+type Activity = NonNullable<ReturnType<Db['activity']['id']['find']>>;
 
 interface Person {
   name: string;
@@ -83,6 +86,7 @@ class NotFound extends Error {}
 const decoder = new TextDecoder('utf-8');
 const MAX_SHOWN_BYTES = 1024 * 1024;
 const PAGE_SIZE = 50;
+const ACTIVITY_PAGE = 30;
 const HISTORY_SCAN = 5000;
 const LAST_COMMIT_SCAN = 400;
 const COUNT_CAP = 10000;
@@ -515,14 +519,14 @@ class Renderer {
     return '';
   }
 
-  spaceHead(sp: Space, tab: 'code' | 'commits' | 'refs', ref: string) {
+  spaceHead(sp: Space, tab: 'code' | 'commits' | 'activity' | 'refs', ref: string) {
     const refs = this.refs(sp);
     const branches = refs.filter(r => r.name.startsWith('refs/heads/')).length;
     const tags = refs.filter(r => r.name.startsWith('refs/tags/')).length;
     const tabLink = (key: string, path: string, label: string) => this.a(path, label, key === tab ? 'on' : '');
     return `<h1>${this.a(sp.owner, esc(sp.owner))} / <b>${this.a(sp.fullName, esc(sp.name))}</b></h1>
 ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.builtByLine(sp)}
-<nav class="tabs">${tabLink('code', `${sp.fullName}/tree/${ref}`, 'Code')}${tabLink('commits', `${sp.fullName}/commits/${ref}`, 'Commits')}${tabLink('refs', `${sp.fullName}/refs`, `Branches ${branches} · Tags ${tags}`)}</nav>${this.importBanner(sp)}`;
+<nav class="tabs">${tabLink('code', `${sp.fullName}/tree/${ref}`, 'Code')}${tabLink('commits', `${sp.fullName}/commits/${ref}`, 'Commits')}${tabLink('activity', `${sp.fullName}/activity`, 'Activity')}${tabLink('refs', `${sp.fullName}/refs`, `Branches ${branches} · Tags ${tags}`)}</nav>${this.importBanner(sp)}`;
   }
 
   // Branch and tag picker; keeps the current view and path.
@@ -597,6 +601,95 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     return `<p class="desc">Built by <b>${this.builderLink(b)}</b>${profile}</p>`;
   }
 
+  // One activity as a sentence: who did what, where, and when.
+  activityItem(e: Activity) {
+    const sp = e.spaceId ? this.db.space.id.find(e.spaceId) : undefined;
+    const who = e.agent ? this.a(e.agent, `<b>${esc(e.agent)}</b>`) : '<b>someone</b>';
+    const space = sp ? this.a(sp.fullName, `<b>${esc(sp.fullName)}</b>`) : `<b>${esc(e.space)}</b>`;
+    const refName = shortRef(e.subject);
+    const refKind = e.subject.startsWith('refs/tags/') ? 'tag' : 'branch';
+    const refLink = sp ? this.a(`${sp.fullName}/tree/${refName}`, esc(refName)) : esc(refName);
+    const commit = sp && e.oid ? `${this.a(`${sp.fullName}/commit/${e.oid}`, e.oid.slice(0, 7), 'mono')} ` : '';
+    const source = `<a href="${esc(e.subject)}">${esc(e.subject.replace(/^https:\/\//, ''))}</a>`;
+    const pushed = commit || e.text ? `${commit}${esc(e.text)}` : '';
+    let line: string;
+    let more = '';
+    switch (e.kind) {
+      case 'agent_registered':
+        line = `${who} registered as an agent`;
+        break;
+      case 'space_created':
+        line = `${who} created ${space}`;
+        break;
+      case 'space_deleted':
+        line = `${who} deleted ${space}`;
+        break;
+      case 'space_edited':
+        line = `${who} updated ${space}`;
+        more = esc(e.text);
+        break;
+      case 'builder_set':
+        line = `${who} credited ${this.a(`builders/${e.subject}`, `<b>${esc(e.text || e.subject)}</b>`)} as the builder of ${space}`;
+        break;
+      case 'builder_cleared':
+        line = `${who} removed the builder credit from ${space}`;
+        break;
+      case 'ref_created':
+        line = `${who} created ${refKind} ${refLink} in ${space}`;
+        more = pushed;
+        break;
+      case 'ref_updated':
+        line = `${who} pushed ${e.count ? `${plural(e.count, 'commit')} ` : ''}to ${refLink} in ${space}`;
+        more = pushed;
+        break;
+      case 'ref_forced':
+        line = `${who} force-pushed ${refKind} ${refLink} in ${space}`;
+        more = pushed;
+        break;
+      case 'ref_deleted':
+        line = `${who} deleted ${refKind} ${esc(refName)} from ${space}`;
+        break;
+      case 'ref_pushed':
+        line = `${who} pushed ${refKind} ${refLink} in ${space}`;
+        more = pushed;
+        break;
+      case 'import_started':
+        line = `${who} started importing ${source} into ${space}`;
+        break;
+      case 'sync_started':
+        line = `${who} started syncing ${space} from ${source}`;
+        break;
+      case 'import_done':
+        line = e.text === 'synced' ? `${who} synced ${space} from ${source}` : `${who} imported ${source} into ${space}`;
+        more = e.count ? `${plural(e.count, 'branch or tag').replace('branch or tags', 'branches and tags')}` : '';
+        break;
+      case 'import_failed':
+        line = `${who}'s import of ${source} into ${space} failed`;
+        more = esc(e.text);
+        break;
+      default:
+        line = `${who} ${esc(e.kind.replace(/_/g, ' '))} ${space}`;
+    }
+    return `<tr><td>${line}${more ? `<div class="muted">${more}</div>` : ''}</td><td class="r muted">${this.ago(seconds(e.at))}</td></tr>`;
+  }
+
+  // Newest first, ACTIVITY_PAGE per page, with Newer/Older links on `path`.
+  activityFeed(events: Activity[], path: string) {
+    const page = Math.max(1, Number.parseInt(this.query.get('page') ?? '1', 10) || 1);
+    events.sort((x, y) => {
+      const d = y.at.microsSinceUnixEpoch - x.at.microsSinceUnixEpoch;
+      return d !== 0n ? (d > 0n ? 1 : -1) : y.id > x.id ? 1 : y.id < x.id ? -1 : 0;
+    });
+    const start = (page - 1) * ACTIVITY_PAGE;
+    const shown = events.slice(start, start + ACTIVITY_PAGE);
+    const rows = shown.map(e => this.activityItem(e)).join('');
+    const newer = page > 1 ? this.a(path, 'Newer', 'btn', page > 2 ? { page: page - 1 } : {}) : '';
+    const older = events.length > start + ACTIVITY_PAGE ? this.a(path, 'Older', 'btn', { page: page + 1 }) : '';
+    const range = shown.length ? `<span class="muted">${start + 1} to ${start + shown.length} of ${events.length.toLocaleString('en-US')}</span>` : '';
+    const pager = newer || older ? `<div class="bar" style="background:none;border:0;padding:8px 0">${newer}${older}<span class="grow"></span>${range}</div>` : '';
+    return `<div class="box">${rows ? `<table>${rows}</table>` : `<div class="empty">${page > 1 ? 'No more activity.' : 'No activity yet.'}</div>`}</div>${pager}`;
+  }
+
   // ------------------------------------------------------------ pages
 
   home() {
@@ -624,7 +717,8 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
       'spacehub',
       `<div class="grid"><div><div class="bar" style="background:none;border:0;padding:0 0 8px"><h1 class="grow"><b>Spaces</b> <span class="muted">${spaces.length}</span></h1>${create}</div>
 <p class="desc">Git spaces on this server, most recently pushed first.</p>
-<div class="box">${rows ? `<table>${rows}</table>` : '<div class="empty">No spaces yet.</div>'}</div></div>
+<div class="box">${rows ? `<table>${rows}</table>` : '<div class="empty">No spaces yet.</div>'}</div>
+<h2 style="margin:24px 0 8px">Activity</h2>${this.activityFeed([...this.db.activity.iter()], '')}</div>
 <aside><h2>Connect</h2><p class="muted">With the spacehub CLI:</p>
 <code class="clone">spacehub auth login --server ${esc(`${scheme}://${this.host}`)} --agent &lt;name&gt;</code>
 <code class="clone">spacehub space create &lt;name&gt; --source . --push</code>
@@ -968,6 +1062,13 @@ ${bodyText ? `<pre>${esc(bodyText)}</pre>` : ''}
     );
   }
 
+  activityPage(sp: Space) {
+    return this.page(
+      `Activity · ${sp.fullName}`,
+      `${this.spaceHead(sp, 'activity', sp.defaultBranch)}${this.activityFeed([...this.db.activity.spaceId.filter(sp.id)], `${sp.fullName}/activity`)}`
+    );
+  }
+
   route(segs: string[]): UiResponse {
     if (segs.length === 0) return this.home();
     if (segs[0] === 'builders' && segs.length <= 2) return segs[1] ? this.builderPage(segs[1]) : this.buildersPage();
@@ -992,6 +1093,8 @@ ${bodyText ? `<pre>${esc(bodyText)}</pre>` : ''}
       case 'branches':
       case 'tags':
         return this.refsPage(sp);
+      case 'activity':
+        return this.activityPage(sp);
     }
     return this.notFound(`No page "${segs.join('/')}".`);
   }

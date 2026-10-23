@@ -10,6 +10,20 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
+export const Activity = __t.object("Activity", {
+  id: __t.u64(),
+  at: __t.timestamp(),
+  spaceId: __t.u64(),
+  space: __t.string(),
+  agent: __t.string(),
+  kind: __t.string(),
+  subject: __t.string(),
+  oid: __t.string(),
+  count: __t.u32(),
+  text: __t.string(),
+});
+export type Activity = __Infer<typeof Activity>;
+
 export const GitObject = __t.object("GitObject", {
   id: __t.u64(),
   key: __t.string(),
@@ -33,6 +47,12 @@ export const GitRef = __t.object("GitRef", {
   updatedBy: __t.identity(),
 });
 export type GitRef = __Infer<typeof GitRef>;
+
+export const HubState = __t.object("HubState", {
+  key: __t.string(),
+  value: __t.string(),
+});
+export type HubState = __Infer<typeof HubState>;
 
 export const ObjectChunk = __t.object("ObjectChunk", {
   id: __t.u64(),

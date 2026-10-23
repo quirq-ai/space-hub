@@ -16,9 +16,13 @@ WEB_PID=""
 PASS=0
 
 cleanup() {
+  local status=$?
+  # Best effort from here: a kill or wait "failing" must not change the result.
+  set +e
   if [[ -n "$WEB_PID" ]]; then kill "$WEB_PID" 2>/dev/null; wait "$WEB_PID" 2>/dev/null; fi
   if [[ -n "$SERVER_PID" ]]; then kill "$SERVER_PID" 2>/dev/null; wait "$SERVER_PID" 2>/dev/null; fi
   rm -rf "$WORK"
+  exit "$status"
 }
 trap cleanup EXIT
 
@@ -65,6 +69,7 @@ else
   done
   spacetime publish --server "http://127.0.0.1:$PORT" "$SPACEHUB_DB" --module-path "$ROOT/module" --yes >"$WORK/publish.log" 2>&1 \
     || { cat "$WORK/publish.log" >&2; fail "publish module"; }
+  spacetime call --server "http://127.0.0.1:$PORT" "$SPACEHUB_DB" backfill_activity >/dev/null 2>&1 || fail "backfill activity"
   ok "module published"
 fi
 
@@ -251,6 +256,22 @@ check "reset the builder" as alice spacehub space edit "$NOTES" --builder ""
 view_has "back to the agent" "$NOTES" "builder   $ALICE (agent)"
 expect_fail "non-owner cannot set the builder" "permission denied" as bob spacehub space edit "$NOTES" --builder x
 
+echo "activity"
+page_has "home shows the activity feed" "" ">Activity<"
+page_has "agents appear in the feed" "" "registered as an agent"
+page_has "space activity tab" "$NOTES/activity" "Activity"
+page_has "pushes appear with commit counts" "$NOTES/activity" "pushed 1 commit to"
+page_has "new branches appear" "$NOTES/activity" "created branch"
+page_has "force pushes appear" "$NOTES/activity" "force-pushed branch"
+page_has "tags appear" "$NOTES/activity" "created tag"
+page_has "deleted branches appear" "$NOTES/activity" "deleted branch feature"
+page_has "builder credits appear" "$NOTES/activity" "credited"
+page_has "removed credits appear" "$NOTES/activity" "removed the builder credit"
+for i in $(seq 1 31); do as alice spacehub space edit "$NOTES" -d "revision $i" >/dev/null; done
+page_has "edits appear" "$NOTES/activity" "changed the description"
+page_has "activity is paginated" "$NOTES/activity" ">Older<"
+page_has "older activity on page 2" "$NOTES/activity?page=2" ">Newer<"
+
 echo "web service (sign up, create, import)"
 if [[ -n "${SPACEHUB_E2E_SERVER:-}" ]]; then
   WEB="${SPACEHUB_SERVER/#ws/http}"
@@ -290,6 +311,7 @@ if [[ "${SPACEHUB_E2E_GITHUB:-}" == 1 ]]; then
   check "imported branches are there" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub space view $WEBUSER/Hello-World | grep -q heads/master"
   page_has "the GitHub owner is the builder" "builders/octocat" "$WEBUSER/Hello-World"
   page_has "with GitHub's display name" "$WEBUSER/Hello-World" "The Octocat"
+  page_has "imports appear in the space's activity" "$WEBUSER/Hello-World/activity" "imported"
 fi
 
 echo "create from an existing repo, edit"
@@ -309,6 +331,7 @@ check "edit shows in view" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub sp
 echo "clean up"
 expect_fail "delete needs --yes" "--yes" as alice spacehub space delete "$NOTES"
 check "delete space" as alice spacehub space delete "$NOTES" --yes
+page_has "deletions stay in the hub feed" "" "deleted <b>$NOTES</b>"
 check "delete second space" as alice spacehub space delete proj --yes
 expect_fail "deleted space is gone" "does not exist" as alice git ls-remote "spacehub://$NOTES"
 

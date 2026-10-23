@@ -12,6 +12,7 @@ DB="${SPACEHUB_DB:-spacehub}"
 (cd "$ROOT/module" && npm install --no-audit --no-fund --silent)
 (cd "$ROOT/cli" && npm install --no-audit --no-fund --silent && npm run build --silent)
 spacetime publish --server "$SERVER" "$DB" --module-path "$ROOT/module" --yes
+spacetime call --server "$SERVER" "$DB" backfill_activity >/dev/null
 
 cat <<MSG
 

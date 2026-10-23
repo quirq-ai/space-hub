@@ -34,6 +34,7 @@ import {
 } from "spacetimedb";
 
 // Import all reducer arg schemas
+import BackfillActivityReducer from "./backfill_activity_reducer";
 import CreateSpaceReducer from "./create_space_reducer";
 import DeleteSpaceReducer from "./delete_space_reducer";
 import EditSpaceReducer from "./edit_space_reducer";
@@ -49,6 +50,7 @@ import UpdateRefReducer from "./update_ref_reducer";
 // Import all procedure arg schemas
 
 // Import all table schema definitions
+import ActivityRow from "./activity_table";
 import GitObjectRow from "./git_object_table";
 import GitRefRow from "./git_ref_table";
 import ObjectChunkRow from "./object_chunk_table";
@@ -61,6 +63,23 @@ import UserRow from "./user_table";
 
 /** The schema information for all tables in this module. This is defined the same was as the tables would have been defined in the server. */
 const tablesSchema = __schema({
+  activity: __table({
+    name: 'activity',
+    indexes: [
+      { accessor: 'at', name: 'activity_at_idx_btree', algorithm: 'btree', columns: [
+        'at',
+      ] },
+      { accessor: 'id', name: 'activity_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'spaceId', name: 'activity_space_id_idx_btree', algorithm: 'btree', columns: [
+        'spaceId',
+      ] },
+    ],
+    constraints: [
+      { name: 'activity_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, ActivityRow),
   gitObject: __table({
     name: 'git_object',
     indexes: [
@@ -179,6 +198,7 @@ const tablesSchema = __schema({
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
+  __reducerSchema("backfill_activity", BackfillActivityReducer),
   __reducerSchema("create_space", CreateSpaceReducer),
   __reducerSchema("delete_space", DeleteSpaceReducer),
   __reducerSchema("edit_space", EditSpaceReducer),

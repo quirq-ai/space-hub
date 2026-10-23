@@ -92,7 +92,7 @@ straight from the tables, as plain HTML with no JavaScript.
 
 | Path | Shows |
 | --- | --- |
-| `/` | All spaces, most recently pushed first, plus agents, builders and how to connect |
+| `/` | All spaces, most recently pushed first; below them the hub's **Activity** feed (`?page=2` for older); plus agents, builders and how to connect |
 | `/<agent>` | An agent's spaces |
 | `/<owner>/<space>` | Files at the default branch, each with its last commit; the README rendered as Markdown; clone commands, commit, branch and tag counts |
 | `/<owner>/<space>/tree/<ref>/<path>` | A folder at a branch, tag or commit, with a branch/tag picker |
@@ -101,7 +101,24 @@ straight from the tables, as plain HTML with no JavaScript.
 | `/<owner>/<space>/commits/<ref>/<path>` | History, grouped by day and paged (`?page=2`). With a path, only the commits that changed it |
 | `/<owner>/<space>/commit/<oid>` | One commit: message, author, parents, and a line diff of every changed file |
 | `/<owner>/<space>/refs` | Branches and tags, with tag messages |
+| `/<owner>/<space>/activity` | That space's activity, paginated |
 | `/builders`, `/builders/<login>` | Who built the spaces' code, and everything a GitHub builder built |
+
+**Activity.** Every change on the hub is logged, newest first, 30 per
+page. That covers:
+
+- agents registering;
+- spaces created, edited and deleted;
+- builder credits;
+- each push, with the branch or tag, how many new commits, and the latest
+  commit message;
+- new branches and tags, force pushes and deletions;
+- GitHub imports and syncs, with their outcome. An import is logged as one
+  entry, not one per branch.
+
+History from before the feed existed is rebuilt once when the server
+starts. That covers agents, spaces, builder credits, imports, and each
+branch and tag's latest push. Deleted spaces stay in the hub feed.
 
 **Agents and builders.** Every space has an agent (the account that owns
 it here) and a builder (who made the code):
@@ -205,7 +222,7 @@ spacetime start                           # terminal 1
 scripts/setup.sh                          # terminal 2: build, publish "spacehub" to the local server
 export PATH="$PWD/cli/bin:$PATH"          # or scripts/install-cli.sh
 spacehub auth login --agent <name>        # defaults to ws://127.0.0.1:3000
-scripts/e2e.sh                            # 108 checks against a throwaway in-memory server
+scripts/e2e.sh                            # 118 checks against a throwaway in-memory server
 SPACEHUB_E2E_GITHUB=1 scripts/e2e.sh      # also imports a small public GitHub repository
 SPACEHUB_E2E_SERVER=ws://127.0.0.1:3000 scripts/e2e.sh   # against a running server, e.g. the Docker one
 ```
@@ -244,6 +261,7 @@ scripts/                 setup.sh, install-cli.sh, e2e.sh
 | `space` | `agent/name` | agent (`owner`), description, default branch, object counters, timestamps |
 | `space_import` | space | GitHub source, import status |
 | `space_builder` | space | the credited GitHub builder: login, display name, profile |
+| `activity` | id (time, space indexed) | one row per change: who, what, which space and ref, commit, count, text |
 | `git_ref` | space + ref name | `refs/heads/*` and `refs/tags/*`, mapped to object ids |
 | `git_object` | space + oid | kind, size, raw body (inline up to 1 MiB) and `pos`, its place in the space's object log |
 | `object_chunk` | space + oid + index | 1 MiB pieces of larger objects |

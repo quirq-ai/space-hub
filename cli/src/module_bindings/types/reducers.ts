@@ -6,6 +6,7 @@
 import { type Infer as __Infer } from "spacetimedb";
 
 // Import all reducer arg schemas
+import BackfillActivityReducer from "../backfill_activity_reducer";
 import CreateSpaceReducer from "../create_space_reducer";
 import DeleteSpaceReducer from "../delete_space_reducer";
 import EditSpaceReducer from "../edit_space_reducer";
@@ -18,6 +19,7 @@ import StartImportReducer from "../start_import_reducer";
 import UpdateImportReducer from "../update_import_reducer";
 import UpdateRefReducer from "../update_ref_reducer";
 
+export type BackfillActivityParams = __Infer<typeof BackfillActivityReducer>;
 export type CreateSpaceParams = __Infer<typeof CreateSpaceReducer>;
 export type DeleteSpaceParams = __Infer<typeof DeleteSpaceReducer>;
 export type EditSpaceParams = __Infer<typeof EditSpaceReducer>;

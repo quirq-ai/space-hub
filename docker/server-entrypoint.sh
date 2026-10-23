@@ -56,6 +56,9 @@ until curl -sf "http://$INTERNAL/v1/ping" >/dev/null 2>&1; do
 done
 
 spacetime --root-dir "$ROOT" publish --server "http://$INTERNAL" "$DB" --js-path /opt/spacehub/module.js --yes
+# Rebuild the activity feed's history once (later calls do nothing).
+spacetime --root-dir "$ROOT" call --server "http://$INTERNAL" "$DB" backfill_activity >/dev/null 2>&1 \
+  || echo "spacehub: could not rebuild the activity history; the feed starts from now" >&2
 
 SPACEHUB_SERVER="ws://$INTERNAL" SPACEHUB_DB="$DB" node /opt/spacehub/cli/dist/web.mjs &
 web=$!
