@@ -22,8 +22,10 @@ export interface HubUrl {
   space: string;
 }
 
+// This machine only: the whole host (and an optional port), never a prefix,
+// so localhost.example.com or 127.evil.com still get wss://.
 function local(host: string) {
-  return /^(localhost|127\.|\[::1\])/.test(host);
+  return /^(localhost|127(?:\.\d{1,3}){3}|\[::1\])(?::\d{1,5})?$/.test(host);
 }
 
 // The websocket address for a host: plain ws:// only on this machine.

@@ -46,14 +46,18 @@ export function normalizeServer(url: string) {
   return url.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:').replace(/\/+$/, '');
 }
 
-// `server` (from a remote's quirq URL) wins over the configured one.
+// `server` (from a remote's quirq URL) wins over the configured one. A URL
+// can name any host, so SPACEHUB_TOKEN goes only to the configured server;
+// another host gets only the token saved for it.
 export function loadConfig(server?: string): Config {
   const data = readFile();
-  server = normalizeServer(server ?? process.env.SPACEHUB_SERVER ?? data.server ?? DEFAULT_SERVER);
+  const configured = normalizeServer(process.env.SPACEHUB_SERVER ?? data.server ?? DEFAULT_SERVER);
+  const target = server ? normalizeServer(server) : configured;
+  const envToken = target === configured ? process.env.SPACEHUB_TOKEN : undefined;
   return {
-    server,
+    server: target,
     database: process.env.SPACEHUB_DB ?? data.database ?? DEFAULT_DATABASE,
-    token: process.env.SPACEHUB_TOKEN ?? data.tokens?.[server],
+    token: envToken ?? data.tokens?.[target],
   };
 }
 

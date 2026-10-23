@@ -170,7 +170,8 @@ export async function handleXo(cfg: XoConfig | null, req: http.IncomingMessage, 
     if (kind === 'agents' && req.method === 'POST') return json(res, 200, await ensureAgent(cfg, subject, await readJson(req))), true;
     throw new Reply(405, 'method not allowed');
   } catch (err) {
-    if (err instanceof Reply) json(res, err.status, { error: err.message });
+    // A database refusal that no route turned into a 409 is not shown as it is.
+    if (err instanceof Reply) json(res, err.status, { error: err.status === 530 ? 'the hub database refused this' : err.message });
     else {
       process.stderr.write(`spacehub-web: xo api: ${err instanceof Error ? err.message : String(err)}\n`);
       json(res, 500, { error: 'internal error' });

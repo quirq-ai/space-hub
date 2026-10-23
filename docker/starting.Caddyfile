@@ -1,0 +1,13 @@
+# Built into the server image. Holds the public port while the server starts
+# (so platform probes see it open) and answers 503 to everything, so nobody
+# reaches SpacetimeDB before the entrypoint has published the module and
+# claimed the hub admin. server.Caddyfile takes the port over after that.
+{
+	admin off
+	auto_https off
+	persist_config off
+}
+
+:{$PORT:3000} {
+	respond "spacehub is starting" 503
+}

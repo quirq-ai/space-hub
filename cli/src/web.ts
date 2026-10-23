@@ -195,10 +195,17 @@ interface Job {
 const queue: Job[] = [];
 let running = 0;
 
+// Imports run git on repositories from anywhere: they never see the xo key or
+// the admin's token.
+function childEnv() {
+  const { SPACEHUB_XO_KEY: _key, SPACEHUB_ADMIN_TOKEN: _admin, ...rest } = process.env;
+  return rest;
+}
+
 function run(cmd: string, args: string[], env: Record<string, string> = {}): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, {
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', PATH: `${HELPER_DIR}:${process.env.PATH ?? ''}`, ...env },
+      env: { ...childEnv(), GIT_TERMINAL_PROMPT: '0', PATH: `${HELPER_DIR}:${process.env.PATH ?? ''}`, ...env },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     const out: Buffer[] = [];
