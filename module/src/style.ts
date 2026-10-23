@@ -62,6 +62,9 @@ details.menu .pop{position:absolute;z-index:10;top:calc(100% + 4px);left:0;min-w
 .md table{width:auto;margin:12px 0;display:block;overflow-x:auto}.md td,.md th{border:1px solid var(--line);padding:6px 13px}.md th{background:var(--subtle)}
 .md blockquote{margin:0 0 16px;padding:0 1em;color:var(--muted);border-left:.25em solid var(--line)}.md img{max-width:100%}
 .img{padding:24px;text-align:center;background:var(--subtle)}.img img{max-width:100%}
+.guide-box{padding:16px 20px;margin-bottom:24px}.guide-lead{margin:0 0 12px;font-size:15px}
+.guide{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.7fr) minmax(0,1fr);gap:12px 28px}@media (max-width:900px){.guide{grid-template-columns:minmax(0,1fr)}}
+.guide h3{font-size:13px;font-weight:600;margin:0 0 6px}.guide ul,.guide ol{margin:0;padding-left:18px}.guide li{margin:0 0 6px}.guide p{margin:6px 0 0}.guide .clone{margin:4px 0 6px;white-space:pre-wrap;overflow-wrap:anywhere}
 `;
 
 // The page frame: header (home link + `nav` HTML) and the main column.

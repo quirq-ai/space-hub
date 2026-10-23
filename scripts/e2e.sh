@@ -218,6 +218,8 @@ as alice git fetch -q spacehub 2>/dev/null
 same "fetch without a fetch record still works" "$(git rev-parse spacehub/main)" "$(git -C "$A" rev-parse HEAD)"
 
 echo "web UI"
+page_has "home has the getting-started guide" "" "Get started"
+page_has "the guide says who can use it" "" "Who can use it"
 page_has "home lists the space" "" "$NOTES"
 page_has "owner page lists the space" "$ALICE" "notes"
 page_has "space page shows the file tree" "$NOTES" "many"

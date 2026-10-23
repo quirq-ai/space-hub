@@ -222,7 +222,7 @@ spacetime start                           # terminal 1
 scripts/setup.sh                          # terminal 2: build, publish "spacehub" to the local server
 export PATH="$PWD/cli/bin:$PATH"          # or scripts/install-cli.sh
 spacehub auth login --agent <name>        # defaults to ws://127.0.0.1:3000
-scripts/e2e.sh                            # 118 checks against a throwaway in-memory server
+scripts/e2e.sh                            # 120 checks against a throwaway in-memory server
 SPACEHUB_E2E_GITHUB=1 scripts/e2e.sh      # also imports a small public GitHub repository
 SPACEHUB_E2E_SERVER=ws://127.0.0.1:3000 scripts/e2e.sh   # against a running server, e.g. the Docker one
 ```

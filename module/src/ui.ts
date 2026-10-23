@@ -712,17 +712,34 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
       .map(g => `<tr><td>${this.builderLink(g.builder)} ${this.builderKind(g.builder)}</td><td class="r muted">${plural(g.spaces.length, 'space')}</td></tr>`)
       .join('');
     const scheme = this.secure ? 'wss' : 'ws';
+    const code = (text: string) => `<code class="clone">${text}</code>`;
+    // The home page's built-in guide: what this is, who can use it, how to
+    // start, and what it is for. Kept short; the README has the details.
+    const guide = `<div class="box guide-box"><p class="guide-lead"><b>spacehub</b> keeps git repositories, called spaces, that people and AI agents share. Push with plain git, and every connected copy gets the change within seconds.</p>
+<div class="guide">
+<div><h3>Who can use it</h3><ul>
+<li>Anyone can browse spaces and clone them.</li>
+<li>To create spaces or push, you need an agent: an account for a person or an AI agent. Register at the top right, or with the CLI.</li>
+<li>Only a space's own agent can push to it.</li></ul></div>
+<div><h3>Get started</h3><ol>
+<li>Install the CLI (needs git and Node 22+):${code('git clone https://github.com/quirq-ai/space-hub &amp;&amp; ./space-hub/scripts/install-cli.sh')}</li>
+<li>Log in as an agent:${code(`spacehub auth login --server ${esc(`${scheme}://${this.host}`)} --agent &lt;name&gt;`)}</li>
+<li>Share a repo (run inside it):${code('spacehub space create &lt;name&gt; --source . --push')}Get a repo:${code('spacehub space clone &lt;agent&gt;/&lt;name&gt;')}Stay in sync (inside a clone):${code('spacehub space sync --watch')}</li></ol>
+<p class="muted">No terminal? Register, then use <b>New space</b> to import a GitHub repo.</p></div>
+<div><h3>Use cases</h3><ul>
+<li>Keep one repo the same on your laptop, cloud machines and AI agents.</li>
+<li>Hand work between people and agents: push, and the other side has it in seconds.</li>
+<li>Copy GitHub repos here and keep them updated with <b>Sync from GitHub</b>.</li>
+<li>Follow every change in <b>Activity</b> below.</li></ul></div>
+</div></div>`;
     const create = this.viewer ? `<a class="btn primary" href="/-/new">New space</a>` : '';
     return this.page(
       'spacehub',
-      `<div class="grid"><div><div class="bar" style="background:none;border:0;padding:0 0 8px"><h1 class="grow"><b>Spaces</b> <span class="muted">${spaces.length}</span></h1>${create}</div>
+      `${guide}<div class="grid"><div><div class="bar" style="background:none;border:0;padding:0 0 8px"><h1 class="grow"><b>Spaces</b> <span class="muted">${spaces.length}</span></h1>${create}</div>
 <p class="desc">Git spaces on this server, most recently pushed first.</p>
 <div class="box">${rows ? `<table>${rows}</table>` : '<div class="empty">No spaces yet.</div>'}</div>
 <h2 style="margin:24px 0 8px">Activity</h2>${this.activityFeed([...this.db.activity.iter()], '')}</div>
-<aside><h2>Connect</h2><p class="muted">With the spacehub CLI:</p>
-<code class="clone">spacehub auth login --server ${esc(`${scheme}://${this.host}`)} --agent &lt;name&gt;</code>
-<code class="clone">spacehub space create &lt;name&gt; --source . --push</code>
-<h2>Agents <span class="muted">${users.length}</span></h2><div class="box">${people ? `<table>${people}</table>` : '<div class="empty">No agents yet.</div>'}</div>
+<aside><h2>Agents <span class="muted">${users.length}</span></h2><div class="box">${people ? `<table>${people}</table>` : '<div class="empty">No agents yet.</div>'}</div>
 <h2>${this.a('builders', 'Builders')} <span class="muted">${builders.length}</span></h2><div class="box">${builderRows ? `<table>${builderRows}</table>` : '<div class="empty">No builders yet.</div>'}</div></aside></div>`
     );
   }
