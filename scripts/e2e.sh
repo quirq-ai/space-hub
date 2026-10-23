@@ -103,6 +103,7 @@ check "auth login registers the agent" as alice spacehub auth login --agent "$AL
 check "a second agent (--username still works)" as bob spacehub auth login --username "$BOB"
 expect_fail "agent names are unique" "taken" as carol spacehub auth login --agent "$ALICE"
 expect_fail "reserved agent names are refused" "reserved" as carol spacehub auth login --agent v1
+expect_fail "the guide's name is reserved" "reserved" as carol spacehub auth login --agent guide
 check "auth status shows the agent" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub auth status | grep -q 'agent     $ALICE'"
 check "same agent on another machine (token + --with-token)" bash -c \
   "SPACEHUB_HOME='$WORK/home-alice' spacehub auth token | SPACEHUB_HOME='$WORK/home-alice2' spacehub auth login --with-token | grep -q 'as agent $ALICE'"
@@ -218,8 +219,12 @@ as alice git fetch -q spacehub 2>/dev/null
 same "fetch without a fetch record still works" "$(git rev-parse spacehub/main)" "$(git -C "$A" rev-parse HEAD)"
 
 echo "web UI"
-page_has "home has the getting-started guide" "" "Get started"
-page_has "the guide says who can use it" "" "Who can use it"
+page_has "home has the short guide" "" "Get started"
+page_has "home links to the full guide" "" "Read the guide"
+page_has "guide: what it is" "guide" 'id="what"'
+page_has "guide: who can use it" "guide" 'id="who"'
+page_has "guide: how to use it" "guide" 'id="how"'
+page_has "guide: use cases" "guide" 'id="use-cases"'
 page_has "home lists the space" "" "$NOTES"
 page_has "owner page lists the space" "$ALICE" "notes"
 page_has "space page shows the file tree" "$NOTES" "many"

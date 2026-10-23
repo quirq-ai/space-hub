@@ -14,6 +14,7 @@
 //   /<owner>/<space>/activity             that space's activity (?page=N); the home
 //                                         page shows the whole hub's (?page=N)
 //   /builders, /builders/<login>          who built the spaces' code (GitHub accounts and agents)
+//   /guide                                what the hub is, who can use it, how, use cases
 //
 // Behind the server's proxy the original request URI arrives in an
 // X-Spacehub-Uri header and links are written as /<path>. Opened directly on
@@ -24,6 +25,7 @@ import { readObject, type Db } from './store';
 import { DELETE, INSERT, diffLines, toHunks } from './diff';
 import { renderMarkdown, type Resolve } from './markdown';
 import { esc, navFor, PAGE_CSP, shell } from './style';
+import { guideHome, guidePage } from './guide';
 
 export interface UiRequest {
   uri: string;
@@ -712,26 +714,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
       .map(g => `<tr><td>${this.builderLink(g.builder)} ${this.builderKind(g.builder)}</td><td class="r muted">${plural(g.spaces.length, 'space')}</td></tr>`)
       .join('');
     const scheme = this.secure ? 'wss' : 'ws';
-    const code = (text: string) => `<code class="clone">${text}</code>`;
-    // The home page's built-in guide: what this is, who can use it, how to
-    // start, and what it is for. Kept short; the README has the details.
-    const guide = `<div class="box guide-box"><p class="guide-lead"><b>spacehub</b> keeps git repositories, called spaces, that people and AI agents share. Push with plain git, and every connected copy gets the change within seconds.</p>
-<div class="guide">
-<div><h3>Who can use it</h3><ul>
-<li>Anyone can browse spaces and clone them.</li>
-<li>To create spaces or push, you need an agent: an account for a person or an AI agent. Register at the top right, or with the CLI.</li>
-<li>Only a space's own agent can push to it.</li></ul></div>
-<div><h3>Get started</h3><ol>
-<li>Install the CLI (needs git and Node 22+):${code('git clone https://github.com/quirq-ai/space-hub &amp;&amp; ./space-hub/scripts/install-cli.sh')}</li>
-<li>Log in as an agent:${code(`spacehub auth login --server ${esc(`${scheme}://${this.host}`)} --agent &lt;name&gt;`)}</li>
-<li>Share a repo (run inside it):${code('spacehub space create &lt;name&gt; --source . --push')}Get a repo:${code('spacehub space clone &lt;agent&gt;/&lt;name&gt;')}Stay in sync (inside a clone):${code('spacehub space sync --watch')}</li></ol>
-<p class="muted">No terminal? Register, then use <b>New space</b> to import a GitHub repo.</p></div>
-<div><h3>Use cases</h3><ul>
-<li>Keep one repo the same on your laptop, cloud machines and AI agents.</li>
-<li>Hand work between people and agents: push, and the other side has it in seconds.</li>
-<li>Copy GitHub repos here and keep them updated with <b>Sync from GitHub</b>.</li>
-<li>Follow every change in <b>Activity</b> below.</li></ul></div>
-</div></div>`;
+    const guide = guideHome({ server: `${scheme}://${this.host}`, host: this.host, link: p => this.link(p) });
     const create = this.viewer ? `<a class="btn primary" href="/-/new">New space</a>` : '';
     return this.page(
       'spacehub',
@@ -1088,6 +1071,10 @@ ${bodyText ? `<pre>${esc(bodyText)}</pre>` : ''}
 
   route(segs: string[]): UiResponse {
     if (segs.length === 0) return this.home();
+    if (segs.length === 1 && segs[0] === 'guide') {
+      const scheme = this.secure ? 'wss' : 'ws';
+      return this.page('Guide · spacehub', guidePage({ server: `${scheme}://${this.host}`, host: this.host, link: p => this.link(p) }));
+    }
     if (segs[0] === 'builders' && segs.length <= 2) return segs[1] ? this.builderPage(segs[1]) : this.buildersPage();
     if (segs.length === 1) return this.owner(segs[0]);
     const sp = this.db.space.fullName.find(`${segs[0]}/${segs[1]}`);

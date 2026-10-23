@@ -1,0 +1,115 @@
+// The hub's guide: what it is, who can use it, how to use it, use cases.
+// One source for both the full page (/guide) and the short version at the
+// top of the home page. Keep it plain and short; the README has the rest.
+//
+// After PR #1 lands, update HUB below (remote name and URL scheme become
+// "quirq" and quirq://<host>/<agent>/<space>) and the sign-in wording if
+// agents then come from xo. Nothing else here should need to change.
+import { esc } from './style';
+
+const HUB = {
+  cli: 'spacehub',
+  remote: 'spacehub',
+  source: 'https://github.com/quirq-ai/space-hub',
+  // The git URL of a space; PR #1: `quirq://${host}/${space}`.
+  url: (_host: string, space: string) => `spacehub://${space}`,
+};
+
+export interface GuideContext {
+  server: string; // ws:// or wss:// address of this hub
+  host: string;
+  link: (path: string) => string; // a UI path, as the page links it
+}
+
+const code = (text: string) => `<code class="clone">${esc(text)}</code>`;
+
+function commands(ctx: GuideContext) {
+  const c = HUB.cli;
+  return {
+    install: `git clone ${HUB.source} && ./space-hub/scripts/install-cli.sh`,
+    login: `${c} auth login --server ${ctx.server} --agent <name>`,
+    create: `${c} space create <name> --source . --push`,
+    clone: `${c} space clone <agent>/<name>`,
+    sync: `${c} space sync --watch`,
+    watch: `${c} space watch <agent>/<name> --exec "<command>"`,
+    token: `${c} auth token`,
+    gitClone: `git clone -o ${HUB.remote} ${HUB.url(ctx.host, '<agent>/<name>')}`,
+    gitPush: `git push ${HUB.remote} main`,
+    gitPull: `git pull ${HUB.remote} main`,
+  };
+}
+
+const LEAD =
+  'spacehub keeps git repositories, called spaces, that people and AI agents share. Push with plain git, and every connected copy gets the change within seconds.';
+
+// The short version for the home page.
+export function guideHome(ctx: GuideContext): string {
+  const cmd = commands(ctx);
+  return `<div class="box guide-box"><div class="guide-head"><p class="guide-lead">${esc(LEAD)}</p><a class="btn" href="${esc(ctx.link('guide'))}">Read the guide</a></div>
+<div class="guide">
+<div><h3>Who can use it</h3><ul>
+<li>Anyone can browse spaces and clone them.</li>
+<li>To create spaces or push, you need an agent: an account for a person or an AI agent. Register at the top right, or with the CLI.</li></ul></div>
+<div><h3>Get started</h3><ol>
+<li>Install the CLI (needs git and Node 22+):${code(cmd.install)}</li>
+<li>Log in as an agent:${code(cmd.login)}</li>
+<li>Share a repo (run inside it):${code(cmd.create)}</li></ol></div>
+<div><h3>Use cases</h3><ul>
+<li>Keep one repo the same on your laptop, cloud machines and AI agents.</li>
+<li>Hand work between people and agents in seconds.</li>
+<li>Copy GitHub repos here and keep them updated.</li></ul></div>
+</div></div>`;
+}
+
+// The full guide page.
+export function guidePage(ctx: GuideContext): string {
+  const cmd = commands(ctx);
+  const step = (text: string, command?: string) => `<li>${text}${command ? code(command) : ''}</li>`;
+  return `<div class="guide-page">
+<h1><b>Guide</b></h1>
+<p class="desc">${esc(LEAD)}</p>
+<nav class="toc"><a href="#what">What it is</a><a href="#who">Who can use it</a><a href="#how">How to use it</a><a href="#use-cases">Use cases</a></nav>
+
+<section id="what"><h2>What it is</h2>
+<p>A hub for git repositories. You use plain git to push and pull. The hub tells every connected copy about each push as it happens, so machines, people and AI agents stay on the same code.</p>
+<dl class="terms">
+<dt>Space</dt><dd>A git repository on this hub, named <code>agent/name</code>.</dd>
+<dt>Agent</dt><dd>An account, for a person or an AI agent. Agents create spaces and push to them.</dd>
+<dt>Builder</dt><dd>Who made a space's code: the GitHub owner for an imported repo, otherwise the agent.</dd>
+<dt>Activity</dt><dd>The log of every change on the hub: pushes, new spaces, imports and edits.</dd>
+</dl></section>
+
+<section id="who"><h2>Who can use it</h2><ul>
+<li><b>Anyone</b> who can open this page can browse every space, read the activity and clone any space.</li>
+<li><b>Agents</b> can also create spaces, push and import from GitHub. Register an agent at the top right, or with ${code(cmd.login)}</li>
+<li>Only a space's own agent can push to it.</li>
+<li>An agent has no password: its token is the key. Save it when you register, or print it later with ${code(cmd.token)}</li>
+</ul></section>
+
+<section id="how"><h2>How to use it</h2>
+<h3>In the browser</h3><ol>
+${step('Register at the top right, and save the token you are shown.')}
+${step('Click <b>New space</b>. Leave it empty, or paste a GitHub URL to import that repository.')}
+${step('Open a space to browse its files, commits and activity. Imported spaces have <b>Sync from GitHub</b>.')}
+</ol>
+<h3>With the CLI</h3><ol>
+${step('Install it (needs git and Node 22+):', cmd.install)}
+${step('Log in as an agent:', cmd.login)}
+${step('Share a repo (run inside it):', cmd.create)}
+${step('Get a repo:', cmd.clone)}
+${step('Stay in sync (inside a clone):', cmd.sync)}
+${step('Run a command on every push:', cmd.watch)}
+</ol>
+<h3>With plain git</h3><p>After installing the CLI, git understands the hub's addresses. The hub's remote is called <code>${esc(HUB.remote)}</code>, so <code>origin</code> stays free for GitHub.</p>
+${code(cmd.gitClone)}${code(cmd.gitPush)}${code(cmd.gitPull)}
+</section>
+
+<section id="use-cases"><h2>Use cases</h2>
+<div class="cases">
+<div class="case"><h3>One repo on every machine</h3><p>Create the space once, clone it on each laptop, cloud machine or agent, and keep each copy current.</p>${code(cmd.clone)}${code(cmd.sync)}</div>
+<div class="case"><h3>Hand work to an agent</h3><p>The agent waits for your push and starts on it right away. Its push comes back to you the same way.</p>${code(cmd.watch)}</div>
+<div class="case"><h3>Mirror a GitHub repo</h3><p>Click <b>New space</b> and paste the GitHub URL. Use <b>Sync from GitHub</b> on the space to pull later changes.</p></div>
+<div class="case"><h3>Follow the work</h3><p>The <b>Activity</b> feed on the home page and on each space shows every push, import and change, newest first.</p></div>
+</div></section>
+</div>`;
+}
