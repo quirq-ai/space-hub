@@ -13,12 +13,14 @@ PORT="${PORT:-3197}"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/spacehub-e2e.XXXXXX")"
 SERVER_PID=""
 WEB_PID=""
+BG=""  # watchers, autosyncs and streams started along the way
 PASS=0
 
 cleanup() {
   local status=$?
   # Best effort from here: a kill or wait "failing" must not change the result.
   set +e
+  for pid in $BG; do kill "$pid" 2>/dev/null; done
   if [[ -n "$WEB_PID" ]]; then kill "$WEB_PID" 2>/dev/null; wait "$WEB_PID" 2>/dev/null; fi
   if [[ -n "$SERVER_PID" ]]; then kill "$SERVER_PID" 2>/dev/null; wait "$SERVER_PID" 2>/dev/null; fi
   rm -rf "$WORK"
@@ -331,6 +333,110 @@ if [[ "${SPACEHUB_E2E_GITHUB:-}" == 1 ]]; then
   page_has "imports appear in the space's activity" "$WEBUSER/Hello-World/activity" "imported"
 fi
 
+echo "members"
+PAD="$ALICE/pad"; X="$WORK/x"; Y="$WORK/y"
+wait_for() { # wait_for <seconds> <cmd...>: until the command succeeds
+  local tries=$(($1 * 5)); shift
+  for _ in $(seq 1 "$tries"); do "$@" >/dev/null 2>&1 && return 0; sleep 0.2; done
+  return 1
+}
+who_has() { as alice spacehub space who "$PAD" | grep -q -- "$1"; }
+check "space create pad" as alice spacehub space create pad
+git init -q -b main "$X"
+(cd "$X" && echo one >shared.txt && git add . && commit -m pad && git remote add quirq "$HUB/$PAD")
+check "the owner pushes" as alice git -C "$X" push -q quirq main
+as bob spacehub space clone "$PAD" "$Y" -- -q 2>/dev/null
+(cd "$Y" && echo bob >bob.txt && git add bob.txt && commit -m "bob joins")
+expect_fail "a non-member cannot push" "permission denied" as bob git -C "$Y" push quirq main
+expect_fail "only the owner adds members" "permission denied" as bob spacehub space member add "$PAD" "$BOB"
+expect_fail "members must be agents" "no agent named" as alice spacehub space member add "$PAD" "nobody$RUN"
+check "the owner adds a member" as alice spacehub space member add "$PAD" "$BOB"
+check "member list shows the member" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub space member list $PAD | grep -q '^$BOB  *member'"
+check "a member can push" as bob git -C "$Y" push -q quirq main
+check "the owner pulls the member's commit" as alice git -C "$X" pull -q --ff-only quirq main
+view_has "view lists the members" "$PAD" "members   $BOB"
+check "the space page lists the members" bash -c "curl -sf '$(ui "$PAD")' | grep -q 'class=\"members\"><a[^>]*>$BOB<'"
+page_has "member changes appear in the activity" "$PAD/activity" "as a member of"
+page_has "the member's page lists the space" "$BOB" "Member of"
+
+echo "live pages"
+proxied() { # proxied <path>: a page as the server's proxy serves it
+  if [[ -n "${SPACEHUB_E2E_SERVER:-}" ]]; then curl -sf "$WEB$1"
+  else curl -sf -H "X-Spacehub-Uri: $1" "http://127.0.0.1:$PORT/v1/database/$SPACEHUB_DB/route/ui"; fi
+}
+same "live.js is served by the web service" "$(curl -s -o /dev/null -w '%{content_type}' "$WEB/-/live.js")" "text/javascript; charset=utf-8"
+proxied_has() { local body; body="$(proxied "$1")" || return 1; grep -qF -- "$2" <<<"$body"; }
+proxied_lacks() { local body; body="$(proxied "$1")" || return 1; ! grep -qF -- "$2" <<<"$body"; }
+last_page_has() { grep '^data: ' "$LIVE" | tail -n 1 | grep -q -- "$1"; }
+check "space pages load it behind the proxy" proxied_has "/$PAD" 'src="/-/live.js"'
+check "the guide does not" proxied_lacks /guide 'live.js'
+same "pages that never change get no stream" "$(curl -s -o /dev/null -w '%{http_code}' "$WEB/-/live?path=/guide")" "204"
+same "bad live paths are refused" "$(curl -s -o /dev/null -w '%{http_code}' "$WEB/-/live?path=//evil.example")" "400"
+LIVE="$WORK/live.log"
+curl -sN --max-time 300 "$WEB/-/live?path=/$PAD" >"$LIVE" 2>/dev/null &
+LIVE_PID=$!; BG="$BG $LIVE_PID"
+check "the stream is an event stream" wait_for 10 grep -q "^retry: " "$LIVE"
+check "it sends the page's current rendering" wait_for 10 grep -q "^event: page" "$LIVE"
+
+echo "presence"
+(cd "$X" && SPACEHUB_HOME="$WORK/home-alice" exec spacehub space watch >"$WORK/xwatch.log" 2>&1) &
+WATCHER=$!; BG="$BG $WATCHER"
+check "space who lists the watcher" wait_for 15 who_has "^$ALICE  *watch"
+check "the space page shows who is here" bash -c "curl -sf '$(ui "$PAD")' | grep -qF '<b>$ALICE</b></a> <span class=\"pill\">watch</span>'"
+check "so does the home page" bash -c "curl -sf '$(ui "")' | grep -qF '<b>$ALICE</b></a> <span class=\"pill\">watch</span>'"
+check "the live page shows the watcher without a reload" wait_for 10 grep -q "$ALICE</b></a> <span class=..pill..>watch" "$LIVE"
+kill "$WATCHER"; wait "$WATCHER" 2>/dev/null || true
+check "presence ends with the connection" wait_for 15 who_has "nobody is connected"
+check "and the live page drops it" wait_for 10 last_page_has "Nobody is connected right now"
+
+echo "autosync"
+(cd "$X" && SPACEHUB_HOME="$WORK/home-alice" exec spacehub space sync --watch --auto --interval 0.5 >"$WORK/auto-alice.log" 2>&1) &
+AX=$!; BG="$BG $AX"
+(cd "$Y" && SPACEHUB_HOME="$WORK/home-bob" exec spacehub space sync --auto --interval 0.5 >"$WORK/auto-bob.log" 2>&1) &
+AY=$!; BG="$BG $AY"
+check "both autosyncs show as here" wait_for 15 bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub space who $PAD | grep -c ' autosync  main' | grep -q '^2$'"
+echo "from alice" >"$X/alice.txt"
+mkdir -p "$Y/notes"; echo "from bob" >"$Y/notes/bob.txt"
+converged() {
+  [[ -f "$X/notes/bob.txt" && -f "$Y/alice.txt" ]] || return 1
+  [[ "$(git -C "$X" rev-parse HEAD)" == "$(git -C "$Y" rev-parse HEAD)" ]] || return 1
+  [[ "$(as alice git -C "$X" ls-remote quirq refs/heads/main | cut -f1)" == "$(git -C "$X" rev-parse HEAD)" ]]
+}
+check "two clones editing different files converge, no manual pull" wait_for 30 converged
+same "with nothing left uncommitted" "$(git -C "$X" status --porcelain)$(git -C "$Y" status --porcelain)" ""
+check "autosync commits name their files" bash -c "git -C '$X' log --format=%s -3 | grep -q '^autosync: notes/bob.txt$'"
+check "the live page shows the new commits" wait_for 10 grep -q "autosync: " "$LIVE"
+both_editing() { last_page_has "$ALICE</b></a> <span class=..pill..>autosync" && last_page_has "$BOB</b></a> <span class=..pill..>autosync"; }
+check "and both editors" wait_for 10 both_editing
+echo alice >"$X/shared.txt"; echo bob >"$Y/shared.txt"
+one_stopped() { ! kill -0 "$AX" 2>/dev/null || ! kill -0 "$AY" 2>/dev/null; }
+check "editing the same line stops one autosync" wait_for 30 one_stopped
+if kill -0 "$AX" 2>/dev/null; then
+  WIN=$AX; WON="$X"; LOSE=$AY; LOST="$Y"; LOSER=bob
+else
+  WIN=$AY; WON="$Y"; LOSE=$AX; LOST="$X"; LOSER=alice
+fi
+code=0; wait "$LOSE" || code=$?
+same "it exits with status 2" "$code" "2"
+check "and says what to resolve" grep -q "conflict with the hub's main in:" "$WORK/auto-$LOSER.log"
+check "naming the file" grep -qx "  shared.txt" "$WORK/auto-$LOSER.log"
+same "the copy is left mid-rebase on that file" "$(git -C "$LOST" diff --name-only --diff-filter=U)" "shared.txt"
+check "with git's conflict markers" grep -q '^<<<<<<<' "$LOST/shared.txt"
+check "the other autosync keeps going" kill -0 "$WIN"
+same "the hub holds the other edit" "$(as alice git -C "$X" ls-remote quirq refs/heads/main | cut -f1)" "$(git -C "$WON" rev-parse HEAD)"
+kill "$WIN"; wait "$WIN" 2>/dev/null || true
+expect_fail "autosync will not start mid-rebase" "unfinished rebase" as "$LOSER" bash -c "cd '$LOST' && spacehub space sync --auto"
+git -C "$LOST" rebase --abort
+check "space who is empty again" wait_for 15 who_has "nobody is connected"
+
+echo "removing members"
+check "the owner removes the member" as alice spacehub space member remove "$PAD" "$BOB"
+page_has "removals appear in the activity" "$PAD/activity" "from the members of"
+as bob git -C "$Y" fetch -q quirq 2>/dev/null; git -C "$Y" reset -q --hard quirq/main
+(cd "$Y" && echo late >late.txt && git add late.txt && commit -m late)
+expect_fail "a removed member cannot push" "permission denied" as bob git -C "$Y" push quirq main
+kill "$LIVE_PID" 2>/dev/null; wait "$LIVE_PID" 2>/dev/null || true
+
 echo "create from an existing repo, edit"
 P="$WORK/p"; git init -q -b main "$P"; (cd "$P" && echo p >p.txt && git add . && commit -m p)
 check "space create --source --push" as alice spacehub space create proj --source "$P" --push
@@ -351,6 +457,17 @@ expect_fail "delete needs --yes" "--yes" as alice spacehub space delete "$NOTES"
 check "delete space" as alice spacehub space delete "$NOTES" --yes
 page_has "deletions stay in the hub feed" "" "deleted <b>$NOTES</b>"
 check "delete second space" as alice spacehub space delete proj --yes
+check "a member again, to delete with the space" as alice spacehub space member add pad "$BOB"
+member_rows() { # member_rows: the space_member rows naming bob (local server only)
+  spacetime sql --server "http://127.0.0.1:$PORT" "$SPACEHUB_DB" "SELECT agent FROM space_member WHERE agent = '$BOB'"
+}
+has_member_rows() { local rows; rows="$(member_rows 2>/dev/null)" && grep -q "$BOB" <<<"$rows"; }
+[[ -n "${SPACEHUB_E2E_SERVER:-}" ]] || check "members are rows" has_member_rows
+check "delete a space that has members" as alice spacehub space delete pad --yes
+if [[ -z "${SPACEHUB_E2E_SERVER:-}" ]]; then
+  rows="$(member_rows 2>&1)" || fail "query space_member"
+  grep -q "$BOB" <<<"$rows" && fail "its members went with it" || ok "its members went with it"
+fi
 expect_fail "deleted space is gone" "does not exist" as alice git ls-remote "$HUB/$NOTES"
 
 echo "all $PASS checks passed"

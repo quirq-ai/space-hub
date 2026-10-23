@@ -16,6 +16,14 @@ export function refKey(spaceId: bigint, name: string) {
   return `${spaceId}:${name}`;
 }
 
+export function memberKey(spaceId: bigint, agent: string) {
+  return `${spaceId}:${agent}`;
+}
+
+// Clients repeat watchSpace about once a minute; a presence row this much
+// older belongs to a connection that is gone.
+export const PRESENCE_STALE_SECONDS = 180;
+
 export function readObject(db: Db, spaceId: bigint, oid: string): { kind: string; data: Uint8Array } | null {
   const row = db.gitObject.key.find(objectKey(spaceId, oid));
   if (!row) return null;

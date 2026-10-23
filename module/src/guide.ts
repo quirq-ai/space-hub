@@ -32,6 +32,9 @@ function commands(ctx: GuideContext) {
     clone: `${c} space clone <agent>/<name>`,
     sync: `${c} space sync --watch`,
     watch: `${c} space watch <agent>/<name> --exec "<command>"`,
+    member: `${c} space member add <name> <agent>`,
+    autosync: `${c} space sync --watch --auto`,
+    who: `${c} space who <agent>/<name>`,
     token: `${c} auth token`,
     gitClone: `git clone -o ${HUB.remote} ${HUB.url(ctx.host, '<agent>/<name>')}`,
     gitPush: `git push ${HUB.remote} main`,
@@ -75,6 +78,7 @@ export function guidePage(ctx: GuideContext): string {
 <dl class="terms">
 <dt>Space</dt><dd>A git repository on this hub, named <code>agent/name</code>.</dd>
 <dt>Agent</dt><dd>An account, for a person or an AI agent. Agents create spaces and push to them.</dd>
+<dt>Member</dt><dd>Another agent that a space's agent lets push to the space.</dd>
 <dt>Builder</dt><dd>Who made a space's code: the GitHub owner for an imported repo, otherwise the agent.</dd>
 <dt>Activity</dt><dd>The log of every change on the hub: pushes, new spaces, imports and edits.</dd>
 </dl></section>
@@ -82,7 +86,7 @@ export function guidePage(ctx: GuideContext): string {
 <section id="who"><h2>Who can use it</h2><ul>
 <li><b>Anyone</b> who can open this page can browse every space, read the activity and clone any space.</li>
 <li><b>Agents</b> can also create spaces, push and import from GitHub. Register an agent at the top right, or with ${code(cmd.login)}</li>
-<li>Only a space's own agent can push to it.</li>
+<li>A space's own agent can push to it, and so can the agents it adds as members: ${code(cmd.member)}</li>
 <li>An agent has no password: its token is the key. Save it when you register, or print it later with ${code(cmd.token)}</li>
 </ul></section>
 
@@ -99,6 +103,8 @@ ${step('Share a repo (run inside it):', cmd.create)}
 ${step('Get a repo:', cmd.clone)}
 ${step('Stay in sync (inside a clone):', cmd.sync)}
 ${step('Run a command on every push:', cmd.watch)}
+${step('Edit together: commit, rebase and push every few seconds (inside a clone):', cmd.autosync)}
+${step('See who is connected to a space:', cmd.who)}
 </ol>
 <h3>With plain git</h3><p>After installing the CLI, git understands the hub's addresses. The hub's remote is called <code>${esc(HUB.remote)}</code>, so <code>origin</code> stays free for GitHub.</p>
 ${code(cmd.gitClone)}${code(cmd.gitPush)}${code(cmd.gitPull)}
@@ -108,6 +114,7 @@ ${code(cmd.gitClone)}${code(cmd.gitPush)}${code(cmd.gitPull)}
 <div class="cases">
 <div class="case"><h3>One repo on every machine</h3><p>Create the space once, clone it on each laptop, cloud machine or agent, and keep each copy current.</p>${code(cmd.clone)}${code(cmd.sync)}</div>
 <div class="case"><h3>Hand work to an agent</h3><p>The agent waits for your push and starts on it right away. Its push comes back to you the same way.</p>${code(cmd.watch)}</div>
+<div class="case"><h3>Edit together</h3><p>Add the other agents as members. Each runs autosync in its clone, and every edit reaches the others within seconds. The space page shows who is here now.</p>${code(cmd.member)}${code(cmd.autosync)}</div>
 <div class="case"><h3>Mirror a GitHub repo</h3><p>Click <b>New space</b> and paste the GitHub URL. Use <b>Sync from GitHub</b> on the space to pull later changes.</p></div>
 <div class="case"><h3>Follow the work</h3><p>The <b>Activity</b> feed on the home page and on each space shows every push, import and change, newest first.</p></div>
 </div></section>

@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import readline from 'node:readline/promises';
 import { configFile, githubLogin, loadConfig, removeToken, saveSettings, saveToken } from './config';
 import { connect, errorMessage, findSpace, findUser, listRefs, quietSdkLogs, snapshot, tables, type Conn } from './conn';
+import { Autosync, AutosyncStop, conflictHelp, UNFINISHED, unfinishedWork } from './autosync';
 import { git } from './git';
 import { hubUrl, parseHubUrl, REMOTE } from './url';
 
@@ -39,7 +40,14 @@ SPACES (alias: repo)
   space delete <space> --yes      Delete a space and all its history
   space sync                      Fast-forward the current branch from its quirq remote
                                     [--remote <name>] [--push] [--watch]
+                                    --auto (implies --watch): edit together. Commit local changes
+                                    every few seconds [--interval <seconds>, default 3], rebase onto
+                                    every push to the branch, push. Stops on a conflict (exit 2).
   space watch [<space>]           Stream ref changes live  [--exec <command>]
+  space who [<space>]             Agents connected to a space right now
+  space member add [<space>] <agent>     Let another agent push to your space
+  space member remove [<space>] <agent>  Take that back (a member can remove itself)
+  space member list [<space>]
 
   <space> is agent/name, or just name for this agent's spaces. Inside a clone it
   defaults to the repository's quirq remote.
@@ -56,6 +64,15 @@ ENVIRONMENT
   SPACEHUB_SERVER, SPACEHUB_DB, SPACEHUB_TOKEN, SPACEHUB_HOME override the saved settings.`;
 
 class Usage extends Error {}
+
+// Ends the command with a message and a chosen exit status.
+class Exit extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
 
 function out(text = '') {
   process.stdout.write(text + '\n');
@@ -118,9 +135,11 @@ async function ask(question: string): Promise<string> {
 // ---------------------------------------------------------------- session
 
 let session: { conn: Conn; identity: Parameters<typeof findUser>[1]; server: string; database: string } | null = null;
+// Commands that follow the hub until stopped reconnect when it goes away.
+let longLived = false;
 
 async function open() {
-  session ??= await connect();
+  session ??= await connect(undefined, { reconnect: longLived });
   return session;
 }
 
@@ -222,6 +241,28 @@ function serialized(task: () => Promise<unknown>) {
     }
   };
   return tick;
+}
+
+// Tell the hub this connection follows `space`, then keep saying so: the
+// heartbeat lets the hub drop rows of connections that vanished without
+// closing. Agents only; presence never stops the command itself.
+const HEARTBEAT_MS = 60_000;
+
+async function announce(space: string, mode: 'watch' | 'sync' | 'autosync', branch = '') {
+  const { conn, identity } = await open();
+  if (!(await findUser(conn, identity))) return;
+  let warned = false;
+  const beat = () =>
+    conn.reducers.watchSpace({ space, mode, branch }).catch(err => {
+      if (!warned) note(`spacehub: could not show presence: ${errorMessage(err)}`);
+      warned = true;
+    });
+  await beat();
+  setInterval(beat, HEARTBEAT_MS);
+}
+
+function clock() {
+  return new Date().toISOString().slice(11, 19);
 }
 
 // ---------------------------------------------------------------- auth
@@ -366,6 +407,8 @@ async function spaceView(args: string[]) {
   out(`url       ${hubUrl(loadConfig().server, sp.fullName)}`);
   out(`default   ${sp.defaultBranch}`);
   out(`agent     ${sp.owner}`);
+  const members = await memberRows(conn, sp.id);
+  out(`members   ${members.map(m => m.agent).join(', ') || 'none'}`);
   out(`builder   ${await builderLine(conn, sp)}`);
   out(`objects   ${sp.objectCount}`);
   out(`created   ${when(sp.createdAt)}`);
@@ -417,10 +460,19 @@ async function spaceDelete(args: string[]) {
 async function spaceSync(args: string[]) {
   const prefer = opt(args, '--remote', '-r');
   const pushToo = bool(args, '--push');
-  const watch = bool(args, '--watch', '-w');
+  const auto = bool(args, '--auto');
+  const watch = bool(args, '--watch', '-w') || auto;
+  const interval = opt(args, '--interval');
   const found = (await spaceRemote(prefer)) ?? die('this directory has no quirq remote');
   const branch = (await git(['symbolic-ref', '--short', 'HEAD']).catch(() => '')).trim();
+  if (!branch && auto) {
+    // A paused rebase leaves HEAD detached; say what is really going on.
+    const files = await unfinishedWork((await git(['rev-parse', '--show-toplevel'])).trim());
+    if (files) throw new Exit(listFiles(UNFINISHED, files), 2);
+  }
   if (!branch) die('not on a branch');
+  if (auto) return autosync(found, branch, interval === undefined ? 3 : Number(interval));
+  if (interval !== undefined) die('--interval goes with --auto');
   const sync = async () => {
     await runOrDie('git', ['pull', '--ff-only', found.remote, branch]);
     if (pushToo) await runOrDie('git', ['push', found.remote, branch]);
@@ -431,8 +483,89 @@ async function spaceSync(args: string[]) {
   await followRefs(found.space, refName => {
     if (refName === `refs/heads/${branch}`) void tick();
   });
+  await announce(found.space, 'sync', branch);
   note(`Watching ${found.space} ${branch}; syncing on every push (ctrl-c to stop)`);
   await new Promise(() => {});
+}
+
+function listFiles(message: string, files: string[]) {
+  return files.length ? `${message}:\n${files.map(f => `  ${f}`).join('\n')}` : message;
+}
+
+// sync --watch --auto: one step at a time, every `seconds` and on every push
+// to the branch, until a conflict, a refused push, or ctrl-c.
+async function autosync(found: { remote: string; space: string }, branch: string, seconds: number) {
+  if (!Number.isFinite(seconds) || seconds < 0.2 || seconds > 3600) die('--interval is a number of seconds, from 0.2 to 3600');
+  const agent = await username();
+  const top = (await git(['rev-parse', '--show-toplevel'])).trim();
+  const engine = new Autosync({ cwd: top, remote: found.remote, branch, agent, log: line => note(`${clock()}  ${line}`) });
+  const restart = 'spacehub space sync --watch --auto';
+  const stopped = (err: AutosyncStop) =>
+    new Exit(err.files.length || /conflict|rebase|merge/.test(err.message) ? conflictHelp(err.files, branch, restart) : `autosync stopped: ${err.message}`, 2);
+  try {
+    await engine.init();
+  } catch (err) {
+    if (err instanceof AutosyncStop) throw new Exit(listFiles(err.message, err.files), 2);
+    throw err;
+  }
+  const ref = `refs/heads/${branch}`;
+  let wake = () => {};
+  const { conn, sp } = await followRefs(found.space, refName => {
+    if (refName === ref) wake();
+  });
+  const remoteOid = () => [...conn.db.gitRef.iter()].find(r => r.spaceId === sp.id && r.name === ref)?.oid ?? '';
+  await announce(found.space, 'autosync', branch);
+  note(`Autosync ${found.space} ${branch}: committing every ${seconds}s, rebasing onto every push (ctrl-c to stop)`);
+
+  let stop: Exit | null = null;
+  await new Promise<void>(resolve => {
+    // Steps never overlap: one runs, then the loop sleeps until the interval
+    // passes or a push to the branch wakes it. ctrl-c lets a running step end.
+    let timer: NodeJS.Timeout | undefined;
+    let running = false;
+    let pending = true;
+    let quit = false;
+    const schedule = (ms: number) => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = undefined;
+        pending = true;
+        void loop();
+      }, ms);
+    };
+    const finish = () => {
+      quit = true;
+      if (timer) clearTimeout(timer);
+      if (!running) resolve();
+    };
+    const loop = async () => {
+      if (running || quit) return;
+      running = true;
+      while (pending && !quit) {
+        pending = false;
+        try {
+          await engine.step(remoteOid());
+        } catch (err) {
+          if (err instanceof AutosyncStop) {
+            stop = stopped(err);
+            quit = true;
+          } else note(`${clock()}  ${errorMessage(err)}; trying again`);
+        }
+      }
+      running = false;
+      if (quit) resolve();
+      else schedule(seconds * 1000);
+    };
+    wake = () => {
+      pending = true;
+      if (!running && !quit) schedule(0);
+    };
+    process.once('SIGINT', finish);
+    process.once('SIGTERM', finish);
+    void loop();
+  });
+  if (stop) throw stop;
+  note('Autosync stopped');
 }
 
 async function spaceWatch(args: string[]) {
@@ -443,9 +576,63 @@ async function spaceWatch(args: string[]) {
     out(`${new Date().toISOString().slice(11, 19)}  ${sign} ${refName}${oid ? ` ${oid.slice(0, 12)}` : ''}`);
     if (tick) void tick();
   });
+  await announce(fullName, 'watch');
   out(`Watching ${fullName} (ctrl-c to stop)`);
   for (const r of conn.db.gitRef.iter()) if (r.spaceId === sp.id) out(`          ${r.name} ${r.oid.slice(0, 12)}`);
   await new Promise(() => {});
+}
+
+function memberRows(conn: Conn, spaceId: bigint) {
+  return snapshot(conn, tables.spaceMember.where(r => r.spaceId.eq(spaceId)), () =>
+    [...conn.db.spaceMember.iter()].filter(r => r.spaceId === spaceId).sort((a, b) => a.agent.localeCompare(b.agent))
+  );
+}
+
+// member add|remove [<space>] <agent>, member list [<space>]
+async function spaceMember(args: string[]) {
+  const sub = args.shift();
+  const usage = 'usage: spacehub space member <add|remove> [<space>] <agent> | member list [<space>]';
+  if (sub === 'add' || sub === 'remove' || sub === 'rm') {
+    if (args.length < 1 || args.length > 2) die(usage);
+    const agent = args[args.length - 1].toLowerCase();
+    const fullName = await resolveSpace(args.length === 2 ? args[0] : undefined);
+    const { conn } = await open();
+    if (sub === 'add') {
+      await conn.reducers.addMember({ space: fullName, agent });
+      out(`${agent} is a member of ${fullName} and can push to it`);
+    } else {
+      await conn.reducers.removeMember({ space: fullName, agent });
+      out(`${agent} is no longer a member of ${fullName}`);
+    }
+    return;
+  }
+  if (sub === 'list' || sub === 'ls') {
+    const sp = await requireSpace(await resolveSpace(args[0]));
+    const { conn } = await open();
+    const rows = await memberRows(conn, sp.id);
+    const width = Math.max(sp.owner.length, ...rows.map(r => r.agent.length));
+    out(`${sp.owner.padEnd(width)}  owner`);
+    for (const r of rows) out(`${r.agent.padEnd(width)}  member  added ${when(r.addedAt)}`);
+    return;
+  }
+  die(usage);
+}
+
+// Who follows a space right now, from its presence rows.
+async function spaceWho(args: string[]) {
+  const sp = await requireSpace(await resolveSpace(args[0]));
+  const { conn } = await open();
+  const now = Date.now() * 1000;
+  const rows = await snapshot(conn, tables.presence.where(r => r.spaceId.eq(sp.id)), () =>
+    [...conn.db.presence.iter()].filter(r => r.spaceId === sp.id && now - Number(r.seenAt.microsSinceUnixEpoch) <= 180_000_000)
+  );
+  if (rows.length === 0) {
+    out(`nobody is connected to ${sp.fullName} right now`);
+    return;
+  }
+  rows.sort((a, b) => a.agent.localeCompare(b.agent) || Number(a.since.microsSinceUnixEpoch - b.since.microsSinceUnixEpoch));
+  const width = Math.max(...rows.map(r => r.agent.length));
+  for (const r of rows) out(`${r.agent.padEnd(width)}  ${r.mode.padEnd(8)}  ${(r.branch || '-').padEnd(12)}  since ${when(r.since)}`.trimEnd());
 }
 
 // ---------------------------------------------------------------- main
@@ -469,6 +656,7 @@ async function main() {
   }
 
   if (group === 'space' || group === 'repo') {
+    longLived = sub === 'watch' || (sub === 'sync' && args.some(a => ['--watch', '-w', '--auto'].includes(a)));
     switch (sub) {
       case 'create': return spaceCreate(args);
       case 'list': case 'ls': return spaceList(args);
@@ -478,8 +666,10 @@ async function main() {
       case 'delete': return spaceDelete(args);
       case 'sync': return spaceSync(args);
       case 'watch': return spaceWatch(args);
+      case 'who': return spaceWho(args);
+      case 'member': case 'members': return spaceMember(args);
     }
-    die(`usage: spacehub space <create|list|view|clone|edit|delete|sync|watch>`);
+    die(`usage: spacehub space <create|list|view|clone|edit|delete|sync|watch|who|member>`);
   }
 
   die(`unknown command "${group}"; see spacehub help`);
@@ -491,6 +681,7 @@ main()
     process.exit(0);
   })
   .catch(err => {
-    note(`spacehub: ${err instanceof Usage ? err.message : errorMessage(err)}`);
-    process.exit(1);
+    note(`spacehub: ${err instanceof Usage || err instanceof Exit ? err.message : errorMessage(err)}`);
+    session?.conn.disconnect();
+    process.exit(err instanceof Exit ? err.status : 1);
   });

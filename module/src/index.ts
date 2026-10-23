@@ -5,15 +5,17 @@
 //   git_ref     branch and tag pointers of a space (refs/heads/main -> oid)
 //   git_object  content-addressed git objects of a space (commit/tree/blob/tag)
 //   object_chunk  bodies of objects larger than one chunk, split in order
+//   space_member  other agents the owner lets push to a space
+//   presence    which connected clients follow which space right now
 //
 // Reducers are the only write path, so every push is checked here: the
-// caller must own the space, every object must hash to its id, and a ref only
-// moves if the caller saw its current value (compare-and-swap) and, unless
-// forced, the move is a fast-forward.
+// caller must own the space or be one of its members, every object must hash
+// to its id, and a ref only moves if the caller saw its current value
+// (compare-and-swap) and, unless forced, the move is a fast-forward.
 import { schema, table, t, Router, SenderError, SyncResponse, type InferSchema, type ReducerCtx } from 'spacetimedb/server';
 import { Identity, type Timestamp } from 'spacetimedb';
 import { Sha1, objectHeader } from './sha1';
-import { CHUNK_SIZE, commitParents, objectKey, readObject, refKey } from './store';
+import { CHUNK_SIZE, PRESENCE_STALE_SECONDS, commitParents, memberKey, objectKey, readObject, refKey } from './store';
 import { renderUi } from './ui';
 
 const MAX_OBJECT_SIZE = 100 * 1024 * 1024;
@@ -138,6 +140,39 @@ const activity = table(
   }
 );
 
+// Agents other than the owner who may push to a space. The owner adds and
+// removes them; a member can also leave. Everything else (edits, imports,
+// builder credits, members, deleting the space) stays with the owner.
+const spaceMember = table(
+  { name: 'space_member', public: true },
+  {
+    id: t.u64().primaryKey().autoInc(),
+    key: t.string().unique(), // "<spaceId>:<agent>"
+    spaceId: t.u64().index('btree'),
+    agent: t.string().index('btree'),
+    addedBy: t.string(),
+    addedAt: t.timestamp(),
+  }
+);
+
+// One row per client connection that said which space it follows
+// (watchSpace): `space watch`, `space sync --watch` and autosync. The row goes
+// with the connection (clientDisconnected). Clients repeat watchSpace as a
+// heartbeat; a row whose heartbeat stopped belongs to a connection the server
+// never saw close, and is swept when the next client connects.
+const presence = table(
+  { name: 'presence', public: true },
+  {
+    connectionId: t.connectionId().primaryKey(),
+    spaceId: t.u64().index('btree'),
+    agent: t.string(),
+    mode: t.string(), // watch | sync | autosync
+    branch: t.string(), // what sync and autosync keep current ("" for watch)
+    since: t.timestamp(),
+    seenAt: t.timestamp(),
+  }
+);
+
 // Flags for one-off jobs, e.g. rebuilding the activity feed's history, and
 // the hub's settings: who its admin is ("admin") and where accounts come from
 // ("accounts": "xo" once xo makes them).
@@ -172,7 +207,21 @@ const xoAgent = table(
   }
 );
 
-const spacetimedb = schema({ user, space, gitRef, gitObject, objectChunk, spaceImport, spaceBuilder, activity, hubState, xoRecord, xoAgent });
+const spacetimedb = schema({
+  user,
+  space,
+  gitRef,
+  gitObject,
+  objectChunk,
+  spaceImport,
+  spaceBuilder,
+  activity,
+  spaceMember,
+  presence,
+  hubState,
+  xoRecord,
+  xoAgent,
+});
 export default spacetimedb;
 
 type Ctx = ReducerCtx<InferSchema<typeof spacetimedb>>;
@@ -204,12 +253,22 @@ function requireSpace(ctx: Ctx, fullName: string) {
   return row;
 }
 
-function requireWritable(ctx: Ctx, fullName: string) {
+// Owner-only actions: edits, imports, builder credits, members, delete.
+function requireOwner(ctx: Ctx, fullName: string) {
   const row = requireSpace(ctx, fullName);
   if (!row.ownerIdentity.equals(ctx.sender)) {
     throw new SenderError(`permission denied: you do not own "${fullName}"`);
   }
   return row;
+}
+
+// Pushes: the owner or a member.
+function requireWritable(ctx: Ctx, fullName: string) {
+  const row = requireSpace(ctx, fullName);
+  if (row.ownerIdentity.equals(ctx.sender)) return row;
+  const me = ctx.db.user.identity.find(ctx.sender);
+  if (me && ctx.db.spaceMember.key.find(memberKey(row.id, me.username))) return row;
+  throw new SenderError(`permission denied: you are not the owner or a member of "${fullName}"`);
 }
 
 function validRefName(name: string) {
@@ -437,11 +496,13 @@ export const createSpace = spacetimedb.reducer(
 );
 
 export const deleteSpace = spacetimedb.reducer({ space: t.string() }, (ctx, { space: fullName }) => {
-  const sp = requireWritable(ctx, fullName);
+  const sp = requireOwner(ctx, fullName);
   logActivity(ctx, { kind: 'space_deleted', spaceId: sp.id, space: sp.fullName });
   for (const ref of [...ctx.db.gitRef.spaceId.filter(sp.id)]) ctx.db.gitRef.id.delete(ref.id);
   for (const obj of [...ctx.db.gitObject.bySpacePos.filter(sp.id)]) ctx.db.gitObject.id.delete(obj.id);
   for (const chunk of [...ctx.db.objectChunk.bySpaceOid.filter(sp.id)]) ctx.db.objectChunk.id.delete(chunk.id);
+  for (const m of [...ctx.db.spaceMember.spaceId.filter(sp.id)]) ctx.db.spaceMember.id.delete(m.id);
+  for (const p of [...ctx.db.presence.spaceId.filter(sp.id)]) ctx.db.presence.connectionId.delete(p.connectionId);
   ctx.db.spaceImport.spaceId.delete(sp.id);
   ctx.db.spaceBuilder.spaceId.delete(sp.id);
   ctx.db.space.id.delete(sp.id);
@@ -454,7 +515,7 @@ export const deleteSpace = spacetimedb.reducer({ space: t.string() }, (ctx, { sp
 export const setBuilder = spacetimedb.reducer(
   { space: t.string(), handle: t.string(), name: t.string(), url: t.string() },
   (ctx, { space: fullName, handle, name }) => {
-    const sp = requireWritable(ctx, fullName);
+    const sp = requireOwner(ctx, fullName);
     const login = handle.trim();
     if (login === '') {
       if (ctx.db.spaceBuilder.spaceId.delete(sp.id)) logActivity(ctx, { kind: 'builder_cleared', spaceId: sp.id, space: sp.fullName });
@@ -472,7 +533,7 @@ export const setBuilder = spacetimedb.reducer(
 export const editSpace = spacetimedb.reducer(
   { space: t.string(), description: t.option(t.string()), defaultBranch: t.option(t.string()) },
   (ctx, { space: fullName, description, defaultBranch }) => {
-    const sp = requireWritable(ctx, fullName);
+    const sp = requireOwner(ctx, fullName);
     if (defaultBranch !== undefined && !validRefName(`refs/heads/${defaultBranch}`)) {
       throw new SenderError(`invalid branch name "${defaultBranch}"`);
     }
@@ -613,13 +674,83 @@ export const updateRef = spacetimedb.reducer(
   }
 );
 
+// ---------------------------------------------------------------- members
+
+// Let another agent push to the space. Adding a member twice is a no-op.
+export const addMember = spacetimedb.reducer({ space: t.string(), agent: t.string() }, (ctx, { space: fullName, agent }) => {
+  const sp = requireOwner(ctx, fullName);
+  const name = agent.trim().toLowerCase();
+  if (!ctx.db.user.username.find(name)) throw new SenderError(`no agent named "${name}"`);
+  if (name === sp.owner) throw new SenderError(`${name} owns "${sp.fullName}"; owners can always push`);
+  const key = memberKey(sp.id, name);
+  if (ctx.db.spaceMember.key.find(key)) return;
+  ctx.db.spaceMember.insert({ id: 0n, key, spaceId: sp.id, agent: name, addedBy: sp.owner, addedAt: ctx.timestamp });
+  logActivity(ctx, { kind: 'member_added', spaceId: sp.id, space: sp.fullName, subject: name });
+});
+
+// The owner removes a member, or a member leaves.
+export const removeMember = spacetimedb.reducer({ space: t.string(), agent: t.string() }, (ctx, { space: fullName, agent }) => {
+  const sp = requireSpace(ctx, fullName);
+  const name = agent.trim().toLowerCase();
+  const me = ctx.db.user.identity.find(ctx.sender);
+  if (!sp.ownerIdentity.equals(ctx.sender) && me?.username !== name) {
+    throw new SenderError(`permission denied: only the owner of "${fullName}" removes its members`);
+  }
+  const row = ctx.db.spaceMember.key.find(memberKey(sp.id, name));
+  if (!row) throw new SenderError(`${name} is not a member of "${sp.fullName}"`);
+  ctx.db.spaceMember.id.delete(row.id);
+  logActivity(ctx, { kind: 'member_removed', spaceId: sp.id, space: sp.fullName, subject: name });
+});
+
+// ---------------------------------------------------------------- presence
+
+const PRESENCE_MODES = new Set(['watch', 'sync', 'autosync']);
+const PRESENCE_STALE_MICROS = BigInt(PRESENCE_STALE_SECONDS) * 1_000_000n;
+
+// This connection follows `space` (`branch` for sync and autosync). Called
+// again as a heartbeat; `since` stays while the space, mode and branch do.
+export const watchSpace = spacetimedb.reducer(
+  { space: t.string(), mode: t.string(), branch: t.string() },
+  (ctx, { space: fullName, mode, branch }) => {
+    const me = requireUser(ctx);
+    const sp = requireSpace(ctx, fullName);
+    if (!PRESENCE_MODES.has(mode)) throw new SenderError(`invalid presence mode "${mode}"`);
+    if (branch !== '' && !validRefName(`refs/heads/${branch}`)) throw new SenderError(`invalid branch name "${branch}"`);
+    const connectionId = ctx.connectionId;
+    if (!connectionId) throw new SenderError('presence needs a live connection');
+    const current = ctx.db.presence.connectionId.find(connectionId);
+    const same = current && current.spaceId === sp.id && current.mode === mode && current.branch === branch;
+    const row = { connectionId, spaceId: sp.id, agent: me.username, mode, branch, since: same ? current.since : ctx.timestamp, seenAt: ctx.timestamp };
+    if (current) ctx.db.presence.connectionId.update(row);
+    else ctx.db.presence.insert(row);
+  }
+);
+
+export const leaveSpace = spacetimedb.reducer(ctx => {
+  if (ctx.connectionId) ctx.db.presence.connectionId.delete(ctx.connectionId);
+});
+
+// Sweep presence left by connections whose close the server never saw.
+export const clientConnected = spacetimedb.clientConnected(ctx => {
+  const cutoff = ctx.timestamp.microsSinceUnixEpoch - PRESENCE_STALE_MICROS;
+  for (const row of [...ctx.db.presence.iter()]) {
+    if (row.seenAt.microsSinceUnixEpoch < cutoff) ctx.db.presence.connectionId.delete(row.connectionId);
+  }
+});
+
+export const clientDisconnected = spacetimedb.clientDisconnected(ctx => {
+  if (ctx.connectionId) ctx.db.presence.connectionId.delete(ctx.connectionId);
+});
+
+// ---------------------------------------------------------------- imports
+
 const GITHUB_SOURCE = /^https:\/\/github\.com\/[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/;
 
 // Record that an import into the space has started.
 export const startImport = spacetimedb.reducer(
   { space: t.string(), source: t.string() },
   (ctx, { space: fullName, source }) => {
-    const sp = requireWritable(ctx, fullName);
+    const sp = requireOwner(ctx, fullName);
     if (!GITHUB_SOURCE.test(source)) throw new SenderError('only https://github.com/<owner>/<repo> can be imported');
     const row = ctx.db.spaceImport.spaceId.find(sp.id);
     if (row && row.status === 'running' && ctx.timestamp.microsSinceUnixEpoch - row.updatedAt.microsSinceUnixEpoch < IMPORT_STALE_MICROS) {
@@ -637,7 +768,7 @@ export const startImport = spacetimedb.reducer(
 export const updateImport = spacetimedb.reducer(
   { space: t.string(), status: t.string(), message: t.string() },
   (ctx, { space: fullName, status, message }) => {
-    const sp = requireWritable(ctx, fullName);
+    const sp = requireOwner(ctx, fullName);
     if (!['running', 'done', 'failed'].includes(status)) throw new SenderError(`invalid import status "${status}"`);
     const row = ctx.db.spaceImport.spaceId.find(sp.id);
     if (!row) throw new SenderError(`no import recorded for "${fullName}"`);

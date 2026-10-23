@@ -34,18 +34,26 @@ import {
 } from "spacetimedb";
 
 // Import all reducer arg schemas
+import AddMemberReducer from "./add_member_reducer";
 import BackfillActivityReducer from "./backfill_activity_reducer";
+import ClaimAdminReducer from "./claim_admin_reducer";
 import CreateSpaceReducer from "./create_space_reducer";
 import DeleteSpaceReducer from "./delete_space_reducer";
 import EditSpaceReducer from "./edit_space_reducer";
 import FinishObjectReducer from "./finish_object_reducer";
+import LeaveSpaceReducer from "./leave_space_reducer";
 import PutChunkReducer from "./put_chunk_reducer";
 import PutObjectsReducer from "./put_objects_reducer";
 import RegisterUserReducer from "./register_user_reducer";
+import RemoveMemberReducer from "./remove_member_reducer";
+import SetAccountsReducer from "./set_accounts_reducer";
 import SetBuilderReducer from "./set_builder_reducer";
 import StartImportReducer from "./start_import_reducer";
 import UpdateImportReducer from "./update_import_reducer";
 import UpdateRefReducer from "./update_ref_reducer";
+import WatchSpaceReducer from "./watch_space_reducer";
+import XoLinkAgentReducer from "./xo_link_agent_reducer";
+import XoPutRecordReducer from "./xo_put_record_reducer";
 
 // Import all procedure arg schemas
 
@@ -54,9 +62,11 @@ import ActivityRow from "./activity_table";
 import GitObjectRow from "./git_object_table";
 import GitRefRow from "./git_ref_table";
 import ObjectChunkRow from "./object_chunk_table";
+import PresenceRow from "./presence_table";
 import SpaceRow from "./space_table";
 import SpaceBuilderRow from "./space_builder_table";
 import SpaceImportRow from "./space_import_table";
+import SpaceMemberRow from "./space_member_table";
 import UserRow from "./user_table";
 
 /** Type-only namespace exports for generated type groups. */
@@ -136,6 +146,20 @@ const tablesSchema = __schema({
       { name: 'object_chunk_key_key', constraint: 'unique', columns: ['key'] },
     ],
   }, ObjectChunkRow),
+  presence: __table({
+    name: 'presence',
+    indexes: [
+      { accessor: 'connectionId', name: 'presence_connection_id_idx_btree', algorithm: 'btree', columns: [
+        'connectionId',
+      ] },
+      { accessor: 'spaceId', name: 'presence_space_id_idx_btree', algorithm: 'btree', columns: [
+        'spaceId',
+      ] },
+    ],
+    constraints: [
+      { name: 'presence_connection_id_key', constraint: 'unique', columns: ['connectionId'] },
+    ],
+  }, PresenceRow),
   space: __table({
     name: 'space',
     indexes: [
@@ -179,6 +203,27 @@ const tablesSchema = __schema({
       { name: 'space_import_space_id_key', constraint: 'unique', columns: ['spaceId'] },
     ],
   }, SpaceImportRow),
+  spaceMember: __table({
+    name: 'space_member',
+    indexes: [
+      { accessor: 'agent', name: 'space_member_agent_idx_btree', algorithm: 'btree', columns: [
+        'agent',
+      ] },
+      { accessor: 'id', name: 'space_member_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'key', name: 'space_member_key_idx_btree', algorithm: 'btree', columns: [
+        'key',
+      ] },
+      { accessor: 'spaceId', name: 'space_member_space_id_idx_btree', algorithm: 'btree', columns: [
+        'spaceId',
+      ] },
+    ],
+    constraints: [
+      { name: 'space_member_id_key', constraint: 'unique', columns: ['id'] },
+      { name: 'space_member_key_key', constraint: 'unique', columns: ['key'] },
+    ],
+  }, SpaceMemberRow),
   user: __table({
     name: 'user',
     indexes: [
@@ -198,18 +243,26 @@ const tablesSchema = __schema({
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
+  __reducerSchema("add_member", AddMemberReducer),
   __reducerSchema("backfill_activity", BackfillActivityReducer),
+  __reducerSchema("claim_admin", ClaimAdminReducer),
   __reducerSchema("create_space", CreateSpaceReducer),
   __reducerSchema("delete_space", DeleteSpaceReducer),
   __reducerSchema("edit_space", EditSpaceReducer),
   __reducerSchema("finish_object", FinishObjectReducer),
+  __reducerSchema("leave_space", LeaveSpaceReducer),
   __reducerSchema("put_chunk", PutChunkReducer),
   __reducerSchema("put_objects", PutObjectsReducer),
   __reducerSchema("register_user", RegisterUserReducer),
+  __reducerSchema("remove_member", RemoveMemberReducer),
+  __reducerSchema("set_accounts", SetAccountsReducer),
   __reducerSchema("set_builder", SetBuilderReducer),
   __reducerSchema("start_import", StartImportReducer),
   __reducerSchema("update_import", UpdateImportReducer),
   __reducerSchema("update_ref", UpdateRefReducer),
+  __reducerSchema("watch_space", WatchSpaceReducer),
+  __reducerSchema("xo_link_agent", XoLinkAgentReducer),
+  __reducerSchema("xo_put_record", XoPutRecordReducer),
 );
 
 /** The schema information for all procedures in this module. This is defined the same way as the procedures would have been defined in the server. */

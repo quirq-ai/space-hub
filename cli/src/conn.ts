@@ -21,17 +21,23 @@ export function quietSdkLogs() {
 }
 
 // Connect with an explicit token (or none, which creates a new identity).
+// Long-lived connections pass `reconnect`: if the hub goes away after the
+// connection opened, the SDK reconnects and replays the subscriptions.
+export interface ConnectOptions {
+  reconnect?: boolean;
+}
+
 export function connectTo(
   server: string,
   database: string,
-  token?: string
+  token?: string,
+  options: ConnectOptions = {}
 ): Promise<{ conn: Conn; identity: Identity; token: string }> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`timed out connecting to ${server} (database "${database}")`)), 15_000);
-    DbConnection.builder()
-      .withUri(server)
-      .withDatabaseName(database)
-      .withToken(token)
+    const builder = DbConnection.builder().withUri(server).withDatabaseName(database).withToken(token);
+    if (options.reconnect) builder.withAutomaticReconnect();
+    builder
       .onConnect((conn, identity, issued) => {
         clearTimeout(timer);
         resolve({ conn, identity, token: issued });
@@ -46,9 +52,9 @@ export function connectTo(
 
 // Connect as the identity saved for `server` (default: the configured one),
 // creating and saving one on first use.
-export async function connect(server?: string): Promise<{ conn: Conn; identity: Identity; server: string; database: string }> {
+export async function connect(server?: string, options: ConnectOptions = {}): Promise<{ conn: Conn; identity: Identity; server: string; database: string }> {
   const cfg = loadConfig(server);
-  const { conn, identity, token } = await connectTo(cfg.server, cfg.database, cfg.token);
+  const { conn, identity, token } = await connectTo(cfg.server, cfg.database, cfg.token, options);
   if (!cfg.token && !process.env.SPACEHUB_TOKEN) saveToken(cfg.server, token);
   return { conn, identity, server: cfg.server, database: cfg.database };
 }
