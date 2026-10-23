@@ -63,7 +63,8 @@ Admin tasks run inside the container. For example, to follow the logs:
 `docker exec spacehub spacetime --root-dir /data logs --server http://127.0.0.1:3001 spacehub -f`.
 
 **With HTTPS (compose).** `SPACEHUB_DOMAIN=hub.example.com docker compose up -d --build`
-adds a Caddy front that gets a certificate and forwards to the server.
+adds a Caddy front that gets a certificate and forwards to the server. Add
+`SPACEHUB_XO_KEY=...` to the same command to turn on xo's API (see xo below).
 Clients then connect with `wss://hub.example.com`.
 
 **On an XO deployment (registry.xo.builders).**

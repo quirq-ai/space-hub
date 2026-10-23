@@ -2,6 +2,7 @@
 #
 #   docker compose up -d --build                           plain HTTP on :80
 #   SPACEHUB_DOMAIN=hub.example.com docker compose up -d   automatic HTTPS
+#   SPACEHUB_XO_KEY=... (32+ characters) also turns on xo.quirq.dev's API (README, xo)
 #
 # Clients: spacehub auth login --server wss://hub.example.com --username <you>
 # Admin (SQL, logs) stays inside the container:
@@ -14,6 +15,7 @@ services:
     image: spacehub-server
     environment:
       SPACEHUB_DB: ${SPACEHUB_DB:-spacehub}
+      SPACEHUB_XO_KEY: ${SPACEHUB_XO_KEY:-}  # empty: the xo API stays off
     volumes:
       - spacehub-data:/data
     restart: unless-stopped
