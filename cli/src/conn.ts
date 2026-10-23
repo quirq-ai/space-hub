@@ -44,10 +44,10 @@ export function connectTo(
   });
 }
 
-// Connect as the identity saved for the configured server, creating and
-// saving one on first use.
-export async function connect(): Promise<{ conn: Conn; identity: Identity; server: string; database: string }> {
-  const cfg = loadConfig();
+// Connect as the identity saved for `server` (default: the configured one),
+// creating and saving one on first use.
+export async function connect(server?: string): Promise<{ conn: Conn; identity: Identity; server: string; database: string }> {
+  const cfg = loadConfig(server);
   const { conn, identity, token } = await connectTo(cfg.server, cfg.database, cfg.token);
   if (!cfg.token && !process.env.SPACEHUB_TOKEN) saveToken(cfg.server, token);
   return { conn, identity, server: cfg.server, database: cfg.database };

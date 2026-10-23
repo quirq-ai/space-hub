@@ -17,7 +17,7 @@ interface ConfigFile {
   tokens?: Record<string, string>;
 }
 
-export const DEFAULT_SERVER = 'ws://127.0.0.1:3000';
+export const DEFAULT_SERVER = 'wss://hub.quirq.dev';
 export const DEFAULT_DATABASE = 'spacehub';
 
 function home() {
@@ -46,9 +46,10 @@ export function normalizeServer(url: string) {
   return url.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:').replace(/\/+$/, '');
 }
 
-export function loadConfig(): Config {
+// `server` (from a remote's quirq URL) wins over the configured one.
+export function loadConfig(server?: string): Config {
   const data = readFile();
-  const server = normalizeServer(process.env.SPACEHUB_SERVER ?? data.server ?? DEFAULT_SERVER);
+  server = normalizeServer(server ?? process.env.SPACEHUB_SERVER ?? data.server ?? DEFAULT_SERVER);
   return {
     server,
     database: process.env.SPACEHUB_DB ?? data.database ?? DEFAULT_DATABASE,

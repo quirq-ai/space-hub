@@ -2,13 +2,14 @@
   "name": "spacehub",
   "version": "0.1.0",
   "private": true,
-  "description": "spacehub client: a gh-style CLI plus the git remote helper (git clone/push/fetch spacehub://owner/space)",
+  "description": "spacehub client: a gh-style CLI plus the git remote helper (git clone/push/fetch quirq://hub.quirq.dev/owner/space)",
   "type": "module",
   "engines": {
     "node": ">=22"
   },
   "bin": {
     "spacehub": "bin/spacehub",
+    "git-remote-quirq": "bin/git-remote-quirq",
     "git-remote-spacehub": "bin/git-remote-spacehub"
   },
   "files": [

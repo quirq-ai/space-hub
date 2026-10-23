@@ -28,7 +28,7 @@ const DB = process.env.SPACEHUB_DB ?? 'spacehub';
 const MAX_IMPORT_MB = Number(process.env.SPACEHUB_IMPORT_MAX_MB ?? 500);
 const IMPORT_TIMEOUT_MS = 30 * 60 * 1000;
 const MAX_CONCURRENT_IMPORTS = 2;
-// git finds git-remote-spacehub on PATH; also look next to this bundle.
+// git finds git-remote-quirq on PATH; also look next to this bundle.
 const HELPER_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../bin');
 const YEAR = 60 * 60 * 24 * 365;
 
@@ -226,7 +226,7 @@ async function runJob(job: Job) {
       await report('running', 'uploading to spacehub');
       await run(
         'git',
-        ['-C', repo, 'push', '--quiet', ...(job.sync ? ['--force', '--prune'] : []), `spacehub://${job.space}`, 'refs/heads/*:refs/heads/*', 'refs/tags/*:refs/tags/*'],
+        ['-C', repo, 'push', '--quiet', ...(job.sync ? ['--force', '--prune'] : []), `quirq://${job.space}`, 'refs/heads/*:refs/heads/*', 'refs/tags/*:refs/tags/*'],
         { SPACEHUB_TOKEN: job.token, SPACEHUB_SERVER: SERVER, SPACEHUB_DB: DB, SPACEHUB_HOME: path.join(tmp, 'home') }
       );
       const head = (await run('git', ['-C', repo, 'symbolic-ref', '--short', 'HEAD']).catch(() => '')).trim();

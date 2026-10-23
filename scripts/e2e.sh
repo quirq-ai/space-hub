@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # End-to-end test: starts a throwaway SpacetimeDB on a spare port, publishes
 # the module, then drives the spacehub CLI and real git through
-# git-remote-spacehub.
+# git-remote-quirq (and git-remote-spacehub for old spacehub:// URLs).
 #   scripts/e2e.sh                                   (needs: spacetime, git, node 22+, python3)
 #   SPACEHUB_E2E_SERVER=ws://127.0.0.1:3000 scripts/e2e.sh
 #                                                    against a running server, e.g. the Docker image
@@ -109,13 +109,16 @@ check "same agent on another machine (token + --with-token)" bash -c \
 expect_fail "logout asks for --yes" "--yes" as alice2 spacehub auth logout
 check "logout" as alice2 spacehub auth logout --yes
 
+# Remotes we write always name the hub: quirq://<host>/<owner>/<space>.
+HUB="quirq://${SPACEHUB_SERVER#*://}"
+
 echo "spaces"
 check "space create" as alice spacehub space create notes -d "e2e space"
 expect_fail "space names are unique per owner" "already exists" as alice spacehub space create notes
 check "space list shows it" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub space list $ALICE | grep -q $NOTES"
 check "repo is an alias of space" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub repo list | grep -q $NOTES"
 expect_fail "a missing space explains how to create it" "spacehub space create" \
-  as alice git -C "$WORK" ls-remote "spacehub://$ALICE/missing"
+  as alice git -C "$WORK" ls-remote "$HUB/$ALICE/missing"
 expect_fail "non-owner cannot delete" "permission denied" as bob spacehub space delete "$NOTES" --yes
 
 echo "first push and clone"
@@ -126,11 +129,11 @@ echo hello >a.txt; mkdir -p d/e; echo deep >d/e/b.txt; printf '\x00\x01binary' >
 printf '# Notes\n\nSome *notes* and a [link](d/e/b.txt).\n\n| key | value |\n|-----|-------|\n| a   | 1     |\n' >README.md
 git add . && commit -m first
 echo two >>a.txt && commit -am second
-git remote add spacehub "spacehub://$NOTES"
-as alice git push -q -u spacehub main 2>"$WORK/err" || { cat "$WORK/err" >&2; fail "first push"; }
+git remote add quirq "$HUB/$NOTES"
+as alice git push -q quirq main 2>"$WORK/err" || { cat "$WORK/err" >&2; fail "first push"; }
 ok "push to an empty space"
 check "space view lists heads/main" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub space view $NOTES | grep -q heads/main"
-check "space view infers the space inside a clone" bash -c "cd '$A' && SPACEHUB_HOME='$WORK/home-alice' spacehub space view | grep -q 'url       spacehub://$NOTES'"
+check "space view infers the space inside a clone" bash -c "cd '$A' && SPACEHUB_HOME='$WORK/home-alice' spacehub space view | grep -q 'url       $HUB/$NOTES'"
 as bob spacehub space clone "$NOTES" "$B" -- -q 2>/dev/null
 same "clone matches (anyone can read)" "$(git -C "$B" rev-parse HEAD)" "$(git -C "$A" rev-parse HEAD)"
 same "clone checks out the default branch" "$(git -C "$B" symbolic-ref HEAD)" "refs/heads/main"
@@ -139,56 +142,63 @@ check "clone passes git fsck" git -C "$B" fsck --strict
 
 echo "permissions"
 cd "$B"; echo bob >>a.txt; commit -am "bob edit"
-expect_fail "non-owner cannot push" "permission denied" as bob git push spacehub main
+expect_fail "non-owner cannot push" "permission denied" as bob git push quirq main
+
+echo "older remotes"
+OLD="$WORK/old"
+check "an old spacehub:// remote still fetches" as alice git -C "$WORK" clone -q "spacehub://$NOTES" "$OLD"
+same "and holds the same commit" "$(git -C "$OLD" rev-parse HEAD)" "$(git -C "$A" rev-parse HEAD)"
+check "a short quirq://owner/space uses the logged-in hub" as alice git -C "$WORK" ls-remote "quirq://$NOTES"
 
 echo "sync between two working copies"
 C="$WORK/c"
 (cd "$WORK" && as alice spacehub space clone notes c -- -q 2>/dev/null)
 cd "$C"; echo three >>a.txt; commit -am third
-same "space clone names the remote spacehub" "$(git -C "$C" remote)" "spacehub"
-check "push from a second clone" as alice git push -q spacehub main
+same "space clone names the remote quirq" "$(git -C "$C" remote)" "quirq"
+same "space clone points it at a quirq URL" "$(git -C "$C" remote get-url quirq)" "$HUB/$NOTES"
+check "push from a second clone" as alice git push -q quirq main
 cd "$A"; as alice spacehub space sync >/dev/null 2>&1
 same "space sync fast-forwards the first clone" "$(git -C "$A" rev-parse HEAD)" "$(git -C "$C" rev-parse HEAD)"
 D="$WORK/d"; (cd "$WORK" && as alice spacehub space clone notes d -- -q 2>/dev/null)
 (cd "$D" && SPACEHUB_HOME="$WORK/home-alice" exec spacehub space sync --watch >"$WORK/watch.log" 2>&1) &
 WATCH_PID=$!
 sleep 2
-cd "$C"; echo live >>a.txt; commit -am live; as alice git push -q spacehub main 2>/dev/null
+cd "$C"; echo live >>a.txt; commit -am live; as alice git push -q quirq main 2>/dev/null
 for _ in $(seq 1 50); do
   [[ "$(git -C "$D" rev-parse HEAD)" == "$(git -C "$C" rev-parse HEAD)" ]] && break
   sleep 0.2
 done
 kill "$WATCH_PID" 2>/dev/null; wait "$WATCH_PID" 2>/dev/null || true
 same "space sync --watch pulls a push live" "$(git -C "$D" rev-parse HEAD)" "$(git -C "$C" rev-parse HEAD)"
-cd "$A"; as alice git pull -q --ff-only spacehub main 2>/dev/null
+cd "$A"; as alice git pull --ff-only quirq main 2>/dev/null
 
 echo "history rules"
 cd "$A"; echo diverge >>a.txt; commit -am "diverge A"
 cd "$C"; echo other >>a.txt; commit -am "diverge C"
-check "C pushes first" as alice git push -q spacehub main
+check "C pushes first" as alice git push -q quirq main
 cd "$A"
-expect_fail "non-fast-forward is rejected" "rejected\|non-fast-forward\|fetch first" as alice git push spacehub main
+expect_fail "non-fast-forward is rejected" "rejected\|non-fast-forward\|fetch first" as alice git push quirq main
 expect_fail "stale lease is rejected" "stale\|rejected" \
-  as alice git push --force-with-lease=main:"$(git rev-parse HEAD~1)" spacehub main
-check "force push overwrites" as alice git push -q --force spacehub main
-same "remote now holds A's commit" "$(as alice git ls-remote spacehub refs/heads/main | cut -f1)" "$(git rev-parse HEAD)"
+  as alice git push --force-with-lease=main:"$(git rev-parse HEAD~1)" quirq main
+check "force push overwrites" as alice git push --force quirq main
+same "remote now holds A's commit" "$(as alice git ls-remote quirq refs/heads/main | cut -f1)" "$(git rev-parse HEAD)"
 
 echo "branches, merges and tags"
 git checkout -q -b feature; echo f >f.txt; git add f.txt; commit -m feature
 git checkout -q main; echo m >m.txt; git add m.txt; commit -m "main work"
 git merge -q --no-ff -m "merge feature" feature
-check "push a merge and a second branch" as alice git push -q spacehub main feature
+check "push a merge and a second branch" as alice git push -q quirq main feature
 git tag v1; git -c user.name=e2e -c user.email=e2e@example.com tag -a v2 -m "annotated"
-check "push light and annotated tags" as alice git push -q spacehub v1 v2
+check "push light and annotated tags" as alice git push -q quirq v1 v2
 expect_fail "moving an existing tag needs force" "already exists\|rejected" \
-  bash -c "cd '$A' && git tag -f v1 HEAD~1 && SPACEHUB_HOME='$WORK/home-alice' git push spacehub v1"
-check "delete a branch" as alice git push -q spacehub :feature
-cd "$C"; as alice git fetch -q --tags spacehub 2>/dev/null
-same "fetch brings the merge" "$(git rev-parse spacehub/main)" "$(git -C "$A" rev-parse main)"
+  bash -c "cd '$A' && git tag -f v1 HEAD~1 && SPACEHUB_HOME='$WORK/home-alice' git push quirq v1"
+check "delete a branch" as alice git push -q quirq :feature
+cd "$C"; as alice git fetch --tags quirq 2>/dev/null
+same "fetch brings the merge" "$(git rev-parse quirq/main)" "$(git -C "$A" rev-parse main)"
 same "annotated tag fetched as a tag object" "$(git cat-file -t v2)" "tag"
-as alice git fetch -q --prune spacehub 2>/dev/null
-check "pruned deleted branch" bash -c "! git rev-parse -q --verify refs/remotes/spacehub/feature"
-git reset -q --hard spacehub/main  # C's own commit was force-pushed over
+as alice git fetch --prune quirq 2>/dev/null
+check "pruned deleted branch" bash -c "! git rev-parse -q --verify refs/remotes/quirq/feature"
+git reset -q --hard quirq/main  # C's own commit was force-pushed over
 
 echo "large objects and incremental fetch"
 cd "$A"
@@ -200,22 +210,22 @@ for i in range(1500):
     open(f'many/f{i}.txt', 'w').write(f'{i}\n' + os.urandom(6000).hex())
 EOF
 git add . && commit -m "big file and many files"
-check "push 5 MiB blob (chunked) and 1500 files" as alice git push -q spacehub main
+check "push 5 MiB blob (chunked) and 1500 files" as alice git push -q quirq main
 cd "$C"
-out="$(as alice git pull --ff-only spacehub main 2>&1)" || { echo "$out" >&2; fail "pull large push"; }
+out="$(as alice git pull --ff-only quirq main 2>&1)" || { echo "$out" >&2; fail "pull large push"; }
 check "chunked blob round-trips byte for byte" cmp -s "$A/big.bin" "$C/big.bin"
 same "multi-window fetch is complete" "$(git rev-parse HEAD)" "$(git -C "$A" rev-parse HEAD)"
 check "fsck after large fetch" git fsck --strict
 cd "$A"; echo tiny >tiny.txt; git add tiny.txt; commit -m tiny
-as alice git push -q spacehub main 2>/dev/null
+as alice git push -q quirq main 2>/dev/null
 cd "$C"
-out="$(as alice git fetch spacehub 2>&1)" || { echo "$out" >&2; fail "incremental fetch"; }
+out="$(as alice git fetch quirq 2>&1)" || { echo "$out" >&2; fail "incremental fetch"; }
 grep -q "received 3 objects" <<<"$out" && ok "incremental fetch only downloads new objects" \
   || { echo "$out" >&2; fail "incremental fetch"; }
 rm -rf "$C/.git/spacehub"
-echo again >>"$A/tiny.txt"; git -C "$A" add tiny.txt; (cd "$A" && commit -m again && as alice git push -q spacehub main 2>/dev/null)
-as alice git fetch -q spacehub 2>/dev/null
-same "fetch without a fetch record still works" "$(git rev-parse spacehub/main)" "$(git -C "$A" rev-parse HEAD)"
+echo again >>"$A/tiny.txt"; git -C "$A" add tiny.txt; (cd "$A" && commit -m again && as alice git push -q quirq main 2>/dev/null)
+as alice git fetch -q quirq 2>/dev/null
+same "fetch without a fetch record still works" "$(git rev-parse quirq/main)" "$(git -C "$A" rev-parse HEAD)"
 
 echo "web UI"
 page_has "home lists the space" "" "$NOTES"
@@ -317,13 +327,14 @@ fi
 echo "create from an existing repo, edit"
 P="$WORK/p"; git init -q -b main "$P"; (cd "$P" && echo p >p.txt && git add . && commit -m p)
 check "space create --source --push" as alice spacehub space create proj --source "$P" --push
-same "pushed HEAD matches" "$(as alice git -C "$P" ls-remote spacehub refs/heads/main | cut -f1)" "$(git -C "$P" rev-parse HEAD)"
+same "pushed HEAD matches" "$(as alice git -C "$P" ls-remote quirq refs/heads/main | cut -f1)" "$(git -C "$P" rev-parse HEAD)"
+same "create --push sets no upstream" "$(git -C "$P" config branch.main.remote || echo none)" "none"
 Q="$WORK/q"; git init -q -b main "$Q"; (cd "$Q" && echo q >q.txt && git add . && commit -m q && git remote add origin https://example.com/q.git)
-check "create --source adds a spacehub remote next to origin" as alice spacehub space create withorigin --source "$Q" --push
+check "create --source adds a quirq remote next to origin" as alice spacehub space create withorigin --source "$Q" --push
 same "existing origin untouched" "$(git -C "$Q" remote get-url origin)" "https://example.com/q.git"
-same "spacehub remote holds HEAD" "$(as alice git -C "$Q" ls-remote spacehub refs/heads/main | cut -f1)" "$(git -C "$Q" rev-parse HEAD)"
+same "quirq remote holds HEAD" "$(as alice git -C "$Q" ls-remote quirq refs/heads/main | cut -f1)" "$(git -C "$Q" rev-parse HEAD)"
 expect_fail "a taken --remote name is refused before creating" "already has a remote" as alice spacehub space create other --source "$Q" --remote origin
-expect_fail "so no space was created" "does not exist" as alice git ls-remote "spacehub://$ALICE/other"
+expect_fail "so no space was created" "does not exist" as alice git ls-remote "$HUB/$ALICE/other"
 check "delete that space" as alice spacehub space delete withorigin --yes
 check "space edit" as alice spacehub space edit proj --description "edited" --default-branch main
 check "edit shows in view" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub space view $ALICE/proj | grep -q '^edited$'"
@@ -333,6 +344,6 @@ expect_fail "delete needs --yes" "--yes" as alice spacehub space delete "$NOTES"
 check "delete space" as alice spacehub space delete "$NOTES" --yes
 page_has "deletions stay in the hub feed" "" "deleted <b>$NOTES</b>"
 check "delete second space" as alice spacehub space delete proj --yes
-expect_fail "deleted space is gone" "does not exist" as alice git ls-remote "spacehub://$NOTES"
+expect_fail "deleted space is gone" "does not exist" as alice git ls-remote "$HUB/$NOTES"
 
 echo "all $PASS checks passed"
