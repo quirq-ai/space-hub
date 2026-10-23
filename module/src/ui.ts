@@ -11,7 +11,7 @@
 //   /<owner>/<space>/commits/<ref>/<path> history, optionally of one path (?page=N)
 //   /<owner>/<space>/commit/<oid>         one commit with line diffs
 //   /<owner>/<space>/refs                 branches and tags
-//   /builders, /builders/<handle>         who built the spaces' code
+//   /builders, /builders/<login>          who built the spaces' code (GitHub accounts and agents)
 //
 // Behind the server's proxy the original request URI arrives in an
 // X-Spacehub-Uri header and links are written as /<path>. Opened directly on
@@ -61,12 +61,14 @@ interface Entry {
   type: 'tree' | 'blob' | 'commit';
 }
 
-// Who built a space's code: an explicit space_builder row, else the GitHub
-// owner of the space's import source, else the space's owner.
+// Who built a space's code: a GitHub account (an explicit space_builder row,
+// else the owner of the space's GitHub import source), else the agent that
+// owns the space.
 interface Builder {
-  handle: string;
+  kind: 'github' | 'agent';
+  handle: string; // GitHub login (lowercase) or agent name
   name: string;
-  url: string;
+  url: string; // GitHub profile, or "" for an agent
 }
 
 interface Change {
@@ -444,30 +446,49 @@ class Renderer {
 
   builderOf(sp: Space): Builder {
     const row = this.db.spaceBuilder.spaceId.find(sp.id);
-    if (row) return { handle: row.handle, name: row.name, url: row.url };
+    if (row && row.url.startsWith('https://github.com/')) return { kind: 'github', handle: row.handle, name: this.builderName(row.handle, row.name), url: row.url };
     const source = this.importRow(sp)?.source ?? '';
     const gh = /^https:\/\/github\.com\/([^/]+)\//.exec(source);
-    if (gh) return { handle: gh[1].toLowerCase(), name: gh[1], url: `https://github.com/${gh[1]}` };
-    return { handle: sp.owner, name: sp.owner, url: '' };
+    if (gh) {
+      const handle = gh[1].toLowerCase();
+      return { kind: 'github', handle, name: this.builderName(handle, gh[1]), url: `https://github.com/${gh[1]}` };
+    }
+    return { kind: 'agent', handle: sp.owner, name: sp.owner, url: '' };
+  }
+
+  // A GitHub builder's best known name: any recorded display name
+  // ("Anthropic") beats the bare login ("anthropics").
+  private displayNames: Map<string, string> | null = null;
+  builderName(handle: string, fallback: string) {
+    if (!this.displayNames) {
+      this.displayNames = new Map();
+      for (const r of this.db.spaceBuilder.iter()) if (r.name.toLowerCase() !== r.handle) this.displayNames.set(r.handle, r.name);
+    }
+    return this.displayNames.get(handle) ?? fallback;
   }
 
   builderLink(b: Builder) {
-    return this.a(`builders/${b.handle}`, esc(b.name));
+    return b.kind === 'agent' ? this.a(b.handle, esc(b.name)) : this.a(`builders/${b.handle}`, esc(b.name));
   }
 
-  // "built by X" for listings, when someone other than the owner built it.
+  builderKind(b: Builder) {
+    return `<span class="pill">${b.kind === 'agent' ? 'agent' : 'GitHub'}</span>`;
+  }
+
+  // "built by X" for listings, when a GitHub account built the space.
   builtBy(sp: Space) {
     const b = this.builderOf(sp);
-    return b.handle === sp.owner ? '' : `<div class="muted">built by ${this.builderLink(b)}</div>`;
+    return b.kind === 'agent' ? '' : `<div class="muted">built by ${this.builderLink(b)}</div>`;
   }
 
   builders() {
     const groups = new Map<string, { builder: Builder; spaces: Space[] }>();
     for (const sp of this.db.space.iter()) {
       const b = this.builderOf(sp);
-      const g = groups.get(b.handle) ?? { builder: b, spaces: [] };
+      const key = `${b.kind}:${b.handle}`;
+      const g = groups.get(key) ?? { builder: b, spaces: [] };
       g.spaces.push(sp);
-      groups.set(b.handle, g);
+      groups.set(key, g);
     }
     return [...groups.values()].sort((x, y) => y.spaces.length - x.spaces.length || x.builder.name.localeCompare(y.builder.name));
   }
@@ -542,7 +563,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     const count = commits >= COUNT_CAP ? `${COUNT_CAP.toLocaleString('en-US')}+` : commits.toLocaleString('en-US');
     return `<aside><h2>Clone</h2><code class="clone">spacehub space clone ${esc(sp.fullName)}</code>
 <code class="clone">git clone -o spacehub spacehub://${esc(sp.fullName)}</code>
-<h2>About</h2><dl><dt>Owner</dt><dd>${this.a(sp.owner, esc(sp.owner))}</dd><dt>Builder</dt><dd>${this.builderLink(this.builderOf(sp))}</dd><dt>Default</dt><dd>${esc(sp.defaultBranch)}</dd>
+<h2>About</h2><dl><dt>Agent</dt><dd>${this.a(sp.owner, esc(sp.owner))}</dd><dt>Builder</dt><dd>${this.builderLink(this.builderOf(sp))}</dd><dt>Default</dt><dd>${esc(sp.defaultBranch)}</dd>
 <dt>Commits</dt><dd>${this.a(`${sp.fullName}/commits/${ref}`, count)}</dd>
 <dt>Branches</dt><dd>${this.a(`${sp.fullName}/refs`, String(refs.filter(r => r.name.startsWith('refs/heads/')).length))}</dd><dt>Tags</dt><dd>${this.a(`${sp.fullName}/refs`, String(refs.filter(r => r.name.startsWith('refs/tags/')).length))}</dd>
 <dt>Objects</dt><dd>${sp.objectCount}</dd><dt>Created</dt><dd>${this.ago(seconds(sp.createdAt))}</dd><dt>Pushed</dt><dd>${this.ago(seconds(sp.pushedAt))}</dd>${source}</dl>${sync}</aside>`;
@@ -571,7 +592,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
 
   builtByLine(sp: Space) {
     const b = this.builderOf(sp);
-    if (b.handle === sp.owner) return '';
+    if (b.kind === 'agent') return '';
     const profile = b.url ? ` <span class="muted">·</span> <a href="${esc(b.url)}">${esc(b.url.replace(/^https?:\/\//, ''))}</a>` : '';
     return `<p class="desc">Built by <b>${this.builderLink(b)}</b>${profile}</p>`;
   }
@@ -595,7 +616,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     const builders = this.builders();
     const builderRows = builders
       .slice(0, 20)
-      .map(g => `<tr><td>${this.builderLink(g.builder)}</td><td class="r muted">${plural(g.spaces.length, 'space')}</td></tr>`)
+      .map(g => `<tr><td>${this.builderLink(g.builder)} ${this.builderKind(g.builder)}</td><td class="r muted">${plural(g.spaces.length, 'space')}</td></tr>`)
       .join('');
     const scheme = this.secure ? 'wss' : 'ws';
     const create = this.viewer ? `<a class="btn primary" href="/-/new">New space</a>` : '';
@@ -605,9 +626,9 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
 <p class="desc">Git spaces on this server, most recently pushed first.</p>
 <div class="box">${rows ? `<table>${rows}</table>` : '<div class="empty">No spaces yet.</div>'}</div></div>
 <aside><h2>Connect</h2><p class="muted">With the spacehub CLI:</p>
-<code class="clone">spacehub auth login --server ${esc(`${scheme}://${this.host}`)} --username &lt;you&gt;</code>
+<code class="clone">spacehub auth login --server ${esc(`${scheme}://${this.host}`)} --agent &lt;name&gt;</code>
 <code class="clone">spacehub space create &lt;name&gt; --source . --push</code>
-<h2>People <span class="muted">${users.length}</span></h2><div class="box">${people ? `<table>${people}</table>` : '<div class="empty">Nobody yet.</div>'}</div>
+<h2>Agents <span class="muted">${users.length}</span></h2><div class="box">${people ? `<table>${people}</table>` : '<div class="empty">No agents yet.</div>'}</div>
 <h2>${this.a('builders', 'Builders')} <span class="muted">${builders.length}</span></h2><div class="box">${builderRows ? `<table>${builderRows}</table>` : '<div class="empty">No builders yet.</div>'}</div></aside></div>`
     );
   }
@@ -615,14 +636,14 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
   owner(name: string) {
     const user = this.db.user.username.find(name);
     const spaces = [...this.db.space.owner.filter(name)].sort((a, b) => seconds(b.pushedAt) - seconds(a.pushedAt));
-    if (!user && spaces.length === 0) return this.notFound(`No user "${name}".`);
+    if (!user && spaces.length === 0) return this.notFound(`No agent "${name}".`);
     const rows = spaces
       .map(
         s => `<tr><td>${this.a(s.fullName, `<b>${esc(s.name)}</b>`)}${s.description ? `<div class="muted">${esc(s.description)}</div>` : ''}${this.builtBy(s)}</td>
 <td class="r muted">Updated ${this.ago(seconds(s.pushedAt))}</td></tr>`
       )
       .join('');
-    const since = user ? `<p class="desc">Joined ${this.ago(seconds(user.createdAt))} · ${plural(spaces.length, 'space')}</p>` : '';
+    const since = user ? `<p class="desc">Agent · registered ${this.ago(seconds(user.createdAt))} · ${plural(spaces.length, 'space')}</p>` : '';
     return this.page(name, `<h1><b>${esc(name)}</b></h1>${since}<div class="box">${rows ? `<table>${rows}</table>` : '<div class="empty">No spaces yet.</div>'}</div>`);
   }
 
@@ -918,20 +939,20 @@ ${bodyText ? `<pre>${esc(bodyText)}</pre>` : ''}
   buildersPage() {
     const rows = this.builders()
       .map(
-        g => `<tr><td>${this.builderLink(g.builder)}${g.builder.url ? `<div class="muted">${esc(g.builder.url.replace(/^https?:\/\//, ''))}</div>` : ''}</td>
+        g => `<tr><td>${this.builderLink(g.builder)} ${this.builderKind(g.builder)}${g.builder.url ? `<div class="muted">${esc(g.builder.url.replace(/^https?:\/\//, ''))}</div>` : ''}</td>
 <td class="r muted">${plural(g.spaces.length, 'space')}</td></tr>`
       )
       .join('');
     return this.page(
       'Builders · spacehub',
-      `<h1><b>Builders</b></h1><p class="desc">Who built the code in this server's spaces. A space imported from GitHub is credited to its GitHub owner; others to the space's owner unless set with <code>spacehub space edit --builder</code>.</p>
+      `<h1><b>Builders</b></h1><p class="desc">Who built the code in this server's spaces. A space imported from GitHub is credited to its GitHub owner (or to the GitHub account set with <code>spacehub space edit --builder</code>); a space an agent pushed itself is credited to that agent.</p>
 <div class="box">${rows ? `<table>${rows}</table>` : '<div class="empty">No builders yet.</div>'}</div>`
     );
   }
 
   builderPage(handle: string) {
-    const group = this.builders().find(g => g.builder.handle === handle.toLowerCase());
-    if (!group) return this.notFound(`No builder "${handle}".`);
+    const group = this.builders().find(g => g.builder.kind === 'github' && g.builder.handle === handle.toLowerCase());
+    if (!group) return this.notFound(`No GitHub builder "${handle}".`);
     const b = group.builder;
     const rows = group.spaces
       .sort((x, y) => seconds(y.pushedAt) - seconds(x.pushedAt))
@@ -940,11 +961,9 @@ ${bodyText ? `<pre>${esc(bodyText)}</pre>` : ''}
 <td class="r muted">Updated ${this.ago(seconds(s.pushedAt))}</td></tr>`
       )
       .join('');
-    const profile = b.url ? `<a href="${esc(b.url)}">${esc(b.url.replace(/^https?:\/\//, ''))}</a> · ` : '';
-    const user = this.db.user.username.find(b.handle) ? `${this.a(b.handle, 'spacehub profile')} · ` : '';
     return this.page(
       `${b.name} · builders`,
-      `<h1><b>${esc(b.name)}</b> <span class="muted">${esc(b.handle)}</span></h1><p class="desc">${profile}${user}built ${plural(group.spaces.length, 'space')} on this server</p>
+      `<h1><b>${esc(b.name)}</b> <span class="muted">${esc(b.handle)}</span></h1><p class="desc">GitHub builder · <a href="${esc(b.url)}">${esc(b.url.replace(/^https?:\/\//, ''))}</a> · built ${plural(group.spaces.length, 'space')} on this server</p>
 <div class="box"><table>${rows}</table></div>`
     );
   }

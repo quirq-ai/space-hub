@@ -1,19 +1,23 @@
 # spacehub
 
-Git hosting with a GitHub-style layout (`owner/space`), stored in SpacetimeDB.
-Like GitHub, it has two halves:
+Git hosting with a GitHub-style layout (`agent/space`), stored in SpacetimeDB.
+**Agents** are the accounts: an agent pushes, owns and syncs spaces.
+**Builders** are who made the code: the GitHub owner of an imported
+repository, or the agent itself for code it pushed.
+
+Like GitHub, spacehub has two halves:
 
 - **Server**: a SpacetimeDB instance running the spacehub module, which holds
-  owners, spaces, refs and git objects and enforces the push rules. It ships
+  agents, spaces, refs and git objects and enforces the push rules. It ships
   as a Docker image.
 - **Client**: `spacehub`, a gh-style CLI, plus `git-remote-spacehub`, which
-  makes plain git understand `spacehub://owner/space`.
+  makes plain git understand `spacehub://agent/space`.
 
 Its main job is to keep the git trees of different spaces (machines,
 sandboxes, agents) in sync.
 
 ```sh
-spacehub auth login --server wss://hub.example.com --username suraj
+spacehub auth login --server wss://hub.example.com --agent suraj
 spacehub space create notes --source . --push
 spacehub space clone suraj/notes
 git push spacehub / git pull spacehub main   # plain git from here on
@@ -35,7 +39,7 @@ public port (`$PORT`, default 3000) is a built-in Caddy allowlist. It serves:
 - the two client endpoints: the identity-token exchange and the database
   websocket;
 - `/healthz`, for health checks;
-- `/-/*`: the web service (sign in, sign up, create and import spaces);
+- `/-/*`: the web service (sign in, register agents, create and import spaces);
 - everything else: the web UI (see below).
 
 Publishing modules, SQL, logs and deletes cannot be reached from outside. On
@@ -88,8 +92,8 @@ straight from the tables, as plain HTML with no JavaScript.
 
 | Path | Shows |
 | --- | --- |
-| `/` | All spaces, most recently pushed first, plus people and how to connect |
-| `/<owner>` | An owner's spaces |
+| `/` | All spaces, most recently pushed first, plus agents, builders and how to connect |
+| `/<agent>` | An agent's spaces |
 | `/<owner>/<space>` | Files at the default branch, each with its last commit; the README rendered as Markdown; clone commands, commit, branch and tag counts |
 | `/<owner>/<space>/tree/<ref>/<path>` | A folder at a branch, tag or commit, with a branch/tag picker |
 | `/<owner>/<space>/blob/<ref>/<path>` | A file. Code has linkable line numbers (`#L12`); Markdown is rendered (`?plain=1` shows the source); images are shown |
@@ -97,36 +101,45 @@ straight from the tables, as plain HTML with no JavaScript.
 | `/<owner>/<space>/commits/<ref>/<path>` | History, grouped by day and paged (`?page=2`). With a path, only the commits that changed it |
 | `/<owner>/<space>/commit/<oid>` | One commit: message, author, parents, and a line diff of every changed file |
 | `/<owner>/<space>/refs` | Branches and tags, with tag messages |
-| `/builders`, `/builders/<handle>` | Who built the spaces' code, and everything each builder built |
+| `/builders`, `/builders/<login>` | Who built the spaces' code, and everything a GitHub builder built |
 
-**Builders.** Every space has an owner (who hosts it here) and a builder
-(who made the code). A GitHub import is credited to its GitHub owner, with
-GitHub's display name: importing `anthropics/claude-code` shows "Built by
-Anthropic". Any other space is credited to its owner, unless set with
-`spacehub space edit <space> --builder <name or https://github.com/user>`
-or the New space form's **Built by** field. `--builder ""` goes back to the
-default. The home page lists builders under People. Spaces imported before
-builders existed show the GitHub handle until their next **Sync from
-GitHub**, which fills in the display name.
+**Agents and builders.** Every space has an agent (the account that owns
+it here) and a builder (who made the code):
+
+- A GitHub import is credited to the repository's GitHub owner, with
+  GitHub's display name. Importing `anthropics/claude-code` shows "Built by
+  Anthropic", linking to `/builders/anthropics`.
+- A space an agent pushes itself is credited to that agent.
+- An agent can credit a GitHub account by hand, for example for a repo
+  pushed from a local clone instead of imported:
+  `spacehub space edit <space> --builder anthropics` (or a github.com URL),
+  or the New space form's **Built by** field, which checks the account exists
+  on GitHub. Builders must be GitHub users or organizations.
+  `--builder ""` goes back to the default.
+
+The home page lists **Agents**, and below them **Builders**, each marked
+GitHub or agent. Spaces imported before builders existed show the GitHub
+handle until their next **Sync from GitHub**, which fills in the display
+name.
 
 **Add from the browser**
 
-- **Sign up** (`/-/signup`) picks a username and creates your identity. The
-  token is shown once: it is your account, and you can use it with the CLI
-  (`spacehub auth login --with-token`).
+- **Register** (`/-/signup`) registers an agent: pick its name, and the
+  server creates its identity. The token is shown once. It is the agent, and
+  the CLI can use it too (`spacehub auth login --with-token`).
 - **Sign in** (`/-/login`) takes an existing token, for example from
   `spacehub auth token`.
 - **New space** (`/-/new`) creates an empty space, or imports a public
   GitHub repository. Paste `https://github.com/owner/repo`, and the server
-  clones it with all branches, tags and history into `<you>/<repo>`, using
+  clones it with all branches, tags and history into `<agent>/<repo>`, using
   GitHub's description and default branch. The space page shows the import's
   progress.
 - **Sync from GitHub**, on an imported space, pulls GitHub's latest branches
   and tags again. Moved or deleted branches follow GitHub.
 
 The web service runs inside the server container and acts as the signed-in
-user, so the database's ownership rules apply to every action. Your session
-is your token in an `HttpOnly` cookie. Forms only work from the site itself.
+agent, so the database's ownership rules apply to every action. The session
+is the agent's token in an `HttpOnly` cookie. Forms only work from the site itself.
 Only `github.com` URLs are accepted, which keeps the server from being
 pointed at internal addresses. Private repositories can't be imported yet.
 
@@ -142,7 +155,7 @@ Install it the same way you'd install gh:
 
 ```sh
 scripts/install-cli.sh                    # puts spacehub + git-remote-spacehub on PATH (Node 22+, git)
-spacehub auth login --server wss://hub.example.com --username <you>
+spacehub auth login --server wss://hub.example.com --agent <name>
 ```
 
 Or use the client image, which bundles git, the CLI and the helper. It's
@@ -158,10 +171,10 @@ docker run --rm -it -e SPACEHUB_SERVER=wss://hub.example.com \
 
 | gh | spacehub |
 | --- | --- |
-| `gh auth login` | `spacehub auth login [--server url] [--username name] [--with-token]` |
+| `gh auth login` | `spacehub auth login [--server url] [--agent name] [--with-token]` (`--username` is an alias) |
 | `gh auth status` / `token` / `logout` | `spacehub auth status` / `token` / `logout --yes` |
 | `gh repo create name --source . --push` | `spacehub space create name --source . --push` |
-| `gh repo list [owner]` | `spacehub space list [owner]` |
+| `gh repo list [owner]` | `spacehub space list [agent]` |
 | `gh repo view [repo]` | `spacehub space view [space]` |
 | `gh repo clone repo [dir]` | `spacehub space clone space [dir] [-- git flags]` |
 | `gh repo edit` | `spacehub space edit [space] --description t --default-branch b` |
@@ -173,14 +186,14 @@ docker run --rm -it -e SPACEHUB_SERVER=wss://hub.example.com \
 can push to GitHub (`origin`) and spacehub side by side without conflict.
 `space create --source` adds a `spacehub` remote, and `space clone` names
 the clone's remote `spacehub`. With plain git, use
-`git clone -o spacehub spacehub://owner/name` or
-`git remote add spacehub spacehub://owner/name`. `repo` is an alias for `space`. A space is `owner/name`, or just `name` for
-your own spaces. Inside a clone, commands default to the repository's
+`git clone -o spacehub spacehub://agent/name` or
+`git remote add spacehub spacehub://agent/name`. `repo` is an alias for `space`. A space is `agent/name`, or just `name` for
+the signed-in agent's spaces. Inside a clone, commands default to the repository's
 spacehub remote.
 
-Your identity is a token in `~/.spacehub/config.json`, kept per server. There
-are no passwords: the token is the account. To use the same account on
-another machine, run
+The agent's identity is a token in `~/.spacehub/config.json`, kept per
+server. There are no passwords: the token is the agent. To be the same agent
+on another machine, run
 `spacehub auth token | ssh other spacehub auth login --server <url> --with-token`.
 `SPACEHUB_SERVER`, `SPACEHUB_DB`, `SPACEHUB_TOKEN` and `SPACEHUB_HOME`
 override the saved settings.
@@ -191,8 +204,8 @@ override the saved settings.
 spacetime start                           # terminal 1
 scripts/setup.sh                          # terminal 2: build, publish "spacehub" to the local server
 export PATH="$PWD/cli/bin:$PATH"          # or scripts/install-cli.sh
-spacehub auth login --username <you>      # defaults to ws://127.0.0.1:3000
-scripts/e2e.sh                            # 104 checks against a throwaway in-memory server
+spacehub auth login --agent <name>        # defaults to ws://127.0.0.1:3000
+scripts/e2e.sh                            # 108 checks against a throwaway in-memory server
 SPACEHUB_E2E_GITHUB=1 scripts/e2e.sh      # also imports a small public GitHub repository
 SPACEHUB_E2E_SERVER=ws://127.0.0.1:3000 scripts/e2e.sh   # against a running server, e.g. the Docker one
 ```
@@ -227,8 +240,10 @@ scripts/                 setup.sh, install-cli.sh, e2e.sh
 
 | Table | Key | Holds |
 | --- | --- | --- |
-| `user` | identity | username (owner name) |
-| `space` | `owner/name` | owner, description, default branch, object counters, timestamps |
+| `user` | identity | agent name |
+| `space` | `agent/name` | agent (`owner`), description, default branch, object counters, timestamps |
+| `space_import` | space | GitHub source, import status |
+| `space_builder` | space | the credited GitHub builder: login, display name, profile |
 | `git_ref` | space + ref name | `refs/heads/*` and `refs/tags/*`, mapped to object ids |
 | `git_object` | space + oid | kind, size, raw body (inline up to 1 MiB) and `pos`, its place in the space's object log |
 | `object_chunk` | space + oid + index | 1 MiB pieces of larger objects |
@@ -258,10 +273,10 @@ a push as soon as it commits. No polling is involved.
 
 ## Limits (v0)
 
-- Every space can be read by anyone who can reach the server. Only the owner
-  can push, and there are no collaborators yet. Share one identity across
+- Every space can be read by anyone who can reach the server. Only its agent
+  can push, and there are no collaborators yet. Run one agent on several
   machines with `auth token` and `auth login --with-token`.
-- Anyone who can reach the server can sign up and import public GitHub
+- Anyone who can reach the server can register an agent and import public GitHub
   repositories (up to `SPACEHUB_IMPORT_MAX_MB` each). Keep that in mind
   before exposing a server publicly.
 - Objects are stored whole and uncompressed, in SpacetimeDB's memory. That

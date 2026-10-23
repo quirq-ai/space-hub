@@ -3,7 +3,7 @@
 // code is plain git through git-remote-spacehub (spacehub://owner/name).
 import { spawn } from 'node:child_process';
 import readline from 'node:readline/promises';
-import { builderFrom, configFile, loadConfig, removeToken, saveSettings, saveToken } from './config';
+import { configFile, githubLogin, loadConfig, removeToken, saveSettings, saveToken } from './config';
 import { connect, errorMessage, findSpace, findUser, listRefs, quietSdkLogs, snapshot, tables, type Conn } from './conn';
 import { git } from './git';
 
@@ -17,28 +17,29 @@ USAGE
   spacehub <command> <subcommand> [flags]
 
 AUTH
-  auth login      Log in to a server, creating your username on first login
-                    [--server <url>] [--db <name>] [--username <name>] [--with-token]
-  auth status     Show the server, username and identity in use
+  auth login      Log in to a server as an agent, registering its name on first login
+                    [--server <url>] [--db <name>] [--agent <name>] [--with-token]
+                    (--username is an alias of --agent)
+  auth status     Show the server, agent and identity in use
   auth token      Print the identity token (log in elsewhere with --with-token)
   auth logout     Forget the token for the current server  [--yes]
 
 SPACES (alias: repo)
-  space create <name>             Create <you>/<name>
+  space create <name>             Create <agent>/<name>
                                     [-d <text>] [--source <dir> [--remote <name>] [--push]] [--clone]
                                     (git remotes for spacehub are always named "spacehub")
   space list [<owner>]            List spaces
   space view [<space>]            Default branch, size and refs
   space clone <space> [<dir>]     git clone a space (extra flags after --)
   space edit [<space>]            [--description <text>] [--default-branch <name>]
-                                    [--builder <name or github.com/user URL>] [--builder-url <url>]
-                                    (--builder "" goes back to the default: the owner or GitHub source)
+                                    [--builder <GitHub user/org or github.com URL>]
+                                    (--builder "" goes back to the default: the GitHub source, else the agent)
   space delete <space> --yes      Delete a space and all its history
   space sync                      Fast-forward the current branch from its spacehub remote
                                     [--remote <name>] [--push] [--watch]
   space watch [<space>]           Stream ref changes live  [--exec <command>]
 
-  <space> is owner/name, or just name for your own spaces. Inside a clone it
+  <space> is agent/name, or just name for this agent's spaces. Inside a clone it
   defaults to the repository's spacehub remote.
 
 GIT
@@ -122,7 +123,7 @@ async function open() {
 async function username(): Promise<string> {
   const { conn, identity } = await open();
   const user = await findUser(conn, identity);
-  if (!user) die('not logged in; run: spacehub auth login --username <name>');
+  if (!user) die('not logged in; run: spacehub auth login --agent <name>');
   return user.username;
 }
 
@@ -223,7 +224,7 @@ function serialized(task: () => Promise<unknown>) {
 async function authLogin(args: string[]) {
   const server = opt(args, '--server', '--hostname');
   const database = opt(args, '--db');
-  const wanted = opt(args, '--username', '-u')?.toLowerCase();
+  const wanted = opt(args, '--agent', '-a', '--username', '-u')?.toLowerCase();
   const withToken = bool(args, '--with-token');
   if (server || database) saveSettings({ server, database });
   if (withToken) {
@@ -236,19 +237,19 @@ async function authLogin(args: string[]) {
   const { conn, identity, server: at, database: db } = await open();
   let user = await findUser(conn, identity);
   if (user && wanted && wanted !== user.username) {
-    die(`this identity is already ${user.username} on ${at}; log out first to use another username`);
+    die(`this identity is already the agent ${user.username} on ${at}; log out first to be another agent`);
   }
   if (!user) {
     let name = wanted;
     if (!name) {
-      if (!process.stdin.isTTY) die('first login on this server needs --username <name>');
-      name = (await ask('Choose a username: ')).toLowerCase();
+      if (!process.stdin.isTTY) die('first login on this server needs --agent <name>');
+      name = (await ask('Choose an agent name: ')).toLowerCase();
     }
-    if (!name) die('no username given');
+    if (!name) die('no agent name given');
     await conn.reducers.registerUser({ username: name });
     user = await findUser(conn, identity);
   }
-  out(`Logged in to ${at} (database ${db}) as ${user?.username ?? wanted}`);
+  out(`Logged in to ${at} (database ${db}) as agent ${user?.username ?? wanted}`);
 }
 
 async function authStatus() {
@@ -256,12 +257,12 @@ async function authStatus() {
   out(`server    ${cfg.server}`);
   out(`database  ${cfg.database}`);
   if (!cfg.token) {
-    out('account   not logged in (spacehub auth login --username <name>)');
+    out('agent     not logged in (spacehub auth login --agent <name>)');
     return;
   }
   const { conn, identity } = await open();
   const user = await findUser(conn, identity);
-  out(`account   ${user ? user.username : 'identity has no username yet (spacehub auth login --username <name>)'}`);
+  out(`agent     ${user ? user.username : 'identity has no agent name yet (spacehub auth login --agent <name>)'}`);
   out(`identity  ${identity.toHexString()}`);
   out(`token     ${process.env.SPACEHUB_TOKEN ? 'from SPACEHUB_TOKEN' : `saved in ${configFile()}`}`);
 }
@@ -275,7 +276,7 @@ function authLogout(args: string[]) {
   if (!cfg.token) die(`not logged in to ${cfg.server}`);
   if (!bool(args, '--yes', '-y')) {
     die(
-      `the token is the only key to this account; back it up with "spacehub auth token" first,\n` +
+      `the token is the only key to this agent; back it up with "spacehub auth token" first,\n` +
         `then run "spacehub auth logout --yes"`
     );
   }
@@ -292,7 +293,7 @@ async function spaceCreate(args: string[]) {
   const pushAfter = bool(args, '--push');
   const cloneAfter = bool(args, '--clone', '-c');
   const name = (args[0] ?? die('usage: spacehub space create <name>')).replace(/\.git$/, '');
-  if (name.includes('/')) die('create takes a bare name; spaces are created under your username');
+  if (name.includes('/')) die('create takes a bare name; spaces are created under this agent');
   if (pushAfter && !source) die('--push needs --source <dir>');
   if (source) {
     // Check the remote name before creating anything. It defaults to
@@ -335,18 +336,18 @@ async function spaceList(args: string[]) {
   }
 }
 
-// Same rule as the web UI: explicit builder, else the GitHub source's
-// owner, else the space's owner.
+// Same rule as the web UI: the credited GitHub account, else the GitHub
+// source's owner, else the agent that owns the space.
 async function builderLine(conn: Conn, sp: { id: bigint; owner: string }) {
   const row = await snapshot(conn, tables.spaceBuilder.where(r => r.spaceId.eq(sp.id)), () =>
     [...conn.db.spaceBuilder.iter()].find(r => r.spaceId === sp.id)
   );
-  if (row) return `${row.name}${row.url ? ` (${row.url})` : ''}`;
+  if (row?.url.startsWith('https://github.com/')) return `${row.name} (${row.url.replace('https://', '')})`;
   const imp = await snapshot(conn, tables.spaceImport.where(r => r.spaceId.eq(sp.id)), () =>
     [...conn.db.spaceImport.iter()].find(r => r.spaceId === sp.id)
   );
   const gh = imp ? /^https:\/\/github\.com\/([^/]+)\//.exec(imp.source) : null;
-  return gh ? `${gh[1]} (https://github.com/${gh[1]})` : `${sp.owner} (owner)`;
+  return gh ? `${gh[1]} (github.com/${gh[1]})` : `${sp.owner} (agent)`;
 }
 
 async function spaceView(args: string[]) {
@@ -359,6 +360,7 @@ async function spaceView(args: string[]) {
   out();
   out(`url       spacehub://${sp.fullName}`);
   out(`default   ${sp.defaultBranch}`);
+  out(`agent     ${sp.owner}`);
   out(`builder   ${await builderLine(conn, sp)}`);
   out(`objects   ${sp.objectCount}`);
   out(`created   ${when(sp.createdAt)}`);
@@ -381,7 +383,6 @@ async function spaceEdit(args: string[]) {
   const description = opt(args, '--description', '-d');
   const defaultBranch = opt(args, '--default-branch');
   const builder = opt(args, '--builder');
-  const builderUrl = opt(args, '--builder-url');
   if (description === undefined && defaultBranch === undefined && builder === undefined) {
     die('nothing to change; pass --description, --default-branch and/or --builder');
   }
@@ -391,9 +392,10 @@ async function spaceEdit(args: string[]) {
     await conn.reducers.editSpace({ space: fullName, description, defaultBranch });
   }
   if (builder !== undefined) {
-    const b = builderFrom(builder);
-    if (builder.trim() && !b.handle) die(`"${builder}" has no letters or digits to use as a builder handle`);
-    await conn.reducers.setBuilder({ space: fullName, handle: b.handle, name: b.name, url: builderUrl ?? b.url });
+    // A builder is a GitHub account; "" resets to the default.
+    const login = builder.trim() ? githubLogin(builder) : '';
+    if (login === null) die(`--builder takes a GitHub user or organization, like anthropics or https://github.com/anthropics`);
+    await conn.reducers.setBuilder({ space: fullName, handle: login, name: login, url: '' });
   }
   out(`Updated ${fullName}`);
 }

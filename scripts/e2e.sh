@@ -94,13 +94,13 @@ RUN="$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')"
 ALICE="alice$RUN"; BOB="bob$RUN"; NOTES="$ALICE/notes"
 
 echo "auth"
-check "auth login creates the username" as alice spacehub auth login --username "$ALICE"
-check "a second user" as bob spacehub auth login --username "$BOB"
-expect_fail "usernames are unique" "taken" as carol spacehub auth login --username "$ALICE"
-expect_fail "reserved usernames are refused" "reserved" as carol spacehub auth login --username v1
-check "auth status shows the account" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub auth status | grep -q 'account   $ALICE'"
-check "same identity on another machine (token + --with-token)" bash -c \
-  "SPACEHUB_HOME='$WORK/home-alice' spacehub auth token | SPACEHUB_HOME='$WORK/home-alice2' spacehub auth login --with-token | grep -q 'as $ALICE'"
+check "auth login registers the agent" as alice spacehub auth login --agent "$ALICE"
+check "a second agent (--username still works)" as bob spacehub auth login --username "$BOB"
+expect_fail "agent names are unique" "taken" as carol spacehub auth login --agent "$ALICE"
+expect_fail "reserved agent names are refused" "reserved" as carol spacehub auth login --agent v1
+check "auth status shows the agent" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub auth status | grep -q 'agent     $ALICE'"
+check "same agent on another machine (token + --with-token)" bash -c \
+  "SPACEHUB_HOME='$WORK/home-alice' spacehub auth token | SPACEHUB_HOME='$WORK/home-alice2' spacehub auth login --with-token | grep -q 'as agent $ALICE'"
 expect_fail "logout asks for --yes" "--yes" as alice2 spacehub auth logout
 check "logout" as alice2 spacehub auth logout --yes
 
@@ -236,16 +236,19 @@ echo "builders"
 view_has() { # view_has <label> <space> <text>
   check "$1" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub space view '$2' | grep -qF -- '$3'"
 }
-view_has "the owner is the default builder" "$NOTES" "builder   $ALICE (owner)"
-check "set a builder" as alice spacehub space edit "$NOTES" --builder "Octo Team $RUN"
+view_has "view names the agent" "$NOTES" "agent     $ALICE"
+view_has "the agent is the default builder" "$NOTES" "builder   $ALICE (agent)"
+page_has "home lists agents" "" "Agents"
+page_has "the agent shows as a builder" "builders" "$ALICE"
+expect_fail "builders must be GitHub accounts" "GitHub user or organization" as alice spacehub space edit "$NOTES" --builder "Octo Team"
+check "credit a GitHub account" as alice spacehub space edit "$NOTES" --builder octocat
+view_has "view shows the GitHub builder" "$NOTES" "builder   octocat (github.com/octocat)"
 page_has "space page credits the builder" "$NOTES" "Built by"
-page_has "builder page lists the space" "builders/octo-team-$RUN" "$NOTES"
-page_has "home lists builders" "" "octo-team-$RUN"
-page_has "builders page" "builders" "octo-team-$RUN"
-check "a GitHub profile as builder" as alice spacehub space edit "$NOTES" --builder https://github.com/octocat
-view_has "view shows the GitHub builder" "$NOTES" "builder   octocat (https://github.com/octocat)"
+page_has "GitHub builder page lists the space" "builders/octocat" "$NOTES"
+page_has "home lists the GitHub builder" "" '<span class="pill">GitHub</span>'
+check "a github.com URL works too" as alice spacehub space edit "$NOTES" --builder https://github.com/octocat
 check "reset the builder" as alice spacehub space edit "$NOTES" --builder ""
-view_has "back to the owner" "$NOTES" "builder   $ALICE (owner)"
+view_has "back to the agent" "$NOTES" "builder   $ALICE (agent)"
 expect_fail "non-owner cannot set the builder" "permission denied" as bob spacehub space edit "$NOTES" --builder x
 
 echo "web service (sign up, create, import)"
@@ -270,8 +273,9 @@ same "create an empty space from the browser" "$(form /-/new name=fromweb 'descr
 check "the CLI sees it" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub space list $WEBUSER | grep -q '$WEBUSER/fromweb'"
 same "forms from another site are refused" "$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" -X POST "$WEB/-/new" --data name=x)" "403"
 same "only GitHub URLs can be imported" "$(form /-/new github=https://example.com/a/b | cut -d' ' -f1)" "400"
-same "create with a builder" "$(form /-/new name=withbuilder "builder=Ada Lovelace $RUN")" "303 $WEB/$WEBUSER/withbuilder"
-page_has "the form's builder is credited" "builders/ada-lovelace-$RUN" "$WEBUSER/withbuilder"
+same "Built by must be a GitHub account" "$(form /-/new name=badbuilder "builder=Ada Lovelace" | cut -d' ' -f1)" "400"
+same "create with a GitHub builder" "$(form /-/new name=withbuilder builder=https://github.com/octocat)" "303 $WEB/$WEBUSER/withbuilder"
+page_has "the form's builder is credited" "builders/octocat" "$WEBUSER/withbuilder"
 WEBTOKEN="$(python3 -c "import sys,urllib.parse;[print(urllib.parse.unquote(l.split()[-1])) for l in open(sys.argv[1]) if 'spacehub_session' in l]" "$JAR")"
 same "sign out" "$(form /-/logout | cut -d' ' -f1)" "303"
 same "signed-out users are sent to sign in" "$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' -b "$JAR" "$WEB/-/new")" "303 $WEB/-/login?next=%2F-%2Fnew"

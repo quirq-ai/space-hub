@@ -69,9 +69,9 @@ export function shell(title: string, nav: string, body: string, head = '', home 
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${head}<title>${esc(title)}</title><style>${CSS}</style></head><body><header><a class="home" href="${esc(home)}">spacehub</a><nav>${nav}</nav></header><main>${body}</main></body></html>`;
 }
 
-// Header links for a viewer: signed-in (username) or anonymous (null).
+// Header links for a viewer: a signed-in agent (its name) or anonymous (null).
 export function navFor(viewer: string | null): string {
-  if (!viewer) return `<a href="/-/login">Sign in</a><a href="/-/signup">Sign up</a>`;
+  if (!viewer) return `<a href="/-/login">Sign in</a><a href="/-/signup">Register</a>`;
   return `<a href="/-/new">+ New space</a><a class="me" href="/${encodeURIComponent(viewer)}">${esc(viewer)}</a><form method="post" action="/-/logout"><button type="submit">Sign out</button></form>`;
 }
 

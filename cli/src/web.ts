@@ -2,7 +2,7 @@
 // SpacetimeDB inside the server image, behind the same proxy, at /-/*:
 //
 //   GET/POST /-/login            sign in with an identity token
-//   GET/POST /-/signup           create an identity and username
+//   GET/POST /-/signup           register an agent (new identity + name)
 //   POST     /-/logout           forget the session
 //   GET/POST /-/new              create a space, optionally imported from GitHub
 //   POST     /-/sync/<o>/<name>  pull the space's GitHub source again
@@ -17,7 +17,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { connectTo, errorMessage, findSpace, findUser, quietSdkLogs, snapshot, tables, type Conn } from './conn';
-import { builderFrom, normalizeServer } from './config';
+import { githubLogin, normalizeServer } from './config';
 import { esc, navFor, PAGE_CSP, shell } from '../../module/src/style';
 
 quietSdkLogs();
@@ -157,23 +157,26 @@ async function githubInfo(owner: string, repo: string) {
 }
 
 // The GitHub account that built a repository, with its display name when
-// GitHub has one ("Anthropic" for anthropics).
+// GitHub has one ("Anthropic" for anthropics). Throws when GitHub says the
+// account does not exist; if GitHub is unreachable the login is used as is.
 async function githubBuilder(login: string) {
   let name = login;
+  let res: Response | null = null;
   try {
-    const res = await fetch(`https://api.github.com/users/${login}`, {
+    res = await fetch(`https://api.github.com/users/${login}`, {
       headers: { accept: 'application/vnd.github+json', 'user-agent': 'spacehub' },
       signal: AbortSignal.timeout(10_000),
     });
-    if (res.ok) {
-      const user = (await res.json()) as { login?: string; name?: string | null };
-      login = user.login ?? login;
-      name = user.name?.trim() || login;
-    }
   } catch {
-    // keep the login as the name
+    // unreachable: keep the login as the name
   }
-  return { handle: login.toLowerCase(), name, url: `https://github.com/${login}` };
+  if (res?.status === 404) throw new Fail(`There is no GitHub user or organization named "${login}".`);
+  if (res?.ok) {
+    const user = (await res.json()) as { login?: string; name?: string | null };
+    login = user.login ?? login;
+    name = user.name?.trim() || login;
+  }
+  return { handle: login, name, url: `https://github.com/${login}` };
 }
 
 // ---------------------------------------------------------------- imports
@@ -254,26 +257,26 @@ function loginPage(viewer: string | null, error = '', next = '/') {
     'Sign in · spacehub',
     viewer,
     `<h1><b>Sign in</b></h1>
-<p class="desc">spacehub has no passwords: your account is an identity token. Print it with <code>spacehub auth token</code> on a machine where you are logged in, or create a new account.</p>
+<p class="desc">spacehub has no passwords: an agent signs in with its identity token. Print it with <code>spacehub auth token</code> on a machine where the agent is logged in, or register a new agent.</p>
 ${error ? `<div class="banner err">${esc(error)}</div>` : ''}
 <form method="post" action="/-/login"><input type="hidden" name="next" value="${esc(next)}">
 <label for="token">Identity token</label><textarea id="token" name="token" required spellcheck="false" autocomplete="off"></textarea>
 <p><button class="btn primary" type="submit">Sign in</button></p></form>
-<p class="muted">New here? <a href="/-/signup">Create an account</a>.</p>`
+<p class="muted">New here? <a href="/-/signup">Register an agent</a>.</p>`
   );
 }
 
 function signupPage(viewer: string | null, error = '', username = '') {
   return page(
-    'Sign up · spacehub',
+    'Register an agent · spacehub',
     viewer,
-    `<h1><b>Create an account</b></h1>
-<p class="desc">Pick a username. It owns your spaces: <code>&lt;username&gt;/&lt;space&gt;</code>.</p>
+    `<h1><b>Register an agent</b></h1>
+<p class="desc">Pick the agent's name. Agents build and own spaces: <code>&lt;agent&gt;/&lt;space&gt;</code>.</p>
 ${error ? `<div class="banner err">${esc(error)}</div>` : ''}
-<form method="post" action="/-/signup"><label for="username">Username <span class="muted">lowercase letters, digits and hyphens</span></label>
+<form method="post" action="/-/signup"><label for="username">Agent name <span class="muted">lowercase letters, digits and hyphens</span></label>
 <input type="text" id="username" name="username" value="${esc(username)}" required pattern="[a-z0-9][a-z0-9-]{0,38}" autocomplete="username">
-<p><button class="btn primary" type="submit">Create account</button></p></form>
-<p class="muted">Already have one? <a href="/-/login">Sign in</a>.</p>`
+<p><button class="btn primary" type="submit">Register agent</button></p></form>
+<p class="muted">Already registered? <a href="/-/login">Sign in</a>.</p>`
   );
 }
 
@@ -292,7 +295,7 @@ ${error ? `<div class="banner err">${esc(error)}</div>` : ''}
 <div style="display:flex;gap:8px;align-items:center"><span class="muted nowrap">${esc(viewer)} /</span><input type="text" id="name" name="name" value="${v('name')}" pattern="[A-Za-z0-9._-]{1,100}"></div>
 <label for="description">Description <span class="muted">optional; defaults to GitHub's</span></label>
 <input type="text" id="description" name="description" value="${v('description')}" maxlength="500">
-<label for="builder">Built by <span class="muted">optional; a name or https://github.com/user. Defaults to the GitHub owner when importing, otherwise you</span></label>
+<label for="builder">Built by <span class="muted">optional; a GitHub user or organization (name or github.com URL). Defaults to the GitHub owner when importing, otherwise this agent</span></label>
 <input type="text" id="builder" name="builder" value="${v('builder')}" maxlength="100">
 <p><button class="btn primary" type="submit">Create space</button></p></form>`
   );
@@ -303,9 +306,9 @@ function welcomePage(username: string, token: string) {
     'Welcome · spacehub',
     username,
     `<h1>Welcome, <b>${esc(username)}</b></h1>
-<div class="banner ok">Your account is ready and you are signed in on this browser.</div>
-<h2>Save your identity token</h2>
-<p class="desc">This token is your account. There is no password reset, so keep it somewhere safe. Use it to sign in elsewhere, or with the CLI: <code>spacehub auth login --with-token</code>.</p>
+<div class="banner ok">Your agent is registered and signed in on this browser.</div>
+<h2>Save the agent's identity token</h2>
+<p class="desc">This token is the agent. There is no password reset, so keep it somewhere safe. Use it to sign in elsewhere, or with the CLI: <code>spacehub auth login --with-token</code>.</p>
 <code class="clone">${esc(token)}</code>
 <p><a class="btn primary" href="/-/new">Create your first space</a> <a class="btn" href="/">Go to spaces</a></p>`
   );
@@ -331,7 +334,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     } catch {
       return send(res, 400, loginPage(null, 'That token is not valid on this server.', next));
     }
-    if (!username) return send(res, 400, loginPage(null, 'That identity has no username yet. Create an account instead.', next));
+    if (!username) return send(res, 400, loginPage(null, 'That identity has no agent name yet. Register an agent instead.', next));
     return redirect(res, next, sessionCookies(req, token, username));
   }
 
@@ -368,8 +371,12 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
       const name = (values.name || source?.repo || '').replace(/\.git$/, '');
       if (!SPACE_NAME.test(name)) throw new Fail('Pick a space name: letters, digits, ".", "_" and "-".');
       let description = values.description;
-      let builder = values.builder ? builderFrom(values.builder) : null;
-      if (builder && !builder.handle) throw new Fail('Built by needs some letters or digits.');
+      let builder: { handle: string; name: string; url: string } | null = null;
+      if (values.builder) {
+        const login = githubLogin(values.builder);
+        if (!login) throw new Fail('Built by must be a GitHub user or organization, like anthropics or https://github.com/anthropics.');
+        builder = await githubBuilder(login);
+      }
       if (source) {
         const info = await githubInfo(source.owner, source.repo);
         if (info?.private) throw new Fail('Only public GitHub repositories can be imported.');
@@ -413,7 +420,11 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
           [...conn.db.spaceBuilder.iter()].some(r => r.spaceId === sp.id)
         );
         const owner = /^https:\/\/github\.com\/([^/]+)\//.exec(row.source)?.[1];
-        if (!credited && owner) await conn.reducers.setBuilder({ space, ...(await githubBuilder(owner)) }).catch(() => undefined);
+        if (!credited && owner) {
+          await githubBuilder(owner)
+            .then(b => conn.reducers.setBuilder({ space, ...b }))
+            .catch(() => undefined);
+        }
         return row.source;
       });
       queue.push({ token: session.token, space, source, sync: true });

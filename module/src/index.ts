@@ -107,16 +107,16 @@ const spaceImport = table(
   }
 );
 
-// Who built a space's code, when that is not simply its owner: for a GitHub
-// import, the GitHub owner. Spaces without a row are built by their owner
-// (or, if imported, by the owner of the import's GitHub source).
+// The GitHub account that built a space's code (its builder). Set on
+// GitHub imports, or by hand. Spaces without a row are credited to their
+// import source's GitHub owner, else to the agent that owns them.
 const spaceBuilder = table(
   { name: 'space_builder', public: true },
   {
     spaceId: t.u64().primaryKey(),
-    handle: t.string().index('btree'), // groups spaces by builder, lowercase
-    name: t.string(), // display name
-    url: t.string(), // profile link, or ""
+    handle: t.string().index('btree'), // GitHub login, lowercase
+    name: t.string(), // display name ("Anthropic" for anthropics)
+    url: t.string(), // https://github.com/<login>
   }
 );
 
@@ -134,7 +134,7 @@ const ObjectIn = t.object('ObjectIn', {
 const USERNAME = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
 // First path segments the web UI and the server's proxy already use.
 const RESERVED_USERNAMES = new Set(['v1', 'healthz', 'api', 'static', 'assets', 'login', 'settings', 'builders']);
-const BUILDER_HANDLE = /^[a-z0-9][a-z0-9._-]{0,99}$/;
+const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
 const SPACE_NAME = /^[A-Za-z0-9._-]{1,100}$/;
 const OID = /^[0-9a-f]{40}$/;
 const KINDS = new Set(['commit', 'tree', 'blob', 'tag']);
@@ -142,7 +142,7 @@ const ZERO_OID = '';
 
 function requireUser(ctx: Ctx) {
   const me = ctx.db.user.identity.find(ctx.sender);
-  if (!me) throw new SenderError('no username yet: run spacehub auth login --username <name>');
+  if (!me) throw new SenderError('no agent name yet: run spacehub auth login --agent <name>');
   return me;
 }
 
@@ -204,12 +204,12 @@ function insertObject(ctx: Ctx, sp: { id: bigint; objectCount: bigint; objectPos
 
 export const registerUser = spacetimedb.reducer({ username: t.string() }, (ctx, { username }) => {
   if (!USERNAME.test(username)) {
-    throw new SenderError('username must be 1-39 lowercase letters, digits or inner hyphens');
+    throw new SenderError('an agent name is 1-39 lowercase letters, digits or inner hyphens');
   }
-  if (RESERVED_USERNAMES.has(username)) throw new SenderError(`username "${username}" is reserved`);
+  if (RESERVED_USERNAMES.has(username)) throw new SenderError(`agent name "${username}" is reserved`);
   const existing = ctx.db.user.identity.find(ctx.sender);
-  if (existing) throw new SenderError(`this identity is already registered as "${existing.username}"`);
-  if (ctx.db.user.username.find(username)) throw new SenderError(`username "${username}" is taken`);
+  if (existing) throw new SenderError(`this identity is already the agent "${existing.username}"`);
+  if (ctx.db.user.username.find(username)) throw new SenderError(`agent name "${username}" is taken`);
   ctx.db.user.insert({ identity: ctx.sender, username, createdAt: ctx.timestamp });
 });
 
@@ -248,26 +248,27 @@ export const deleteSpace = spacetimedb.reducer({ space: t.string() }, (ctx, { sp
   ctx.db.space.id.delete(sp.id);
 });
 
-// Change a space's description and/or default branch; omitted fields stay.
-// Credit who built the space's code. An empty handle clears it, so the
-// space falls back to its owner (or its GitHub source).
+// Credit the GitHub account (user or organization) that built the space's
+// code. `handle` is its login; the profile link is derived from it (the
+// `url` argument is ignored). An empty handle clears the credit, so the
+// space falls back to its import source's owner, else its agent.
 export const setBuilder = spacetimedb.reducer(
   { space: t.string(), handle: t.string(), name: t.string(), url: t.string() },
-  (ctx, { space: fullName, handle, name, url }) => {
+  (ctx, { space: fullName, handle, name }) => {
     const sp = requireWritable(ctx, fullName);
-    const key = handle.trim().toLowerCase();
-    if (key === '') {
+    const login = handle.trim();
+    if (login === '') {
       ctx.db.spaceBuilder.spaceId.delete(sp.id);
       return;
     }
-    if (!BUILDER_HANDLE.test(key)) throw new SenderError('builder handle may use letters, digits, ".", "_" and "-"');
-    if (url && !/^https?:\/\/[^\s"<>]{1,300}$/.test(url)) throw new SenderError('builder url must be an http(s) link');
-    const row = { spaceId: sp.id, handle: key, name: (name.trim() || handle.trim()).slice(0, 100), url };
+    if (!GITHUB_LOGIN.test(login)) throw new SenderError(`"${login}" is not a GitHub user or organization name`);
+    const row = { spaceId: sp.id, handle: login.toLowerCase(), name: (name.trim() || login).slice(0, 100), url: `https://github.com/${login}` };
     if (ctx.db.spaceBuilder.spaceId.find(sp.id)) ctx.db.spaceBuilder.spaceId.update(row);
     else ctx.db.spaceBuilder.insert(row);
   }
 );
 
+// Change a space's description and/or default branch; omitted fields stay.
 export const editSpace = spacetimedb.reducer(
   { space: t.string(), description: t.option(t.string()), defaultBranch: t.option(t.string()) },
   (ctx, { space: fullName, description, defaultBranch }) => {
