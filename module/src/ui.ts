@@ -571,7 +571,8 @@ class Renderer {
         const branch = p.branch ? ` ${esc(p.branch)}` : whole ? ' all projects' : '';
         const where = sp ? ` <span class="muted">in</span> ${this.a(sp.fullName, esc(sp.fullName))}` : whole && withSpace ? ` <span class="muted">of</span> ${this.a(p.space, esc(p.space))}` : '';
         const times = count > 1 ? ` <span class="muted">×${count}</span>` : '';
-        return `<tr><td>${this.a(p.agent, `<b>${esc(p.agent)}</b>`)} <span class="pill">${esc(p.mode)}</span><span class="muted">${branch}</span>${where}${times}</td><td class="r muted">${this.ago(seconds(p.since))}</td></tr>`;
+        const host = p.host ? ` <span class="muted">on ${esc(p.host)}</span>` : '';
+        return `<tr><td>${this.a(p.agent, `<b>${esc(p.agent)}</b>`)} <span class="pill">${esc(p.mode)}</span><span class="muted">${branch}</span>${where}${host}${times}</td><td class="r muted">${this.ago(seconds(p.since))}</td></tr>`;
       })
       .join('');
     return `<div class="box here">${rows ? `<table>${rows}</table>` : '<div class="empty">Nobody is connected right now.</div>'}</div>`;
@@ -715,6 +716,18 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
       case 'team_member_removed':
         line = e.subject === e.agent ? `${who} left ${team}` : `${who} removed ${member} from ${team}`;
         break;
+      case 'agent_created':
+        line = `${who} created the agent ${team} in ${member}`;
+        break;
+      case 'agent_deleted':
+        line = `${who} deleted the agent <b>${esc(e.space)}</b>`;
+        break;
+      case 'agent_connected':
+        line = `${who} connected the agent ${member} to ${team}`;
+        break;
+      case 'agent_disconnected':
+        line = `${who} disconnected the agent ${member} from ${team}`;
+        break;
       case 'space_created':
         line = `${who} created ${space}`;
         break;
@@ -837,6 +850,11 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
       .slice(0, 20)
       .map(g => `<tr><td>${this.builderLink(g.builder)} ${this.builderKind(g.builder)}</td><td class="r muted">${plural(g.spaces.length, 'project')}</td></tr>`)
       .join('');
+    const agents = [...this.db.hubSpace.kind.filter('agent')].sort((a, b) => a.name.localeCompare(b.name));
+    const agentRows = agents
+      .slice(0, 20)
+      .map(a => `<tr><td>${this.a(a.name, esc(a.name))} <span class="muted">of ${esc(a.parent)}</span></td><td class="r muted">${this.running(a.name).length ? 'running' : ''}</td></tr>`)
+      .join('');
     const scheme = this.secure ? 'wss' : 'ws';
     const guide = guideHome({ server: `${scheme}://${this.host}`, host: this.host, link: p => this.link(p) });
     const create = this.viewer ? `<a class="btn primary" href="/-/new">New project</a>` : '';
@@ -849,6 +867,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
 <h2 style="margin:24px 0 8px">Activity</h2>${this.activityFeed([...this.db.activity.iter()], '')}</div>
 <aside><h2>Here now</h2>${this.hereBox(this.hereNow(null), true)}
 <h2>Team spaces <span class="muted">${teams.length}</span></h2><div class="box">${teamRows ? `<table>${teamRows}</table>` : '<div class="empty">No team spaces yet.</div>'}</div>
+<h2>Agents <span class="muted">${agents.length}</span></h2><div class="box">${agentRows ? `<table>${agentRows}</table>` : '<div class="empty">No agents yet.</div>'}</div>
 <h2>${this.a('-/builders', 'Builders')} <span class="muted">${builders.length}</span></h2><div class="box">${builderRows ? `<table>${builderRows}</table>` : '<div class="empty">No builders yet.</div>'}</div></aside></div>`
     );
   }
@@ -887,6 +906,8 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     const list = `<div class="box">${rows ? `<table>${rows}</table>` : '<div class="empty">No projects yet.</div>'}</div>`;
     const title = `<h1><b>${esc(row?.displayName || name)}</b> ${this.spacePill(name)}</h1>${row?.description ? `<p class="desc">${esc(row.description)}</p>` : ''}`;
     const here = this.hereBox(this.hereNow({ space: name }), true);
+    if (kind === 'agent' && row) return this.agentPage(row, list);
+    const agents = this.agentsOf(name);
     if (kind === 'personal') {
       const since = user ? `<p class="desc">Builder · joined ${this.ago(seconds(user.createdAt))} · ${plural(projects.length, 'project')}</p>` : '';
       const teams = [...this.db.spaceRole.member.filter(name)]
@@ -899,14 +920,57 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
         .join('');
       const memberOf = teams + collab ? `<h2 style="margin:24px 0 8px">Member of</h2><div class="box"><table>${teams}${collab}</table></div>` : '';
       const github = this.githubBox(name);
-      return this.page(name, `${title}${since}${github ? `<div class="grid"><div>${list}${memberOf}</div><aside>${github}</aside></div>` : `${list}${memberOf}`}`);
+      const main = `${list}${agents}${memberOf}`;
+      return this.page(name, `${title}${since}${github ? `<div class="grid"><div>${main}</div><aside>${github}</aside></div>` : main}`);
     }
     const created = row ? `<p class="desc">${kind === 'team' ? 'Team space' : 'Agent'} · created by ${this.a(row.createdBy, esc(row.createdBy))} ${this.ago(seconds(row.createdAt))} · ${plural(projects.length, 'project')}</p>` : '';
     const people = this.roles(name)
       .map(r => `<tr><td>${this.a(r.member, `<b>${esc(r.member)}</b>`)} ${this.spacePill(r.member)}</td><td class="r muted">${esc(r.role)}</td></tr>`)
       .join('');
     const aside = `<aside><h2>Members</h2><div class="box members">${people ? `<table>${people}</table>` : '<div class="empty">No members yet.</div>'}</div>${this.githubBox(name)}<h2>Here now</h2>${here}</aside>`;
-    return this.page(name, `${title}${created}<div class="grid"><div>${list}</div>${aside}</div>`);
+    return this.page(name, `${title}${created}<div class="grid"><div>${list}${agents}</div>${aside}</div>`);
+  }
+
+  // The agents a builder or team space owns.
+  agentsOf(parent: string) {
+    const rows = [...this.db.hubSpace.kind.filter('agent')]
+      .filter(a => a.parent === parent)
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(a => `<tr><td>${this.a(a.name, `<b>${esc(a.name)}</b>`)}${a.description ? `<div class="muted">${esc(a.description)}</div>` : ''}</td><td class="r muted">${this.running(a.name).length ? 'running' : ''}</td></tr>`)
+      .join('');
+    return rows ? `<h2 style="margin:24px 0 8px">Agents</h2><div class="box agents"><table>${rows}</table></div>` : '';
+  }
+
+  // Where an agent runs right now: one line per host it reported.
+  running(name: string) {
+    const hosts = new Map<string, { host: string; since: number; spaces: Set<string> }>();
+    for (const p of this.db.presence.iter()) {
+      if (p.agent !== name || p.mode !== 'agent' || this.now - seconds(p.seenAt) > PRESENCE_STALE_SECONDS) continue;
+      const key = p.host || '?';
+      const h = hosts.get(key) ?? { host: p.host, since: seconds(p.since), spaces: new Set<string>() };
+      h.since = Math.min(h.since, seconds(p.since));
+      h.spaces.add(p.space);
+      hosts.set(key, h);
+    }
+    return [...hosts.values()];
+  }
+
+  // /<agent>: what it is (its projects), where it is connected, where it runs.
+  agentPage(row: NonNullable<ReturnType<Db['hubSpace']['name']['find']>>, list: string) {
+    const name = row.name;
+    const connected = [...this.db.spaceRole.member.filter(name)]
+      .sort((a, b) => a.space.localeCompare(b.space))
+      .map(r => `<tr><td>${this.a(r.space, `<b>${esc(r.space)}</b>`)} ${this.spacePill(r.space)}</td><td class="r muted">${this.ago(seconds(r.addedAt))}</td></tr>`)
+      .join('');
+    const runs = this.running(name)
+      .map(h => `<tr><td><b>${esc(h.host || 'somewhere')}</b><div class="muted">${[...h.spaces].sort().map(sp => this.a(sp, esc(sp))).join(', ')}</div></td><td class="r muted">${this.ago(h.since)}</td></tr>`)
+      .join('');
+    const title = `<h1><b>${esc(row.displayName || name)}</b> ${this.spacePill(name)}</h1>${row.description ? `<p class="desc">${esc(row.description)}</p>` : ''}`;
+    const desc = `<p class="desc">Agent · owned by ${this.a(row.parent, esc(row.parent))} · created by ${this.a(row.createdBy, esc(row.createdBy))} ${this.ago(seconds(row.createdAt))}</p>`;
+    const aside = `<aside><h2>Running</h2><div class="box running">${runs ? `<table>${runs}</table>` : '<div class="empty">Not running.</div>'}</div>
+<h2>Launch</h2><code class="clone">spacehub agent run ${esc(name)}</code><p class="muted">Its owners print its token with <code>spacehub agent token ${esc(name)}</code>; XO Swarm runs it the same way.</p></aside>`;
+    const connections = `<h2 style="margin:24px 0 8px">Connected to</h2><div class="box connected">${connected ? `<table>${connected}</table>` : '<div class="empty">Not connected to any space yet.</div>'}</div>`;
+    return this.page(name, `${title}${desc}<div class="grid"><div>${list}${connections}</div>${aside}</div>`);
   }
 
   emptySpace(sp: Space) {

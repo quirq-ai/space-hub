@@ -9,7 +9,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 import { configFile, githubLogin, loadConfig, removeToken, saveSettings, saveToken } from './config';
-import { connect, errorMessage, findHubSpace, findProject, findUser, listRefs, projectsIn, quietSdkLogs, snapshot, spaceRoles, tables, type Conn } from './conn';
+import os from 'node:os';
+import { connect, connectTo, errorMessage, findHubSpace, findProject, findUser, listRefs, projectsIn, quietSdkLogs, snapshot, spaceRoles, tables, type Conn } from './conn';
+import { AgentRun } from './agentrun';
+import { agentTemplate } from './agenttemplate';
 import { Autosync, AutosyncLoop, AutosyncStop, conflictHelp, UNFINISHED, unfinishedWork } from './autosync';
 import { git } from './git';
 import { cloneProject, findManifest, SpaceSync, writeManifest } from './spacesync';
@@ -22,9 +25,10 @@ const VERSION = '0.2.0';
 const HELP = `spacehub: git hosting on SpacetimeDB, laid out like GitHub
 
   space    a top-level name, like a GitHub user or organization: a builder's
-           personal space or a team space
+           personal space, a team space, or an agent
   project  a git repository in a space: <space>/<project>
   builder  a person's login (with a personal space of the same name)
+  agent    a space with an identity of its own: launched, connected to spaces
 
 USAGE
   spacehub <command> <subcommand> [flags]
@@ -56,6 +60,21 @@ SPACES
                                     as projects with the same names, kept in step by the hub
                                     (GitHub to hub; work done here is kept, never overwritten)
   space link <space> --sync | --remove     Sync now, or stop mirroring (the projects stay)
+
+AGENTS
+  agent create <name> [--in <space>] [-d <text>] [--template <git url>] [--no-home]
+                                    An agent owned by your personal space (or a team you own),
+                                    with its definition in <name>/home (xo-agent-template layout)
+  agent list [<space>]                     Agents, where they are connected and where they run
+  agent view <agent>
+  agent connect <agent> <space>            Let it work in a space (you own both)
+  agent disconnect <agent> <space>
+  agent token <agent>                      Its token, for its owners (XO Swarm launches with it)
+  agent run <agent> [<dir>] [--interval <seconds>] [--host <label>]
+                                    Run it here: its home and every connected space in one
+                                    folder, autosynced, pushing as the agent. Logged in as the
+                                    agent (SPACEHUB_TOKEN) or as one of its owners.
+  agent delete <agent> --yes               Delete it and its own projects
 
 PROJECTS (alias: repo)
   project create <name> | <space>/<name>   Create a project (in your personal space by default)
@@ -316,7 +335,7 @@ async function announceHub(space: string, mode: 'sync' | 'autosync') {
   if (!(await findUser(conn, identity))) return;
   let warned = false;
   const beat = () =>
-    conn.reducers.watchHub({ space, mode }).catch(err => {
+    conn.reducers.watchHub({ space, mode, host: '' }).catch(err => {
       if (!warned) note(`spacehub: could not show presence: ${errorMessage(err)}`);
       warned = true;
     });
@@ -911,6 +930,149 @@ async function spaceWho(args: string[]) {
   }
 }
 
+// ---------------------------------------------------------------- agents
+
+async function requireAgent(name: string) {
+  const sp = await requireHubSpace(name);
+  if (sp.kind !== 'agent') die(`"${name}" is a ${sp.kind === 'personal' ? "builder's" : sp.kind} space, not an agent`);
+  return sp;
+}
+
+async function agentCreate(args: string[]) {
+  const parentArg = opt(args, '--in');
+  const description = opt(args, '-d', '--description') ?? '';
+  const template = opt(args, '--template');
+  const noHome = bool(args, '--no-home');
+  const name = (args[0] ?? die('usage: spacehub agent create <name> [--in <space>] [-d <text>] [--template <git url>]')).toLowerCase();
+  const parent = (parentArg ?? (await username())).toLowerCase();
+  const { conn, server, database } = await open();
+  // The agent's own identity: a fresh one, whose token the hub keeps for its owners.
+  const minted = await connectTo(server, database, undefined);
+  minted.conn.disconnect();
+  await conn.reducers.createAgent({ name, parent, identity: minted.identity.toHexString(), token: minted.token, description });
+  out(`Created agent ${name}, owned by ${parent}`);
+  if (!noHome) {
+    await conn.reducers.createProject({ space: name, name: 'home', description: `The definition of the agent ${name}` });
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'spacehub-agent-'));
+    try {
+      const repo = path.join(tmp, 'home');
+      if (template) {
+        const from = path.join(tmp, 'template');
+        await runOrDie('git', ['clone', '-q', '--depth', '1', template, from]);
+        const inner = fs.existsSync(path.join(from, 'workspace')) ? path.join(from, 'workspace') : from;
+        fs.cpSync(inner, repo, { recursive: true, filter: src => path.basename(src) !== '.git' && path.basename(src) !== '.DS_Store' });
+      } else {
+        for (const [file, text] of Object.entries(agentTemplate(name, description))) {
+          fs.mkdirSync(path.dirname(path.join(repo, file)), { recursive: true });
+          fs.writeFileSync(path.join(repo, file), text);
+        }
+      }
+      const who = ['-c', `user.name=${await username()}`, '-c', `user.email=${await username()}@spacehub`];
+      await git(['-C', repo, 'init', '-q', '-b', 'main']);
+      await git(['-C', repo, 'add', '-A']);
+      await git(['-C', repo, ...who, 'commit', '-q', '-m', `The agent ${name}`]);
+      await git(['-C', repo, 'remote', 'add', REMOTE, hubUrl(server, `${name}/home`)]);
+      await runOrDie('git', ['-C', repo, 'push', '-q', REMOTE, 'main']);
+      out(`Its definition is in ${name}/home${template ? ` (from ${template})` : ''}`);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+  out(`\n  spacehub agent connect ${name} <space>   # let it work in a space\n  spacehub agent run ${name}               # run it here; XO Swarm runs the same\n  spacehub agent token ${name}             # its token, for XO Swarm`);
+}
+
+async function agentRows(conn: Conn) {
+  const agents = await snapshot(conn, tables.hubSpace.where(s => s.kind.eq('agent')), () => [...conn.db.hubSpace.iter()].filter(s => s.kind === 'agent'));
+  const roles = await snapshot(conn, tables.spaceRole, () => [...conn.db.spaceRole.iter()]);
+  const now = Date.now() * 1000;
+  const here = await snapshot(conn, tables.presence, () => [...conn.db.presence.iter()].filter(p => p.mode === 'agent' && now - Number(p.seenAt.microsSinceUnixEpoch) <= 180_000_000));
+  return agents
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map(a => ({
+      agent: a,
+      connected: roles.filter(r => r.member === a.name).map(r => r.space).sort(),
+      hosts: [...new Set(here.filter(p => p.agent === a.name).map(p => p.host || '?'))],
+    }));
+}
+
+async function agentList(args: string[]) {
+  const parent = args[0]?.toLowerCase();
+  const { conn } = await open();
+  const rows = (await agentRows(conn)).filter(r => !parent || r.agent.parent === parent || r.connected.includes(parent));
+  if (rows.length === 0) {
+    out(parent ? `no agents in ${parent}` : 'no agents yet');
+    return;
+  }
+  const width = Math.max(...rows.map(r => r.agent.name.length));
+  for (const r of rows) {
+    const running = r.hosts.length ? `running on ${r.hosts.join(', ')}` : 'not running';
+    out(`${r.agent.name.padEnd(width)}  owned by ${r.agent.parent}  connected to ${r.connected.join(', ') || 'nothing'}  ${running}`);
+  }
+}
+
+async function agentView(args: string[]) {
+  const name = (args[0] ?? die('usage: spacehub agent view <agent>')).toLowerCase();
+  await requireAgent(name);
+  await spaceView([name]);
+  const { conn } = await open();
+  const row = (await agentRows(conn)).find(r => r.agent.name === name);
+  out();
+  out(`connected ${row?.connected.join(', ') || 'nothing yet (spacehub agent connect ' + name + ' <space>)'}`);
+  out(`running   ${row?.hosts.length ? row.hosts.join(', ') : 'no'}`);
+}
+
+async function agentConnect(args: string[], connect: boolean) {
+  const [agent, space] = args.map(a => a.toLowerCase());
+  if (!agent || !space) die(`usage: spacehub agent ${connect ? 'connect' : 'disconnect'} <agent> <space>`);
+  const { conn } = await open();
+  if (connect) {
+    await conn.reducers.connectAgent({ agent, space });
+    out(`${agent} is connected to ${space} and can push to its projects`);
+  } else {
+    await conn.reducers.disconnectAgent({ agent, space });
+    out(`${agent} is no longer connected to ${space}`);
+  }
+}
+
+async function fetchAgentToken(name: string) {
+  const { conn } = await open();
+  return conn.procedures.agentToken({ agent: name });
+}
+
+async function agentToken(args: string[]) {
+  const name = (args[0] ?? die('usage: spacehub agent token <agent>')).toLowerCase();
+  await requireAgent(name);
+  out(await fetchAgentToken(name));
+}
+
+async function agentDelete(args: string[]) {
+  const yes = bool(args, '--yes', '-y');
+  const name = (args[0] ?? die('usage: spacehub agent delete <agent> --yes')).toLowerCase();
+  await requireAgent(name);
+  if (!yes) die(`this deletes the agent ${name} and its own projects; re-run with --yes`);
+  const { conn } = await open();
+  for (const p of await projectsIn(conn, name)) await conn.reducers.deleteSpace({ space: p.fullName });
+  await conn.reducers.deleteAgent({ name });
+  out(`Deleted ${name}`);
+}
+
+async function agentRun(args: string[]) {
+  const interval = Number(opt(args, '--interval') ?? 3);
+  const host = opt(args, '--host') ?? os.hostname();
+  if (!Number.isFinite(interval) || interval < 0.2 || interval > 3600) die('--interval is a number of seconds, from 0.2 to 3600');
+  const name = (args[0] ?? die('usage: spacehub agent run <agent> [<dir>]')).toLowerCase();
+  const dir = path.resolve(args[1] ?? name);
+  const { conn, identity, server, database } = await open();
+  await requireAgent(name);
+  // Logged in as the agent itself (XO Swarm), or as one of its owners.
+  const self = await snapshot(conn, tables.agent.where(a => a.name.eq(name)), () => [...conn.db.agent.iter()].find(a => a.name === name));
+  const token = self?.identity.isEqual(identity) ? loadConfig().token! : await fetchAgentToken(name);
+  if (!token) die(`no token for ${name}`);
+  note(`Running ${name} in ${dir} on ${host} (ctrl-c to stop)`);
+  await new AgentRun({ server, db: database, token, agent: name, dir, intervalMs: interval * 1000, host, log: line => note(`${clock()}  ${line}`) }).run();
+  note(`${name} stopped`);
+}
+
 // ---------------------------------------------------------------- main
 
 async function main() {
@@ -948,6 +1110,21 @@ async function main() {
       case 'member': case 'members': return projectMember(args);
     }
     die(`usage: spacehub project <create|list|view|clone|edit|delete|sync|watch|who|member>`);
+  }
+
+  if (group === 'agent' || group === 'agents') {
+    longLived = sub === 'run';
+    switch (sub) {
+      case 'create': return agentCreate(args);
+      case 'list': case 'ls': return agentList(args);
+      case 'view': return agentView(args);
+      case 'connect': return agentConnect(args, true);
+      case 'disconnect': return agentConnect(args, false);
+      case 'token': return agentToken(args);
+      case 'run': return agentRun(args);
+      case 'delete': return agentDelete(args);
+    }
+    die(`usage: spacehub agent <create|list|view|connect|disconnect|token|run|delete>`);
   }
 
   if (group === 'space') {

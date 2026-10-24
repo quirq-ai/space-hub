@@ -36,8 +36,10 @@ export function ownsSpace(db: Db, space: string, actor: string | null, depth = 0
 }
 
 // Owners and members: who pushes to every project of the space.
+// An agent belongs to its own space too.
 export function inSpace(db: Db, space: string, actor: string | null): boolean {
   if (!actor) return false;
+  if (actor === space && db.hubSpace.name.find(space)?.kind === 'agent') return true;
   return ownsSpace(db, space, actor) || !!db.spaceRole.key.find(roleKey(space, actor));
 }
 

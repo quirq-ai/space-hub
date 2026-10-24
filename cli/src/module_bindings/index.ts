@@ -38,11 +38,15 @@ import AddMemberReducer from "./add_member_reducer";
 import AddSpaceMemberReducer from "./add_space_member_reducer";
 import BackfillActivityReducer from "./backfill_activity_reducer";
 import ClaimAdminReducer from "./claim_admin_reducer";
+import ConnectAgentReducer from "./connect_agent_reducer";
+import CreateAgentReducer from "./create_agent_reducer";
 import CreateProjectReducer from "./create_project_reducer";
 import CreateSpaceReducer from "./create_space_reducer";
 import CreateTeamReducer from "./create_team_reducer";
+import DeleteAgentReducer from "./delete_agent_reducer";
 import DeleteSpaceReducer from "./delete_space_reducer";
 import DeleteTeamReducer from "./delete_team_reducer";
+import DisconnectAgentReducer from "./disconnect_agent_reducer";
 import EditHubSpaceReducer from "./edit_hub_space_reducer";
 import EditSpaceReducer from "./edit_space_reducer";
 import FinishObjectReducer from "./finish_object_reducer";
@@ -69,9 +73,11 @@ import XoLinkAgentReducer from "./xo_link_agent_reducer";
 import XoPutRecordReducer from "./xo_put_record_reducer";
 
 // Import all procedure arg schemas
+import * as AgentTokenProcedure from "./agent_token_procedure";
 
 // Import all table schema definitions
 import ActivityRow from "./activity_table";
+import AgentRow from "./agent_table";
 import GitObjectRow from "./git_object_table";
 import GitRefRow from "./git_ref_table";
 import HubSpaceRow from "./hub_space_table";
@@ -107,6 +113,21 @@ const tablesSchema = __schema({
       { name: 'activity_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, ActivityRow),
+  agent: __table({
+    name: 'agent',
+    indexes: [
+      { accessor: 'identity', name: 'agent_identity_idx_btree', algorithm: 'btree', columns: [
+        'identity',
+      ] },
+      { accessor: 'name', name: 'agent_name_idx_btree', algorithm: 'btree', columns: [
+        'name',
+      ] },
+    ],
+    constraints: [
+      { name: 'agent_identity_key', constraint: 'unique', columns: ['identity'] },
+      { name: 'agent_name_key', constraint: 'unique', columns: ['name'] },
+    ],
+  }, AgentRow),
   gitObject: __table({
     name: 'git_object',
     indexes: [
@@ -324,11 +345,15 @@ const reducersSchema = __reducers(
   __reducerSchema("add_space_member", AddSpaceMemberReducer),
   __reducerSchema("backfill_activity", BackfillActivityReducer),
   __reducerSchema("claim_admin", ClaimAdminReducer),
+  __reducerSchema("connect_agent", ConnectAgentReducer),
+  __reducerSchema("create_agent", CreateAgentReducer),
   __reducerSchema("create_project", CreateProjectReducer),
   __reducerSchema("create_space", CreateSpaceReducer),
   __reducerSchema("create_team", CreateTeamReducer),
+  __reducerSchema("delete_agent", DeleteAgentReducer),
   __reducerSchema("delete_space", DeleteSpaceReducer),
   __reducerSchema("delete_team", DeleteTeamReducer),
+  __reducerSchema("disconnect_agent", DisconnectAgentReducer),
   __reducerSchema("edit_hub_space", EditHubSpaceReducer),
   __reducerSchema("edit_space", EditSpaceReducer),
   __reducerSchema("finish_object", FinishObjectReducer),
@@ -357,6 +382,7 @@ const reducersSchema = __reducers(
 
 /** The schema information for all procedures in this module. This is defined the same way as the procedures would have been defined in the server. */
 const proceduresSchema = __procedures(
+  __procedureSchema("agent_token", AgentTokenProcedure.params, AgentTokenProcedure.returnType),
 );
 
 /** The remote SpacetimeDB module schema, both runtime and type information. */

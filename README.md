@@ -9,9 +9,10 @@ Git hosting stored in SpacetimeDB, laid out like GitHub:
 | repository | **project**, at `/<space>/<project>` |
 | org member | space member: pushes to every project in the space |
 | repo collaborator | project collaborator: pushes to one project |
+| (none) | **agent**: a space with an identity of its own, connected to the spaces it works in and launched anywhere |
 
-Every top-level name (`/<name>`) is a **space**: a builder's personal space
-or a team space. Builders and team spaces share one set of names, so any
+Every top-level name (`/<name>`) is a **space**: a builder's personal space,
+a team space, or an agent. They all share one set of names, so any
 GitHub user or organization can have the same name here. **Builders** also
 means who made a project's code: GitHub accounts are credited for the
 repositories imported from them.
@@ -58,6 +59,58 @@ Older forms keep working: `space` commands given `space/name`, a bare name
 that is not a space (it means your own project), or run inside a clone act
 on that project as before, and `space create <name> --source ...` still makes
 a project.
+
+## Agents
+
+An agent is a space with an identity of its own. Its definition is the
+project `<agent>/home`, in the xo-agent-template layout (`SOUL.md`,
+`IDENTITY.md`, `AGENTS.md`, `MEMORY.md`, `USER.md`, `TOOLS.md`, `memory/`,
+`skills/`). Its owners are the owners of the space that owns it.
+
+```sh
+spacehub agent create scout -d "reads the web"   # owned by your personal space (--in <team> for a team's)
+spacehub agent connect scout acme                # it may push to acme's projects (you own both)
+spacehub agent run scout                         # run it here: ./scout/scout/home, ./scout/acme/<project>, ...
+spacehub agent token scout                       # its token, for its owners (XO Swarm launches with it)
+spacehub agent list | view | disconnect | delete
+```
+
+`--template <git url>` seeds the home from a template repository (its
+`workspace/` folder if it has one, as xo-agent-template does).
+
+**`agent run`** puts the agent's own space and every space it is connected
+to in one folder, each a space folder kept current by autosync, and pushes
+as the agent: commits carry its name, and pushes are credited to it. It
+follows spaces it is connected to or disconnected from while it runs. Each
+followed space shows it as running (presence mode `agent`, with `--host`,
+the machine's name by default), and so does the agent's page. It runs as the
+agent when logged in with the agent's token (`SPACEHUB_TOKEN`), or as one of
+its owners, who fetch the token from the hub.
+
+**The token.** `agent create` makes a fresh identity for the agent and hands
+its token to the hub, which keeps it in the private `agent_secret` table.
+Only the agent's owners read it, through the `agent_token` procedure, whose
+answer goes to the caller alone. Reducer arguments never reach other
+clients. An agent identity cannot register as a builder, make team spaces or
+agents, or be connected anywhere without its owners.
+
+**What XO Swarm needs** to launch an agent in a Coworker workspace:
+
+1. git, Node 22+ and the spacehub CLI in the workspace image
+   (`scripts/install-cli.sh`, or the client image).
+2. `SPACEHUB_SERVER` (for example `wss://hub.quirq.dev`) and the agent's token
+   as `SPACEHUB_TOKEN`, kept as a Swarm secret. An owner gets it with
+   `spacehub agent token <agent>`; xo.quirq.dev can call `agent_token` as
+   the user's builder, whose token it already keeps.
+3. Start `spacehub agent run <agent> /workspace --host <workspace name>`, and
+   restart it if it exits. Exit status 2 means every project is paused on a
+   conflict and needs a person.
+4. Point the runtime (Claude Code, Codex, OpenClaw) at
+   `/workspace/<agent>/home` for its instructions and memory, and at
+   `/workspace/<space>/<project>` to work in.
+
+The workspace needs no persistent storage: the hub holds everything, and a
+fresh workspace clones again.
 
 ## A whole space at once
 
@@ -342,6 +395,7 @@ docker run --rm -it -e SPACEHUB_SERVER=wss://hub.example.com \
 | | `spacehub project watch [project] [--exec cmd]` streams ref changes live |
 | | `spacehub project who [project]`, `spacehub space who <space>` list who is connected now |
 | | `spacehub space clone <space> [dir]`, `spacehub space sync [--watch] [--auto]` work on a whole space at once |
+| | `spacehub agent create\|list\|view\|connect\|disconnect\|token\|run\|delete` for agents |
 
 `repo` is an alias for `project`.
 
@@ -374,7 +428,7 @@ spacetime start                           # terminal 1
 scripts/setup.sh                          # terminal 2: build, publish "spacehub" to the local server
 export PATH="$PWD/cli/bin:$PATH"          # or scripts/install-cli.sh
 spacehub auth login --server ws://127.0.0.1:3000 --builder <name>
-scripts/e2e.sh                            # 251 checks against a throwaway in-memory server and a stand-in GitHub
+scripts/e2e.sh                            # 281 checks against a throwaway in-memory server and a stand-in GitHub
 SPACEHUB_E2E_GITHUB=1 scripts/e2e.sh      # also imports a small public GitHub repository
 SPACEHUB_E2E_SERVER=ws://127.0.0.1:3000 scripts/e2e.sh   # against a running server, e.g. the Docker one
 ```
@@ -407,6 +461,8 @@ cli/src/github.ts        GitHub's API, mirroring a repository, syncing linked sp
 cli/src/refplan.ts       the sync's rules: what moves, what is kept, what diverged
 cli/src/autosync.ts      autosync: commit, rebase, push; stop on a conflict; the step loop
 cli/src/spacesync.ts     a whole space in one folder: space clone and space sync
+cli/src/agentrun.ts      spacehub agent run: an agent's home and connected spaces, autosynced
+cli/src/agenttemplate.ts the starter definition of an agent's home project
 cli/src/module_bindings  generated, do not edit
 Dockerfile               targets: server (default), client
 docker-compose.yml       server + Caddy TLS front
@@ -425,7 +481,7 @@ tables or columns in place. In the code they are called projects.
 | Table | Key | Holds |
 | --- | --- | --- |
 | `user` | identity | a builder's name |
-| `hub_space` | name | a top-level space: `personal` (a builder's) or `team`; display name, description, creator |
+| `hub_space` | name | a top-level space: `personal` (a builder's), `team` or `agent` (with its parent space); display name, description, creator |
 | `space_role` | space + member | a space's owners and members |
 | `space` | `space/project` | a project: its space (`owner`), description, default branch, object counters, timestamps |
 | `space_import` | project | GitHub source, import status |
@@ -435,9 +491,11 @@ tables or columns in place. In the code they are called projects.
 | `git_object` | project + oid | kind, size, raw body (inline up to 1 MiB) and `pos`, its place in the project's object log |
 | `object_chunk` | project + oid + index | 1 MiB pieces of larger objects |
 | `space_member` | project + builder | a project's collaborators |
+| `agent` | name | an agent's identity and creator (its space is in `hub_space`, kind `agent`) |
+| `agent_secret` | name | (private) an agent's token, read only through `agent_token` by its owners |
 | `space_link` | space | the GitHub account it mirrors, the last sync's status and time |
 | `ref_sync` | project + ref | GitHub's value at the last sync, and whether the hub's copy follows it or diverged |
-| `presence` | connection | which project (or whole space) a connected client follows, its mode and branch, and its last heartbeat |
+| `presence` | connection | which project (or whole space) a connected client follows, its mode and branch (or an agent's host), and its last heartbeat |
 
 **Push.** The helper lists the objects the project lacks
 (`git rev-list --objects <new> --not <remote refs>`). It uploads them in
