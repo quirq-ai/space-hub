@@ -213,7 +213,9 @@ Publishing modules, SQL, logs and deletes cannot be reached from outside. On
 every start, the module is published or updated in place, and
 `migrate_spaces` gives builders from before spaces their personal spaces. A
 schema change that would delete data makes startup fail rather than wipe
-projects.
+projects. Once the hub is serving, `measure_next_project` counts the size of
+projects from before sizes were kept, one per call in the background; until
+then their size shows as "measuring".
 
 | Setting | Default | Notes |
 | --- | --- | --- |
@@ -262,6 +264,14 @@ instead: `scripts/setup.sh maincloud`. Pick a unique name with `SPACEHUB_DB`.
 The server's URL is also a GitHub-style site. The module renders every page
 straight from the tables, as plain HTML that works without JavaScript.
 
+**Sizes.** Every project shows what it stores: the bytes of its git objects,
+uncompressed, as git counts them. For a project never force-pushed,
+`git cat-file --batch-all-objects --batch-check='%(objectsize)'` in a clone
+adds up to the same; the hub also keeps objects a force push left behind.
+Space pages
+and `space view` show a space's total, the home page the total of all
+spaces, and `project view` and `project list` each project's size.
+
 **Live pages.** The home page, space pages and every project page update by
 themselves: new pushes, activity, members and who is here appear without a
 reload, and a "live" dot shows in the header. The page loads `/-/live.js`
@@ -276,9 +286,9 @@ rendered.
 
 | Path | Shows |
 | --- | --- |
-| `/` | All projects, most recently pushed first; below them the hub's **Activity** feed (`?page=2` for older); plus who is here now, team spaces and builders |
-| `/<space>` | A builder's personal space (its projects, and the spaces and projects it belongs to) or a team space (its projects, owners and members, who is here) |
-| `/<space>/<project>` | Files at the default branch, each with its last commit; the README rendered as Markdown; clone commands, **Here now**, its space and collaborators, commit, branch and tag counts |
+| `/` | All projects, most recently pushed first, each with its size, and what all spaces store together; below them the hub's **Activity** feed (`?page=2` for older); plus who is here now, team spaces (with their sizes) and builders |
+| `/<space>` | A builder's personal space (its projects, and the spaces and projects it belongs to) or a team space (its projects, owners and members, who is here), with what the space stores |
+| `/<space>/<project>` | Files at the default branch, each with its last commit; the README rendered as Markdown; clone commands, **Here now**, its space and collaborators, its size, commit, branch and tag counts |
 | `/<space>/<project>/tree/<ref>/<path>` | A folder at a branch, tag or commit, with a branch/tag picker |
 | `/<space>/<project>/blob/<ref>/<path>` | A file. Code has linkable line numbers (`#L12`); Markdown is rendered (`?plain=1` shows the source); images are shown |
 | `/<space>/<project>/raw/<ref>/<path>` | The file's bytes |
@@ -428,7 +438,7 @@ spacetime start                           # terminal 1
 scripts/setup.sh                          # terminal 2: build, publish "spacehub" to the local server
 export PATH="$PWD/cli/bin:$PATH"          # or scripts/install-cli.sh
 spacehub auth login --server ws://127.0.0.1:3000 --builder <name>
-scripts/e2e.sh                            # 281 checks against a throwaway in-memory server and a stand-in GitHub
+scripts/e2e.sh                            # 288 checks against a throwaway in-memory server and a stand-in GitHub
 SPACEHUB_E2E_GITHUB=1 scripts/e2e.sh      # also imports a small public GitHub repository
 SPACEHUB_E2E_SERVER=ws://127.0.0.1:3000 scripts/e2e.sh   # against a running server, e.g. the Docker one
 ```
@@ -495,6 +505,7 @@ tables or columns in place. In the code they are called projects.
 | `agent_secret` | name | (private) an agent's token, read only through `agent_token` by its owners |
 | `space_link` | space | the GitHub account it mirrors, the last sync's status and time |
 | `ref_sync` | project + ref | GitHub's value at the last sync, and whether the hub's copy follows it or diverged |
+| `project_size` | project | the bytes of its git objects, uncompressed, as git counts them; kept as objects arrive |
 | `presence` | connection | which project (or whole space) a connected client follows, its mode and branch (or an agent's host), and its last heartbeat |
 
 **Push.** The helper lists the objects the project lacks
