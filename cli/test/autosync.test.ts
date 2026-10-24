@@ -98,3 +98,23 @@ test('a refused push stops autosync', async () => {
   fs.writeFileSync(path.join(a.cwd, 'x.txt'), 'x\n');
   await assert.rejects(a.sync.step(await remote()), (err: unknown) => err instanceof AutosyncStop && /permission denied/.test(err.message));
 });
+
+test('a clone made before anything was pushed takes the first push', async () => {
+  const dir = path.join(tmp, `case${++n}`);
+  const hub = path.join(dir, 'hub.git');
+  fs.mkdirSync(dir, { recursive: true });
+  await git(dir, 'init', '-q', '--bare', '-b', 'main', hub);
+  const empty = path.join(dir, 'empty');
+  await git(dir, 'clone', '-q', '-o', 'quirq', hub, empty);
+  const sync = new Autosync({ cwd: empty, remote: 'quirq', branch: 'main', agent: 'ada', log: () => {} });
+  await sync.init();
+  await sync.step(''); // nothing anywhere yet
+  const seed = path.join(dir, 'seed');
+  await git(dir, 'init', '-q', '-b', 'main', seed);
+  fs.writeFileSync(path.join(seed, 'a.txt'), 'a\n');
+  await git(seed, 'add', '.');
+  await git(seed, '-c', 'user.name=s', '-c', 'user.email=s@example.com', 'commit', '-q', '-m', 'first');
+  await git(seed, 'push', '-q', hub, 'main');
+  await sync.step(await git(hub, 'rev-parse', 'main'));
+  assert.ok(fs.existsSync(path.join(empty, 'a.txt')));
+});

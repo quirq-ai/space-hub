@@ -20,9 +20,9 @@ export interface GitResult {
   err: string;
 }
 
-export function runGit(cwd: string, args: string[]): Promise<GitResult> {
+export function runGit(cwd: string, args: string[], env: Record<string, string> = {}): Promise<GitResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_EDITOR: 'true' } });
+    const child = spawn('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_EDITOR: 'true', ...env } });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     child.stdout.on('data', d => out.push(d));
@@ -80,6 +80,7 @@ export interface AutosyncOptions {
   branch: string;
   agent: string; // committer name when git has none configured
   log: (line: string) => void;
+  env?: Record<string, string>; // for git, e.g. the hub token to push with
 }
 
 export class Autosync {
@@ -92,7 +93,7 @@ export class Autosync {
   }
 
   private git(args: string[]) {
-    return runGit(this.o.cwd, args);
+    return runGit(this.o.cwd, args, this.o.env);
   }
 
   // Commits need an author; agents in fresh sandboxes often have none, so
@@ -141,7 +142,7 @@ export class Autosync {
       throw new Error(`git pull failed: ${lastLines(pull.err)}`);
     }
     const after = await this.head();
-    const fastForward = (await this.git(['merge-base', '--is-ancestor', before, remoteOid])).code === 0;
+    const fastForward = !before || (await this.git(['merge-base', '--is-ancestor', before, remoteOid])).code === 0;
     this.o.log(fastForward ? `pulled ${after.slice(0, 7)}` : `rebased onto ${remoteOid.slice(0, 7)} (${after.slice(0, 7)})`);
   }
 
@@ -169,7 +170,11 @@ export class Autosync {
     if (files) throw new AutosyncStop('a rebase or merge is in progress', files);
     await this.commitChanges();
     let head = await this.head();
-    if (!head) return; // nothing committed yet
+    if (!head) {
+      // A clone made before anything was pushed: take the first push.
+      if (remoteOid) await this.integrate(remoteOid);
+      return;
+    }
     if (remoteOid && remoteOid !== head && !(await this.contains(remoteOid))) {
       await this.integrate(remoteOid);
       head = await this.head();
@@ -177,5 +182,78 @@ export class Autosync {
     if (head === remoteOid || head === this.pushed) return;
     if (remoteOid && !(await this.contains(remoteOid))) return;
     await this.push(head, remoteOid);
+  }
+}
+
+// Runs an Autosync's steps one at a time: one now, then one every
+// `intervalMs` and whenever wake() says the branch moved on the hub. Steps
+// never overlap. It ends when a step stops autosync (a conflict, a refused
+// push) or when stop() is called, which lets a running step finish.
+export class AutosyncLoop {
+  private engine: Autosync;
+  private intervalMs: number;
+  private remoteOid: () => string;
+  private onError: (err: unknown) => void;
+  private timer: ReturnType<typeof setTimeout> | undefined;
+  private running = false;
+  private pending = true;
+  private quit = false;
+  private stopped: AutosyncStop | null = null;
+  private finish: () => void = () => {};
+  readonly done: Promise<AutosyncStop | null>;
+
+  constructor(engine: Autosync, intervalMs: number, remoteOid: () => string, onError: (err: unknown) => void) {
+    this.engine = engine;
+    this.intervalMs = intervalMs;
+    this.remoteOid = remoteOid;
+    this.onError = onError;
+    this.done = new Promise(resolve => {
+      this.finish = () => resolve(this.stopped);
+    });
+  }
+
+  start() {
+    void this.loop();
+    return this.done;
+  }
+
+  wake() {
+    this.pending = true;
+    if (!this.running && !this.quit) this.schedule(0);
+  }
+
+  stop() {
+    this.quit = true;
+    if (this.timer) clearTimeout(this.timer);
+    if (!this.running) this.finish();
+    return this.done;
+  }
+
+  private schedule(ms: number) {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => {
+      this.timer = undefined;
+      this.pending = true;
+      void this.loop();
+    }, ms);
+  }
+
+  private async loop() {
+    if (this.running || this.quit) return;
+    this.running = true;
+    while (this.pending && !this.quit) {
+      this.pending = false;
+      try {
+        await this.engine.step(this.remoteOid());
+      } catch (err) {
+        if (err instanceof AutosyncStop) {
+          this.stopped = err;
+          this.quit = true;
+        } else this.onError(err);
+      }
+    }
+    this.running = false;
+    if (this.quit) this.finish();
+    else this.schedule(this.intervalMs);
   }
 }

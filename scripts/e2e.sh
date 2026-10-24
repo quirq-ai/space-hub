@@ -573,6 +573,51 @@ as bob git -C "$Y" fetch -q quirq 2>/dev/null; git -C "$Y" reset -q --hard quirq
 expect_fail "a removed collaborator cannot push" "permission denied" as bob git -C "$Y" push quirq main
 kill "$LIVE_PID" 2>/dev/null; wait "$LIVE_PID" 2>/dev/null || true
 
+echo "whole spaces"
+WS="ws$RUN"; WA="$WORK/ws-alice"; WB="$WORK/ws-bob"
+check "a team space with two projects" as alice spacehub space create "$WS"
+check "and a member" as alice spacehub space member add "$WS" "$BOB"
+for name in one two; do
+  git init -q -b main "$WORK/src-$name"; (cd "$WORK/src-$name" && echo "$name" >shared.txt && git add . && commit -m "$name")
+  as alice spacehub project create "$WS/$name" --source "$WORK/src-$name" --push >/dev/null 2>&1
+done
+check "space clone clones every project into one folder" as alice spacehub space clone "$WS" "$WA"
+same "each one at the hub's commit" "$(git -C "$WA/one" rev-parse HEAD)" "$(git -C "$WORK/src-one" rev-parse HEAD)"
+check "the folder lists its projects" grep -q '"two"' "$WA/.spacehub/space.json"
+check "the member clones it too" as bob spacehub space clone "$WS" "$WB"
+expect_fail "into an empty folder only" "not empty" as bob spacehub space clone "$WS" "$WB"
+(cd "$WA" && SPACEHUB_HOME="$WORK/home-alice" exec spacehub space sync --watch --auto --interval 0.5 >"$WORK/ws-alice.log" 2>&1) &
+SA=$!; BG="$BG $SA"
+(cd "$WB" && SPACEHUB_HOME="$WORK/home-bob" exec spacehub space sync --watch --auto --interval 0.5 >"$WORK/ws-bob.log" 2>&1) &
+SB=$!; BG="$BG $SB"
+ws_who() { as alice spacehub space who "$WS" | grep -c "autosync  (all projects)" | grep -q '^2$'; }
+check "space who shows both following the whole space" wait_for 15 ws_who
+page_has "project pages show them as here" "$WS/one" "all projects"
+echo alice >"$WA/one/from-alice.txt"; echo bob >"$WB/two/from-bob.txt"
+ws_converged() {
+  [[ -f "$WB/one/from-alice.txt" && -f "$WA/two/from-bob.txt" ]] || return 1
+  [[ "$(git -C "$WA/one" rev-parse HEAD)" == "$(git -C "$WB/one" rev-parse HEAD)" ]] || return 1
+  [[ "$(git -C "$WA/two" rev-parse HEAD)" == "$(git -C "$WB/two" rev-parse HEAD)" ]]
+}
+check "edits in different projects reach both folders" wait_for 30 ws_converged
+git init -q -b main "$WORK/src-three"; (cd "$WORK/src-three" && echo three >shared.txt && git add . && commit -m three)
+check "a new project in the space" as alice spacehub project create "$WS/three" --source "$WORK/src-three" --push
+ws_three() { [[ -f "$WA/three/shared.txt" && -f "$WB/three/shared.txt" ]] && grep -q '"three"' "$WB/.spacehub/space.json"; }
+check "is cloned into both folders as it appears" wait_for 30 ws_three
+echo "alice's line" >"$WA/one/shared.txt"; echo "bob's line" >"$WB/one/shared.txt"
+one_paused() { grep -q "^.*one: paused" "$WORK/ws-alice.log" "$WORK/ws-bob.log"; }
+check "a conflict pauses only its project" wait_for 30 one_paused
+check "both syncs keep running" bash -c "kill -0 $SA && kill -0 $SB"
+echo "still syncing" >"$WA/two/after.txt"
+two_after() { [[ -f "$WB/two/after.txt" ]]; }
+check "the other projects still sync" wait_for 30 two_after
+check "the paused project says what to resolve" grep -q "conflict with the hub's main in:" "$WORK/ws-alice.log" "$WORK/ws-bob.log"
+kill "$SA" "$SB" 2>/dev/null; wait "$SA" 2>/dev/null; wait "$SB" 2>/dev/null || true
+for d in "$WA/one" "$WB/one"; do git -C "$d" rebase --abort 2>/dev/null || true; done
+(cd "$WORK/src-two" && as alice git pull -q --ff-only quirq main 2>/dev/null && echo more >>shared.txt && commit -am more && as alice git push -q quirq main 2>/dev/null)
+check "space sync once fast-forwards the folder" bash -c "cd '$WB' && SPACEHUB_HOME='$WORK/home-bob' spacehub space sync >/dev/null 2>&1 && [[ \$(git -C '$WB/two' rev-parse HEAD) == \$(git -C '$WORK/src-two' rev-parse HEAD) ]]"
+check "space sync inside one project's clone syncs just that project" bash -c "cd '$WB/three' && SPACEHUB_HOME='$WORK/home-bob' spacehub space sync >/dev/null 2>&1"
+
 echo "create from an existing repo, edit"
 P="$WORK/p"; git init -q -b main "$P"; (cd "$P" && echo p >p.txt && git add . && commit -m p)
 check "space create --source --push still makes a project (older form)" as alice spacehub space create proj --source "$P" --push

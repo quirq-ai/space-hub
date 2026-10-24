@@ -90,6 +90,7 @@ export const Presence = __t.object("Presence", {
   branch: __t.string(),
   since: __t.timestamp(),
   seenAt: __t.timestamp(),
+  space: __t.string(),
 });
 export type Presence = __Infer<typeof Presence>;
 

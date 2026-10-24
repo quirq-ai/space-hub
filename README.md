@@ -59,6 +59,24 @@ that is not a space (it means your own project), or run inside a clone act
 on that project as before, and `space create <name> --source ...` still makes
 a project.
 
+## A whole space at once
+
+```sh
+spacehub space clone acme            # every project of acme, side by side, in ./acme
+cd acme
+spacehub space sync                  # fast-forward every project; clone new ones
+spacehub space sync --watch --auto   # autosync in every project, with one connection
+```
+
+The folder has a clone of each project plus `.spacehub/space.json`, listing
+the hub, the space and its projects (like quirq's `DEPS`). `space sync
+--watch --auto` runs autosync in every project and clones projects that
+appear while it runs. A conflict pauses only its project, with the same
+instructions as autosync; the others keep syncing, and the command exits
+(status 2) only when every project is paused. Inside one project's clone,
+`space sync` still syncs just that project. Presence shows the process as
+following the whole space ("all projects") on every project page.
+
 ## Mirroring GitHub
 
 A space can mirror a GitHub user or organization: every public repository
@@ -323,6 +341,7 @@ docker run --rm -it -e SPACEHUB_SERVER=wss://hub.example.com \
 | `gh org` and its members (web) | `spacehub space create\|list\|view\|edit\|delete`, `space member add\|remove\|list <space> [name] [--owner]` |
 | | `spacehub project watch [project] [--exec cmd]` streams ref changes live |
 | | `spacehub project who [project]`, `spacehub space who <space>` list who is connected now |
+| | `spacehub space clone <space> [dir]`, `spacehub space sync [--watch] [--auto]` work on a whole space at once |
 
 `repo` is an alias for `project`.
 
@@ -355,7 +374,7 @@ spacetime start                           # terminal 1
 scripts/setup.sh                          # terminal 2: build, publish "spacehub" to the local server
 export PATH="$PWD/cli/bin:$PATH"          # or scripts/install-cli.sh
 spacehub auth login --server ws://127.0.0.1:3000 --builder <name>
-scripts/e2e.sh                            # 233 checks against a throwaway in-memory server and a stand-in GitHub
+scripts/e2e.sh                            # 251 checks against a throwaway in-memory server and a stand-in GitHub
 SPACEHUB_E2E_GITHUB=1 scripts/e2e.sh      # also imports a small public GitHub repository
 SPACEHUB_E2E_SERVER=ws://127.0.0.1:3000 scripts/e2e.sh   # against a running server, e.g. the Docker one
 ```
@@ -386,7 +405,8 @@ cli/src/web.ts           web service: sign in/up, create and import projects
 cli/src/live.ts          live pages: the /-/live event stream (livepage.ts: the page script)
 cli/src/github.ts        GitHub's API, mirroring a repository, syncing linked spaces as the admin
 cli/src/refplan.ts       the sync's rules: what moves, what is kept, what diverged
-cli/src/autosync.ts      autosync: commit, rebase, push; stop on a conflict
+cli/src/autosync.ts      autosync: commit, rebase, push; stop on a conflict; the step loop
+cli/src/spacesync.ts     a whole space in one folder: space clone and space sync
 cli/src/module_bindings  generated, do not edit
 Dockerfile               targets: server (default), client
 docker-compose.yml       server + Caddy TLS front
@@ -417,7 +437,7 @@ tables or columns in place. In the code they are called projects.
 | `space_member` | project + builder | a project's collaborators |
 | `space_link` | space | the GitHub account it mirrors, the last sync's status and time |
 | `ref_sync` | project + ref | GitHub's value at the last sync, and whether the hub's copy follows it or diverged |
-| `presence` | connection | which project a connected client follows, its mode and branch, and its last heartbeat |
+| `presence` | connection | which project (or whole space) a connected client follows, its mode and branch, and its last heartbeat |
 
 **Push.** The helper lists the objects the project lacks
 (`git rev-list --objects <new> --not <remote refs>`). It uploads them in

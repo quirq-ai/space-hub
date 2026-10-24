@@ -63,6 +63,7 @@ import StartImportReducer from "./start_import_reducer";
 import UnlinkSpaceReducer from "./unlink_space_reducer";
 import UpdateImportReducer from "./update_import_reducer";
 import UpdateRefReducer from "./update_ref_reducer";
+import WatchHubReducer from "./watch_hub_reducer";
 import WatchSpaceReducer from "./watch_space_reducer";
 import XoLinkAgentReducer from "./xo_link_agent_reducer";
 import XoPutRecordReducer from "./xo_put_record_reducer";
@@ -348,6 +349,7 @@ const reducersSchema = __reducers(
   __reducerSchema("unlink_space", UnlinkSpaceReducer),
   __reducerSchema("update_import", UpdateImportReducer),
   __reducerSchema("update_ref", UpdateRefReducer),
+  __reducerSchema("watch_hub", WatchHubReducer),
   __reducerSchema("watch_space", WatchSpaceReducer),
   __reducerSchema("xo_link_agent", XoLinkAgentReducer),
   __reducerSchema("xo_put_record", XoPutRecordReducer),
