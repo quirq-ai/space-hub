@@ -80,9 +80,26 @@ export function snapshot<T>(conn: Conn, query: string | RowTypedQuery<any, any>,
   });
 }
 
-export function findSpace(conn: Conn, fullName: string) {
-  return snapshot(conn, tables.space.where(s => s.fullName.eq(fullName)), () =>
-    [...conn.db.space.iter()].find(s => s.fullName === fullName)
+export function findProject(conn: Conn, fullName: string) {
+  return snapshot(conn, tables.project.where(s => s.fullName.eq(fullName)), () =>
+    [...conn.db.project.iter()].find(s => s.fullName === fullName)
+  );
+}
+
+// A top-level space: a builder's personal space, a team space or an agent.
+export function findHubSpace(conn: Conn, name: string) {
+  return snapshot(conn, tables.hubSpace.where(s => s.name.eq(name)), () => [...conn.db.hubSpace.iter()].find(s => s.name === name));
+}
+
+export function spaceRoles(conn: Conn, space: string) {
+  return snapshot(conn, tables.spaceRole.where(r => r.space.eq(space)), () =>
+    [...conn.db.spaceRole.iter()].filter(r => r.space === space).sort((a, b) => (a.role === b.role ? a.member.localeCompare(b.member) : a.role === 'owner' ? -1 : 1))
+  );
+}
+
+export function projectsIn(conn: Conn, space: string) {
+  return snapshot(conn, tables.project.where(p => p.owner.eq(space)), () =>
+    [...conn.db.project.iter()].filter(p => p.owner === space).sort((a, b) => a.name.localeCompare(b.name))
   );
 }
 

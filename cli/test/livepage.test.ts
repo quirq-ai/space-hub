@@ -4,17 +4,17 @@ import assert from 'node:assert/strict';
 import { LIVE_JS, liveTopic, pageParts } from '../src/livepage.ts';
 import { shell } from '../../module/src/style.ts';
 
-test('pages follow the hub, an agent or a space', () => {
+test('pages follow the hub, a space or a project', () => {
   assert.equal(liveTopic('/'), 'hub');
   assert.equal(liveTopic('/?page=2'), 'hub');
-  assert.equal(liveTopic('/ada'), 'agent:ada');
-  assert.equal(liveTopic('/ada/notes'), 'space:ada/notes');
-  assert.equal(liveTopic('/ada/notes/tree/main/docs?x=1'), 'space:ada/notes');
-  assert.equal(liveTopic('/ada/my%20notes/activity'), 'space:ada/my notes');
+  assert.equal(liveTopic('/ada'), 'space:ada');
+  assert.equal(liveTopic('/ada/notes'), 'project:ada/notes');
+  assert.equal(liveTopic('/ada/notes/tree/main/docs?x=1'), 'project:ada/notes');
+  assert.equal(liveTopic('/ada/my%20notes/activity'), 'project:ada/my notes');
 });
 
-test('still pages and anything outside the UI are not live', () => {
-  for (const path of ['/guide', '/builders', '/builders/octocat', '/ada/notes/raw/main/a.txt', '/-/login', '//evil.example', 'ada', '/%E0%A4%A', '/' + 'a'.repeat(3000)]) {
+test('the hub pages, raw files and anything outside the UI are not live', () => {
+  for (const path of ['/-/guide', '/-/builders', '/-/builders/octocat', '/ada/notes/raw/main/a.txt', '/-/login', '//evil.example', 'ada', '/%E0%A4%A', '/' + 'a'.repeat(3000)]) {
     assert.equal(liveTopic(path), null, path);
   }
 });

@@ -1,29 +1,32 @@
 // The web UI: a GitHub-like view of everything in the database, rendered to
 // HTML inside the module. Pages work without JavaScript; behind the server's
-// proxy, live pages (home, agents, spaces) also load /-/live.js, which swaps
-// in each new rendering the web service streams when their data changes.
+// proxy, live pages (home, spaces, projects) also load /-/live.js, which
+// swaps in each new rendering the web service streams when their data changes.
 //
-//   /                                     spaces and people
-//   /<owner>                              an owner's spaces
-//   /<owner>/<space>                      files at the default branch + README
-//   /<owner>/<space>/tree/<ref>/<path>    a folder (last commit per entry)
-//   /<owner>/<space>/blob/<ref>/<path>    a file: code with line links, Markdown
-//                                         preview (?plain=1 for source), images
-//   /<owner>/<space>/raw/<ref>/<path>     a file, as plain bytes
-//   /<owner>/<space>/commits/<ref>/<path> history, optionally of one path (?page=N)
-//   /<owner>/<space>/commit/<oid>         one commit with line diffs
-//   /<owner>/<space>/refs                 branches and tags
-//   /<owner>/<space>/activity             that space's activity (?page=N); the home
-//                                         page shows the whole hub's (?page=N)
-//   /builders, /builders/<login>          who built the spaces' code (GitHub accounts and agents)
-//   /guide                                what the hub is, who can use it, how, use cases
+//   /                                         projects, spaces, builders, activity
+//   /<space>                                  a builder's, team's or agent's space
+//   /<space>/<project>                        files at the default branch + README
+//   /<space>/<project>/tree/<ref>/<path>      a folder (last commit per entry)
+//   /<space>/<project>/blob/<ref>/<path>      a file: code with line links, Markdown
+//                                             preview (?plain=1 for source), images
+//   /<space>/<project>/raw/<ref>/<path>       a file, as plain bytes
+//   /<space>/<project>/commits/<ref>/<path>   history, optionally of one path (?page=N)
+//   /<space>/<project>/commit/<oid>           one commit with line diffs
+//   /<space>/<project>/refs                   branches and tags
+//   /<space>/<project>/activity               that project's activity (?page=N); the
+//                                             home page shows the whole hub's (?page=N)
+//   /-/builders, /-/builders/<login>          who built the code (builders and GitHub accounts)
+//   /-/guide                                  what the hub is, who can use it, how, use cases
+//
+// The hub's own pages live under /-/ so any GitHub name can be a space;
+// /guide and /builders redirect there unless a space has that name.
 //
 // Behind the server's proxy the original request URI arrives in an
 // X-Spacehub-Uri header and links are written as /<path>. Opened directly on
 // SpacetimeDB (/v1/database/<db>/route/ui?p=<path>) links stay as ?p=<path>.
 // Sign-in state comes from a display-only cookie; every write goes through
 // the web service (/-/...), which checks the real session.
-import { PRESENCE_STALE_SECONDS, readObject, type Db } from './store';
+import { PRESENCE_STALE_SECONDS, inSpace, ownsSpace, readObject, type Db } from './store';
 import { DELETE, INSERT, diffLines, toHunks } from './diff';
 import { renderMarkdown, type Resolve } from './markdown';
 import { esc, navFor, PAGE_CSP, shell } from './style';
@@ -43,7 +46,7 @@ export interface UiResponse {
   body: string | Uint8Array;
 }
 
-type Space = NonNullable<ReturnType<Db['space']['fullName']['find']>>;
+type Space = NonNullable<ReturnType<Db['project']['fullName']['find']>>;
 type Activity = NonNullable<ReturnType<Db['activity']['id']['find']>>;
 type Presence = NonNullable<ReturnType<Db['presence']['connectionId']['find']>>;
 
@@ -69,14 +72,15 @@ interface Entry {
   type: 'tree' | 'blob' | 'commit';
 }
 
-// Who built a space's code: a GitHub account (an explicit space_builder row,
-// else the owner of the space's GitHub import source), else the agent that
-// owns the space.
+// Who built a project's code: a GitHub account (an explicit space_builder
+// row, else the owner of the project's GitHub import source), else the
+// builder here who made it (a personal space's builder, or whoever created
+// the project in a team space).
 interface Builder {
-  kind: 'github' | 'agent';
-  handle: string; // GitHub login (lowercase) or agent name
+  kind: 'github' | 'hub';
+  handle: string; // GitHub login (lowercase) or builder name
   name: string;
-  url: string; // GitHub profile, or "" for an agent
+  url: string; // GitHub profile, or "" for a builder here
 }
 
 interface Change {
@@ -456,11 +460,11 @@ class Renderer {
   // ------------------------------------------------------------ shared parts
 
   importRow(sp: Space) {
-    return this.db.spaceImport.spaceId.find(sp.id) ?? null;
+    return this.db.projectImport.spaceId.find(sp.id) ?? null;
   }
 
   builderOf(sp: Space): Builder {
-    const row = this.db.spaceBuilder.spaceId.find(sp.id);
+    const row = this.db.projectBuilder.spaceId.find(sp.id);
     if (row && row.url.startsWith('https://github.com/')) return { kind: 'github', handle: row.handle, name: this.builderName(row.handle, row.name), url: row.url };
     const source = this.importRow(sp)?.source ?? '';
     const gh = /^https:\/\/github\.com\/([^/]+)\//.exec(source);
@@ -468,7 +472,9 @@ class Renderer {
       const handle = gh[1].toLowerCase();
       return { kind: 'github', handle, name: this.builderName(handle, gh[1]), url: `https://github.com/${gh[1]}` };
     }
-    return { kind: 'agent', handle: sp.owner, name: sp.owner, url: '' };
+    const space = this.db.hubSpace.name.find(sp.owner);
+    const maker = !space || space.kind === 'personal' ? sp.owner : (this.db.user.identity.find(sp.ownerIdentity)?.username ?? sp.owner);
+    return { kind: 'hub', handle: maker, name: maker, url: '' };
   }
 
   // A GitHub builder's best known name: any recorded display name
@@ -477,28 +483,31 @@ class Renderer {
   builderName(handle: string, fallback: string) {
     if (!this.displayNames) {
       this.displayNames = new Map();
-      for (const r of this.db.spaceBuilder.iter()) if (r.name.toLowerCase() !== r.handle) this.displayNames.set(r.handle, r.name);
+      for (const r of this.db.projectBuilder.iter()) if (r.name.toLowerCase() !== r.handle) this.displayNames.set(r.handle, r.name);
     }
     return this.displayNames.get(handle) ?? fallback;
   }
 
   builderLink(b: Builder) {
-    return b.kind === 'agent' ? this.a(b.handle, esc(b.name)) : this.a(`builders/${b.handle}`, esc(b.name));
+    return b.kind === 'hub' ? this.a(b.handle, esc(b.name)) : this.a(`-/builders/${b.handle}`, esc(b.name));
   }
 
   builderKind(b: Builder) {
-    return `<span class="pill">${b.kind === 'agent' ? 'agent' : 'GitHub'}</span>`;
+    return `<span class="pill">${b.kind === 'hub' ? 'builder' : 'GitHub'}</span>`;
   }
 
-  // "built by X" for listings, when a GitHub account built the space.
+  // "built by X" for listings, when someone other than the space built it.
   builtBy(sp: Space) {
     const b = this.builderOf(sp);
-    return b.kind === 'agent' ? '' : `<div class="muted">built by ${this.builderLink(b)}</div>`;
+    return b.kind === 'hub' && b.handle === sp.owner ? '' : `<div class="muted">built by ${this.builderLink(b)}</div>`;
   }
 
+  // Every builder here (with or without projects) and every GitHub account
+  // credited with a project, by how many projects they built.
   builders() {
     const groups = new Map<string, { builder: Builder; spaces: Space[] }>();
-    for (const sp of this.db.space.iter()) {
+    for (const u of this.db.user.iter()) groups.set(`hub:${u.username}`, { builder: { kind: 'hub', handle: u.username, name: u.username, url: '' }, spaces: [] });
+    for (const sp of this.db.project.iter()) {
       const b = this.builderOf(sp);
       const key = `${b.kind}:${b.handle}`;
       const g = groups.get(key) ?? { builder: b, spaces: [] };
@@ -508,13 +517,22 @@ class Renderer {
     return [...groups.values()].sort((x, y) => y.spaces.length - x.spaces.length || x.builder.name.localeCompare(y.builder.name));
   }
 
+  kindOf(space: string) {
+    return this.db.hubSpace.name.find(space)?.kind ?? 'personal';
+  }
+
+  spacePill(space: string) {
+    const kind = this.kindOf(space);
+    return `<span class="pill">${kind === 'personal' ? 'builder' : esc(kind)}</span>`;
+  }
+
   syncForm(sp: Space, label: string) {
-    if (this.base === null || this.viewer !== sp.owner) return '';
+    if (this.base === null || !ownsSpace(this.db, sp.owner, this.viewer)) return '';
     return `<form method="post" action="/-/sync/${encodeURIComponent(sp.owner)}/${encodeURIComponent(sp.name)}" class="inline"><button class="btn" type="submit">${esc(label)}</button></form>`;
   }
 
   members(sp: Space) {
-    return [...this.db.spaceMember.spaceId.filter(sp.id)].sort((a, b) => a.agent.localeCompare(b.agent));
+    return [...this.db.projectMember.spaceId.filter(sp.id)].sort((a, b) => a.agent.localeCompare(b.agent));
   }
 
   // Connections that follow a space (or the whole hub) and are still
@@ -539,7 +557,7 @@ class Renderer {
     const rows = groups
       .slice(0, 30)
       .map(({ row: p, count }) => {
-        const sp = withSpace ? this.db.space.id.find(p.spaceId) : undefined;
+        const sp = withSpace ? this.db.project.id.find(p.spaceId) : undefined;
         const branch = p.branch ? ` ${esc(p.branch)}` : '';
         const where = sp ? ` <span class="muted">in</span> ${this.a(sp.fullName, esc(sp.fullName))}` : '';
         const times = count > 1 ? ` <span class="muted">×${count}</span>` : '';
@@ -614,10 +632,10 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     const count = commits >= COUNT_CAP ? `${COUNT_CAP.toLocaleString('en-US')}+` : commits.toLocaleString('en-US');
     const here = this.hereNow(sp.id);
     const members = this.members(sp).map(m => this.a(m.agent, esc(m.agent)));
-    return `<aside><h2>Clone</h2><code class="clone">spacehub space clone ${esc(sp.fullName)}</code>
+    return `<aside><h2>Clone</h2><code class="clone">spacehub project clone ${esc(sp.fullName)}</code>
 <code class="clone">git clone -o quirq quirq://${esc(this.host)}/${esc(sp.fullName)}</code>
 <h2>Here now <span class="muted">${here.reduce((n, g) => n + g.count, 0)}</span></h2>${this.hereBox(here, false)}
-<h2>About</h2><dl><dt>Agent</dt><dd>${this.a(sp.owner, esc(sp.owner))}</dd><dt>Members</dt><dd class="members">${members.join(', ') || '<span class="muted">none</span>'}</dd><dt>Builder</dt><dd>${this.builderLink(this.builderOf(sp))}</dd><dt>Default</dt><dd>${esc(sp.defaultBranch)}</dd>
+<h2>About</h2><dl><dt>Space</dt><dd>${this.a(sp.owner, esc(sp.owner))} ${this.spacePill(sp.owner)}</dd><dt>Collaborators</dt><dd class="collaborators">${members.join(', ') || '<span class="muted">none</span>'}</dd><dt>Builder</dt><dd>${this.builderLink(this.builderOf(sp))}</dd><dt>Default</dt><dd>${esc(sp.defaultBranch)}</dd>
 <dt>Commits</dt><dd>${this.a(`${sp.fullName}/commits/${ref}`, count)}</dd>
 <dt>Branches</dt><dd>${this.a(`${sp.fullName}/refs`, String(refs.filter(r => r.name.startsWith('refs/heads/')).length))}</dd><dt>Tags</dt><dd>${this.a(`${sp.fullName}/refs`, String(refs.filter(r => r.name.startsWith('refs/tags/')).length))}</dd>
 <dt>Objects</dt><dd>${sp.objectCount}</dd><dt>Created</dt><dd>${this.ago(seconds(sp.createdAt))}</dd><dt>Pushed</dt><dd>${this.ago(seconds(sp.pushedAt))}</dd>${source}</dl>${sync}</aside>`;
@@ -646,14 +664,14 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
 
   builtByLine(sp: Space) {
     const b = this.builderOf(sp);
-    if (b.kind === 'agent') return '';
+    if (b.kind === 'hub' && b.handle === sp.owner) return '';
     const profile = b.url ? ` <span class="muted">·</span> <a href="${esc(b.url)}">${esc(b.url.replace(/^https?:\/\//, ''))}</a>` : '';
     return `<p class="desc">Built by <b>${this.builderLink(b)}</b>${profile}</p>`;
   }
 
   // One activity as a sentence: who did what, where, and when.
   activityItem(e: Activity) {
-    const sp = e.spaceId ? this.db.space.id.find(e.spaceId) : undefined;
+    const sp = e.spaceId ? this.db.project.id.find(e.spaceId) : undefined;
     const who = e.agent ? this.a(e.agent, `<b>${esc(e.agent)}</b>`) : '<b>someone</b>';
     const space = sp ? this.a(sp.fullName, `<b>${esc(sp.fullName)}</b>`) : `<b>${esc(e.space)}</b>`;
     const refName = shortRef(e.subject);
@@ -662,11 +680,30 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     const commit = sp && e.oid ? `${this.a(`${sp.fullName}/commit/${e.oid}`, e.oid.slice(0, 7), 'mono')} ` : '';
     const source = `<a href="${esc(e.subject)}">${esc(e.subject.replace(/^https:\/\//, ''))}</a>`;
     const pushed = commit || e.text ? `${commit}${esc(e.text)}` : '';
+    // Team space events name the space itself.
+    const team = this.db.hubSpace.name.find(e.space) ? this.a(e.space, `<b>${esc(e.space)}</b>`) : `<b>${esc(e.space)}</b>`;
+    const member = this.a(e.subject, `<b>${esc(e.subject)}</b>`);
     let line: string;
     let more = '';
     switch (e.kind) {
       case 'agent_registered':
-        line = `${who} registered as an agent`;
+        line = `${who} joined as a builder`;
+        break;
+      case 'team_created':
+        line = `${who} created the team space ${team}`;
+        break;
+      case 'team_edited':
+        line = `${who} updated the team space ${team}`;
+        more = esc(e.text);
+        break;
+      case 'team_deleted':
+        line = `${who} deleted the team space ${team}`;
+        break;
+      case 'team_member_added':
+        line = `${who} added ${member} to ${team} as ${e.text === 'owner' ? 'an owner' : 'a member'}`;
+        break;
+      case 'team_member_removed':
+        line = e.subject === e.agent ? `${who} left ${team}` : `${who} removed ${member} from ${team}`;
         break;
       case 'space_created':
         line = `${who} created ${space}`;
@@ -679,7 +716,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
         more = esc(e.text);
         break;
       case 'builder_set':
-        line = `${who} credited ${this.a(`builders/${e.subject}`, `<b>${esc(e.text || e.subject)}</b>`)} as the builder of ${space}`;
+        line = `${who} credited ${this.a(`-/builders/${e.subject}`, `<b>${esc(e.text || e.subject)}</b>`)} as the builder of ${space}`;
         break;
       case 'builder_cleared':
         line = `${who} removed the builder credit from ${space}`;
@@ -718,10 +755,10 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
         more = esc(e.text);
         break;
       case 'member_added':
-        line = `${who} added ${this.a(e.subject, `<b>${esc(e.subject)}</b>`)} as a member of ${space}`;
+        line = `${who} added ${member} as a collaborator on ${space}`;
         break;
       case 'member_removed':
-        line = e.subject === e.agent ? `${who} left the members of ${space}` : `${who} removed ${this.a(e.subject, `<b>${esc(e.subject)}</b>`)} from the members of ${space}`;
+        line = e.subject === e.agent ? `${who} left the collaborators on ${space}` : `${who} removed ${member} from the collaborators on ${space}`;
         break;
       default:
         line = `${who} ${esc(e.kind.replace(/_/g, ' '))} ${space}`;
@@ -748,59 +785,81 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
 
   // ------------------------------------------------------------ pages
 
-  home() {
-    const spaces = [...this.db.space.iter()].sort((a, b) => seconds(b.pushedAt) - seconds(a.pushedAt));
-    const users = [...this.db.user.iter()].sort((a, b) => a.username.localeCompare(b.username));
-    const counts = new Map<string, number>();
-    for (const s of spaces) counts.set(s.owner, (counts.get(s.owner) ?? 0) + 1);
-    const rows = spaces
+  projectRows(projects: Space[], fullNames: boolean) {
+    return projects
+      .sort((a, b) => seconds(b.pushedAt) - seconds(a.pushedAt))
       .map(
-        s => `<tr><td>${this.a(s.fullName, `<b>${esc(s.fullName)}</b>`)}${s.description ? `<div class="muted">${esc(s.description)}</div>` : ''}${this.builtBy(s)}</td>
-<td class="r"><span class="pill">${esc(s.defaultBranch)}</span></td><td class="r muted">Updated ${this.ago(seconds(s.pushedAt))}</td></tr>`
+        s => `<tr><td>${this.a(s.fullName, `<b>${esc(fullNames ? s.fullName : s.name)}</b>`)}${s.description ? `<div class="muted">${esc(s.description)}</div>` : ''}${this.builtBy(s)}</td>
+<td class="r muted">Updated ${this.ago(seconds(s.pushedAt))}</td></tr>`
       )
       .join('');
-    const people = users
-      .map(u => `<tr><td>${this.a(u.username, esc(u.username))}</td><td class="r muted">${plural(counts.get(u.username) ?? 0, 'space')}</td></tr>`)
+  }
+
+  home() {
+    const projects = [...this.db.project.iter()];
+    const counts = new Map<string, number>();
+    for (const p of projects) counts.set(p.owner, (counts.get(p.owner) ?? 0) + 1);
+    const teams = [...this.db.hubSpace.kind.filter('team')].sort((a, b) => (counts.get(b.name) ?? 0) - (counts.get(a.name) ?? 0) || a.name.localeCompare(b.name));
+    const teamRows = teams
+      .slice(0, 20)
+      .map(t => `<tr><td>${this.a(t.name, esc(t.displayName || t.name))}</td><td class="r muted">${plural(counts.get(t.name) ?? 0, 'project')}</td></tr>`)
       .join('');
     const builders = this.builders();
     const builderRows = builders
       .slice(0, 20)
-      .map(g => `<tr><td>${this.builderLink(g.builder)} ${this.builderKind(g.builder)}</td><td class="r muted">${plural(g.spaces.length, 'space')}</td></tr>`)
+      .map(g => `<tr><td>${this.builderLink(g.builder)} ${this.builderKind(g.builder)}</td><td class="r muted">${plural(g.spaces.length, 'project')}</td></tr>`)
       .join('');
     const scheme = this.secure ? 'wss' : 'ws';
     const guide = guideHome({ server: `${scheme}://${this.host}`, host: this.host, link: p => this.link(p) });
-    const create = this.viewer ? `<a class="btn primary" href="/-/new">New space</a>` : '';
+    const create = this.viewer ? `<a class="btn primary" href="/-/new">New project</a>` : '';
+    const rows = this.projectRows(projects, true);
     return this.page(
       'spacehub',
-      `${guide}<div class="grid"><div><div class="bar" style="background:none;border:0;padding:0 0 8px"><h1 class="grow"><b>Spaces</b> <span class="muted">${spaces.length}</span></h1>${create}</div>
-<p class="desc">Git spaces on this server, most recently pushed first.</p>
-<div class="box">${rows ? `<table>${rows}</table>` : '<div class="empty">No spaces yet.</div>'}</div>
+      `${guide}<div class="grid"><div><div class="bar" style="background:none;border:0;padding:0 0 8px"><h1 class="grow"><b>Projects</b> <span class="muted">${projects.length}</span></h1>${create}</div>
+<p class="desc">Git projects on this hub, most recently pushed first.</p>
+<div class="box">${rows ? `<table>${rows}</table>` : '<div class="empty">No projects yet.</div>'}</div>
 <h2 style="margin:24px 0 8px">Activity</h2>${this.activityFeed([...this.db.activity.iter()], '')}</div>
 <aside><h2>Here now</h2>${this.hereBox(this.hereNow(null), true)}
-<h2>Agents <span class="muted">${users.length}</span></h2><div class="box">${people ? `<table>${people}</table>` : '<div class="empty">No agents yet.</div>'}</div>
-<h2>${this.a('builders', 'Builders')} <span class="muted">${builders.length}</span></h2><div class="box">${builderRows ? `<table>${builderRows}</table>` : '<div class="empty">No builders yet.</div>'}</div></aside></div>`
+<h2>Team spaces <span class="muted">${teams.length}</span></h2><div class="box">${teamRows ? `<table>${teamRows}</table>` : '<div class="empty">No team spaces yet.</div>'}</div>
+<h2>${this.a('-/builders', 'Builders')} <span class="muted">${builders.length}</span></h2><div class="box">${builderRows ? `<table>${builderRows}</table>` : '<div class="empty">No builders yet.</div>'}</div></aside></div>`
     );
   }
 
-  owner(name: string) {
+  // Owners first, then members.
+  roles(space: string) {
+    return [...this.db.spaceRole.space.filter(space)].sort((a, b) => (a.role === b.role ? a.member.localeCompare(b.member) : a.role === 'owner' ? -1 : 1));
+  }
+
+  // /<name>: a builder's personal space, a team space, or (phase 4) an agent.
+  spacePage(name: string) {
+    const row = this.db.hubSpace.name.find(name);
     const user = this.db.user.username.find(name);
-    const spaces = [...this.db.space.owner.filter(name)].sort((a, b) => seconds(b.pushedAt) - seconds(a.pushedAt));
-    if (!user && spaces.length === 0) return this.notFound(`No agent "${name}".`);
-    const rows = spaces
-      .map(
-        s => `<tr><td>${this.a(s.fullName, `<b>${esc(s.name)}</b>`)}${s.description ? `<div class="muted">${esc(s.description)}</div>` : ''}${this.builtBy(s)}</td>
-<td class="r muted">Updated ${this.ago(seconds(s.pushedAt))}</td></tr>`
-      )
+    const projects = [...this.db.project.owner.filter(name)];
+    if (!row && !user && projects.length === 0) return this.notFound(`No space "${name}".`);
+    const kind = row?.kind ?? 'personal';
+    const rows = this.projectRows(projects, false);
+    const list = `<div class="box">${rows ? `<table>${rows}</table>` : '<div class="empty">No projects yet.</div>'}</div>`;
+    const title = `<h1><b>${esc(row?.displayName || name)}</b> ${this.spacePill(name)}</h1>${row?.description ? `<p class="desc">${esc(row.description)}</p>` : ''}`;
+    const here = this.hereBox(this.hereNow(null).filter(g => this.db.project.id.find(g.row.spaceId)?.owner === name), true);
+    if (kind === 'personal') {
+      const since = user ? `<p class="desc">Builder · joined ${this.ago(seconds(user.createdAt))} · ${plural(projects.length, 'project')}</p>` : '';
+      const teams = [...this.db.spaceRole.member.filter(name)]
+        .map(r => `<tr><td>${this.a(r.space, `<b>${esc(r.space)}</b>`)} ${this.spacePill(r.space)}</td><td class="r muted">${esc(r.role)}</td></tr>`)
+        .join('');
+      const collab = [...this.db.projectMember.agent.filter(name)]
+        .map(m => this.db.project.id.find(m.spaceId))
+        .filter((s): s is Space => !!s)
+        .map(s => `<tr><td>${this.a(s.fullName, `<b>${esc(s.fullName)}</b>`)}</td><td class="r muted">collaborator</td></tr>`)
+        .join('');
+      const memberOf = teams + collab ? `<h2 style="margin:24px 0 8px">Member of</h2><div class="box"><table>${teams}${collab}</table></div>` : '';
+      return this.page(name, `${title}${since}${list}${memberOf}`);
+    }
+    const created = row ? `<p class="desc">${kind === 'team' ? 'Team space' : 'Agent'} · created by ${this.a(row.createdBy, esc(row.createdBy))} ${this.ago(seconds(row.createdAt))} · ${plural(projects.length, 'project')}</p>` : '';
+    const people = this.roles(name)
+      .map(r => `<tr><td>${this.a(r.member, `<b>${esc(r.member)}</b>`)} ${this.spacePill(r.member)}</td><td class="r muted">${esc(r.role)}</td></tr>`)
       .join('');
-    const since = user ? `<p class="desc">Agent · registered ${this.ago(seconds(user.createdAt))} · ${plural(spaces.length, 'space')}</p>` : '';
-    const memberOf = [...this.db.spaceMember.agent.filter(name)]
-      .map(m => this.db.space.id.find(m.spaceId))
-      .filter((s): s is Space => !!s)
-      .sort((a, b) => a.fullName.localeCompare(b.fullName))
-      .map(s => `<tr><td>${this.a(s.fullName, `<b>${esc(s.fullName)}</b>`)}${s.description ? `<div class="muted">${esc(s.description)}</div>` : ''}</td><td class="r muted">Updated ${this.ago(seconds(s.pushedAt))}</td></tr>`)
-      .join('');
-    const member = memberOf ? `<h2 style="margin:24px 0 8px">Member of</h2><div class="box"><table>${memberOf}</table></div>` : '';
-    return this.page(name, `<h1><b>${esc(name)}</b></h1>${since}<div class="box">${rows ? `<table>${rows}</table>` : '<div class="empty">No spaces yet.</div>'}</div>${member}`);
+    const aside = `<aside><h2>Members</h2><div class="box members">${people ? `<table>${people}</table>` : '<div class="empty">No members yet.</div>'}</div><h2>Here now</h2>${here}</aside>`;
+    return this.page(name, `${title}${created}<div class="grid"><div>${list}</div>${aside}</div>`);
   }
 
   emptySpace(sp: Space) {
@@ -1096,12 +1155,12 @@ ${bodyText ? `<pre>${esc(bodyText)}</pre>` : ''}
     const rows = this.builders()
       .map(
         g => `<tr><td>${this.builderLink(g.builder)} ${this.builderKind(g.builder)}${g.builder.url ? `<div class="muted">${esc(g.builder.url.replace(/^https?:\/\//, ''))}</div>` : ''}</td>
-<td class="r muted">${plural(g.spaces.length, 'space')}</td></tr>`
+<td class="r muted">${plural(g.spaces.length, 'project')}</td></tr>`
       )
       .join('');
     return this.page(
       'Builders · spacehub',
-      `<h1><b>Builders</b></h1><p class="desc">Who built the code in this server's spaces. A space imported from GitHub is credited to its GitHub owner (or to the GitHub account set with <code>spacehub space edit --builder</code>); a space an agent pushed itself is credited to that agent.</p>
+      `<h1><b>Builders</b></h1><p class="desc">Who built the code in this hub's projects: the builders here, and GitHub accounts. A project imported from GitHub is credited to its GitHub owner (or to the GitHub account set with <code>spacehub project edit --builder</code>); a project a builder pushed is credited to that builder.</p>
 <div class="box">${rows ? `<table>${rows}</table>` : '<div class="empty">No builders yet.</div>'}</div>`
     );
   }
@@ -1131,18 +1190,32 @@ ${bodyText ? `<pre>${esc(bodyText)}</pre>` : ''}
     );
   }
 
-  route(segs: string[]): UiResponse {
-    // The guide and builder pages stay still; everything else follows its data.
-    this.live = !(segs[0] === 'guide' && segs.length === 1) && segs[0] !== 'builders' && segs[2] !== 'raw';
-    if (segs.length === 0) return this.home();
-    if (segs.length === 1 && segs[0] === 'guide') {
+  // The hub's own pages, at /-/<page>.
+  hubPage(segs: string[]): UiResponse | null {
+    if (segs[0] === 'guide' && segs.length === 1) {
       const scheme = this.secure ? 'wss' : 'ws';
       return this.page('Guide · spacehub', guidePage({ server: `${scheme}://${this.host}`, host: this.host, link: p => this.link(p) }));
     }
     if (segs[0] === 'builders' && segs.length <= 2) return segs[1] ? this.builderPage(segs[1]) : this.buildersPage();
-    if (segs.length === 1) return this.owner(segs[0]);
-    const sp = this.db.space.fullName.find(`${segs[0]}/${segs[1]}`);
-    if (!sp) return this.notFound(`No space "${segs[0]}/${segs[1]}".`);
+    return null;
+  }
+
+  redirect(path: string): UiResponse {
+    return { status: 301, headers: { location: this.link(path), 'content-type': 'text/plain; charset=utf-8' }, body: '' };
+  }
+
+  route(segs: string[]): UiResponse {
+    // The hub's own pages stay still; everything else follows its data.
+    this.live = segs[0] !== '-' && segs[2] !== 'raw';
+    if (segs.length === 0) return this.home();
+    if (segs[0] === '-') return this.hubPage(segs.slice(1)) ?? this.notFound(`No page "${segs.join('/')}".`);
+    // Old addresses of the hub's pages, unless a space took the name.
+    if ((segs[0] === 'guide' || segs[0] === 'builders') && !this.db.hubSpace.name.find(segs[0]) && this.hubPage(segs)) {
+      return this.redirect(`-/${segs.join('/')}`);
+    }
+    if (segs.length === 1) return this.spacePage(segs[0]);
+    const sp = this.db.project.fullName.find(`${segs[0]}/${segs[1]}`);
+    if (!sp) return this.notFound(`No project "${segs[0]}/${segs[1]}".`);
     const [view, ...rest] = segs.slice(2);
     switch (view) {
       case undefined:

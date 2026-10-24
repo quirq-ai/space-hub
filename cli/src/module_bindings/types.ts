@@ -48,6 +48,17 @@ export const GitRef = __t.object("GitRef", {
 });
 export type GitRef = __Infer<typeof GitRef>;
 
+export const HubSpace = __t.object("HubSpace", {
+  name: __t.string(),
+  kind: __t.string(),
+  displayName: __t.string(),
+  description: __t.string(),
+  parent: __t.string(),
+  createdBy: __t.string(),
+  createdAt: __t.timestamp(),
+});
+export type HubSpace = __Infer<typeof HubSpace>;
+
 export const HubState = __t.object("HubState", {
   key: __t.string(),
   value: __t.string(),
@@ -124,6 +135,17 @@ export const SpaceMember = __t.object("SpaceMember", {
   addedAt: __t.timestamp(),
 });
 export type SpaceMember = __Infer<typeof SpaceMember>;
+
+export const SpaceRole = __t.object("SpaceRole", {
+  id: __t.u64(),
+  key: __t.string(),
+  space: __t.string(),
+  member: __t.string(),
+  role: __t.string(),
+  addedBy: __t.string(),
+  addedAt: __t.timestamp(),
+});
+export type SpaceRole = __Infer<typeof SpaceRole>;
 
 export const User = __t.object("User", {
   identity: __t.identity(),

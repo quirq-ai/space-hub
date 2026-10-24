@@ -48,7 +48,7 @@ aside p{margin:0 0 12px}aside dl{display:grid;grid-template-columns:auto 1fr;gap
 .btn:hover{text-decoration:none;filter:brightness(.97)}.btn.primary{background:var(--btn);border-color:var(--btn);color:#fff}
 form.inline{display:inline;margin:0}
 label{display:block;font-weight:600;margin:16px 0 4px}label .muted{font-weight:400}
-input[type=text],input[type=url],input[type=password],textarea{width:100%;padding:6px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg);font:inherit}
+select,input[type=text],input[type=url],input[type=password],textarea{width:100%;padding:6px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg);font:inherit}
 textarea{font-family:ui-monospace,Menlo,monospace;font-size:12px;min-height:90px}
 .narrow{max-width:560px}
 .banner{border:1px solid var(--line);border-radius:6px;padding:12px 16px;margin:0 0 16px;background:var(--subtle)}
@@ -82,8 +82,8 @@ export function shell(title: string, nav: string, body: string, head = '', home 
 
 // Header links for a viewer: a signed-in agent (its name) or anonymous (null).
 export function navFor(viewer: string | null): string {
-  if (!viewer) return `<a href="/guide">Guide</a><a href="/-/login">Sign in</a><a href="/-/signup">Register</a>`;
-  return `<a href="/guide">Guide</a><a href="/-/new">+ New space</a><a class="me" href="/${encodeURIComponent(viewer)}">${esc(viewer)}</a><form method="post" action="/-/logout"><button type="submit">Sign out</button></form>`;
+  if (!viewer) return `<a href="/-/guide">Guide</a><a href="/-/login">Sign in</a><a href="/-/signup">Register</a>`;
+  return `<a href="/-/guide">Guide</a><a href="/-/new">+ New project</a><a class="me" href="/${encodeURIComponent(viewer)}">${esc(viewer)}</a><form method="post" action="/-/logout"><button type="submit">Sign out</button></form>`;
 }
 
 // Scripts and connections only to this site: /-/live.js and its stream.

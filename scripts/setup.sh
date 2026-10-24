@@ -13,13 +13,14 @@ DB="${SPACEHUB_DB:-spacehub}"
 (cd "$ROOT/cli" && npm install --no-audit --no-fund --silent && npm run build --silent)
 spacetime publish --server "$SERVER" "$DB" --module-path "$ROOT/module" --yes
 spacetime call --server "$SERVER" "$DB" backfill_activity >/dev/null
+spacetime call --server "$SERVER" "$DB" migrate_spaces >/dev/null
 
 cat <<MSG
 
 spacehub is published as "$DB" on $SERVER.
 Client: scripts/install-cli.sh (global, like gh), or for this shell only:
   export PATH="$ROOT/cli/bin:\$PATH"
-Then: spacehub auth login --username <name>
+Then: spacehub auth login --builder <name>
 MSG
 if [[ "$SERVER" != "local" ]]; then
   echo "(add --server <url> --db $DB to auth login for a non-local server)"

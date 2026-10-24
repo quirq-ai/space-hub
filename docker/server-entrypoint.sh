@@ -60,6 +60,11 @@ spacetime --root-dir "$ROOT" publish --server "http://$INTERNAL" "$DB" --js-path
 # Rebuild the activity feed's history once (later calls do nothing).
 spacetime --root-dir "$ROOT" call --server "http://$INTERNAL" "$DB" backfill_activity >/dev/null 2>&1 \
   || echo "spacehub: could not rebuild the activity history; the feed starts from now" >&2
+# Give builders from before spaces their personal spaces (later calls do nothing).
+if ! out="$(spacetime --root-dir "$ROOT" call --server "http://$INTERNAL" "$DB" migrate_spaces 2>&1)"; then
+  echo "spacehub: could not migrate to spaces: $out" >&2
+  exit 1
+fi
 
 # The identity that owns the database is the hub's admin (it alone writes the
 # xo tables and switches sign-up). Claim it on every start, while only this
