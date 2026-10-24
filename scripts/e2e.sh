@@ -45,6 +45,11 @@ same() { # same <label> <a> <b>
   if [[ "$2" == "$3" ]]; then ok "$1"; else fail "$1 ($2 != $3)"; fi
 }
 commit() { git -c user.name=e2e -c user.email=e2e@example.com commit -q "$@"; }
+wait_for() { # wait_for <seconds> <cmd...>: until the command succeeds
+  local tries=$(($1 * 5)); shift
+  for _ in $(seq 1 "$tries"); do "$@" >/dev/null 2>&1 && return 0; sleep 0.2; done
+  return 1
+}
 as() { # as <user> <cmd...>: run with that user's spacehub identity
   local who="$1"; shift
   SPACEHUB_HOME="$WORK/home-$who" "$@"
@@ -73,6 +78,10 @@ else
     || { cat "$WORK/publish.log" >&2; fail "publish module"; }
   spacetime call --server "http://127.0.0.1:$PORT" "$SPACEHUB_DB" backfill_activity >/dev/null 2>&1 || fail "backfill activity"
   spacetime call --server "http://127.0.0.1:$PORT" "$SPACEHUB_DB" migrate_spaces >/dev/null 2>&1 || fail "migrate spaces"
+  # This CLI's identity published the module, so it is the hub's admin (as
+  # in the server image), and the web service syncs GitHub links with its token.
+  spacetime call --server "http://127.0.0.1:$PORT" "$SPACEHUB_DB" claim_admin >/dev/null 2>&1 || fail "claim admin"
+  ADMIN_TOKEN="$(spacetime login show --token 2>/dev/null | grep -oE 'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+' | head -n 1)"
   ok "module published"
 fi
 
@@ -183,6 +192,9 @@ cd "$A"
 expect_fail "non-fast-forward is rejected" "rejected\|non-fast-forward\|fetch first" as alice git push quirq main
 expect_fail "stale lease is rejected" "stale\|rejected" \
   as alice git push --force-with-lease=main:"$(git rev-parse HEAD~1)" quirq main
+check "a lease that a branch is new creates it" as alice git push -q --force-with-lease=refs/heads/leased: quirq HEAD:refs/heads/leased
+expect_fail "and refuses once it exists" "stale\|rejected" as alice git push --force-with-lease=refs/heads/leased: quirq HEAD~1:refs/heads/leased
+check "delete it" as alice git push -q quirq :leased
 check "force push overwrites" as alice git push --force quirq main
 same "remote now holds A's commit" "$(as alice git ls-remote quirq refs/heads/main | cut -f1)" "$(git rev-parse HEAD)"
 
@@ -298,7 +310,33 @@ if [[ -n "${SPACEHUB_E2E_SERVER:-}" ]]; then
   WEB="${SPACEHUB_SERVER/#ws/http}"
 else
   WEB_PORT=$((PORT + 1))
-  SPACEHUB_WEB_PORT=$WEB_PORT node "$ROOT/cli/dist/web.mjs" >"$WORK/web.log" 2>&1 &
+  # A stand-in for GitHub's API (unless the real one is wanted), serving
+  # $GH/api/<path>.json; its repositories are bare repos under $GH/git.
+  GH="$WORK/gh"; GH_PORT=$((PORT + 2)); mkdir -p "$GH/api/users"
+  cat >"$GH/fake.py" <<'PY'
+import http.server, os, sys, urllib.parse
+root, port = sys.argv[1], int(sys.argv[2])
+class Api(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        f = os.path.join(root, 'api', urllib.parse.urlparse(self.path).path.strip('/') + '.json')
+        found = os.path.isfile(f)
+        body = open(f, 'rb').read() if found else b'{"message": "Not Found"}'
+        self.send_response(200 if found else 404)
+        self.send_header('content-type', 'application/json')
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, *args):
+        pass
+http.server.ThreadingHTTPServer(('127.0.0.1', port), Api).serve_forever()
+PY
+  echo '{"login": "octocat", "name": "The Octocat"}' >"$GH/api/users/octocat.json"
+  GH_ENV=()
+  if [[ "${SPACEHUB_E2E_GITHUB:-}" != 1 ]]; then
+    python3 "$GH/fake.py" "$GH" "$GH_PORT" & BG="$BG $!"
+    GH_ENV=(SPACEHUB_GITHUB_API="http://127.0.0.1:$GH_PORT")
+  fi
+  env ${GH_ENV[@]+"${GH_ENV[@]}"} SPACEHUB_ADMIN_TOKEN="$ADMIN_TOKEN" SPACEHUB_GITHUB_SYNC_MINUTES=0 \
+    SPACEHUB_WEB_PORT=$WEB_PORT node "$ROOT/cli/dist/web.mjs" >"$WORK/web.log" 2>&1 &
   WEB_PID=$!
   WEB="http://127.0.0.1:$WEB_PORT"
   for _ in $(seq 1 50); do curl -s -o /dev/null "$WEB/-/login" && break; sleep 0.1; done
@@ -366,13 +404,78 @@ check "delete the team's project" as alice spacehub project delete "$TEAM/site" 
 check "then the empty team" as alice spacehub space delete "$TEAM" --yes
 status_is "a deleted team is gone" "$TEAM" 404
 
+echo "GitHub links"
+if [[ -n "${SPACEHUB_E2E_SERVER:-}" || "${SPACEHUB_E2E_GITHUB:-}" == 1 ]]; then
+  echo "  (skipped: these use the stand-in GitHub, which only a local run starts)"
+else
+ORG="acme$RUN"; MIRROR="mirror$RUN"
+gh_commit() { # gh_commit <repo> <file> <text> [<branch>]: a commit pushed to the stand-in GitHub
+  local dir="$GH/work/$1" branch="${4:-main}"
+  if [[ ! -d "$dir" ]]; then
+    git init -q --bare -b main "$GH/git/$ORG/$1.git"
+    git init -q -b main "$dir"; git -C "$dir" remote add origin "$GH/git/$ORG/$1.git"
+  fi
+  git -C "$dir" checkout -q -B "$branch"
+  echo "$3" >"$dir/$2"; git -C "$dir" add . && git -C "$dir" -c user.name=gh -c user.email=gh@example.com commit -q -m "$3"
+  git -C "$dir" push -q origin "$branch"; git -C "$dir" checkout -q main
+}
+gh_list() { # gh_list <repo>...: the repositories the stand-in API lists for $ORG
+  python3 - "$GH" "$ORG" "$@" <<'PY'
+import json, os, sys
+gh, org, names = sys.argv[1], sys.argv[2], sys.argv[3:]
+os.makedirs(f"{gh}/api/users/{org}", exist_ok=True)
+repos = [{"name": n, "html_url": f"https://github.com/{org}/{n}", "clone_url": f"{gh}/git/{org}/{n}.git", "description": f"{n} from GitHub", "size": 1, "private": False} for n in names]
+json.dump(repos, open(f"{gh}/api/users/{org}/repos.json", "w"))
+json.dump({"login": org, "name": "Acme Corp"}, open(f"{gh}/api/users/{org}.json", "w"))
+PY
+}
+hub_oid() { as alice git ls-remote "$HUB/$1" "$2" 2>/dev/null | cut -f1; }
+gh_oid() { git -C "$GH/git/$ORG/$1.git" rev-parse "$2"; }
+listed() { as alice spacehub project list "$MIRROR" | grep -q "^$MIRROR/$1 "; }
+synced() { as alice spacehub space view "$MIRROR" | grep -q "^github .*(synced"; }
+gh_commit one README.md "one v1"; gh_commit two README.md "two v1"; gh_commit two old.txt "an old branch" old
+gh_list one two
+check "a team space to mirror GitHub into" as alice spacehub space create "$MIRROR"
+expect_fail "only owners link a space" "permission denied" as bob spacehub space link "$MIRROR" "https://github.com/$ORG"
+check "link it to a GitHub organization" as alice spacehub space link "$MIRROR" "https://github.com/$ORG"
+both_listed() { listed one && listed two; }
+check "its repositories become projects with the same names" wait_for 40 both_listed
+check "the sync finishes" wait_for 40 synced
+same "with GitHub's branches" "$(hub_oid "$MIRROR/one" refs/heads/main)" "$(gh_oid one main)"
+same "all of them" "$(hub_oid "$MIRROR/two" refs/heads/old)" "$(gh_oid two old)"
+page_has "credited to the GitHub account" "$MIRROR/one" "Acme Corp"
+page_has "the space page shows what it mirrors" "$MIRROR" "Mirrors"
+page_has "the sync is in the activity" "" "GitHub sync</b> synced"
+check "a member to work on the mirror" as alice spacehub space member add "$MIRROR" "$BOB"
+M1="$WORK/m1"; as bob spacehub project clone "$MIRROR/one" "$M1" -- -q 2>/dev/null
+(cd "$M1" && echo "hub work" >hub.txt && git add hub.txt && commit -m "work done on the hub" && as bob git push -q quirq main 2>/dev/null)
+HUB_WORK="$(git -C "$M1" rev-parse HEAD)"
+gh_commit one README.md "one v2, another way on GitHub"
+gh_commit two README.md "two v2"
+git -C "$GH/work/two" push -q origin --delete old
+gh_commit three README.md "three v1"
+gh_list one two three
+check "ask for a sync" as alice spacehub space link "$MIRROR" --sync
+check "new GitHub repositories arrive" wait_for 40 listed three
+followed() { [[ "$(hub_oid "$MIRROR/two" refs/heads/main)" == "$(gh_oid two main)" ]]; }
+old_gone() { [[ -z "$(hub_oid "$MIRROR/two" refs/heads/old)" ]]; }
+check "untouched branches follow GitHub" wait_for 40 followed
+check "branches deleted on GitHub go too" wait_for 20 old_gone
+check "that sync finishes" wait_for 40 synced
+same "work done on the hub is never overwritten" "$(hub_oid "$MIRROR/one" refs/heads/main)" "$HUB_WORK"
+check "the branch is marked diverged" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub project view $MIRROR/one | grep -q 'heads/main .*diverged from GitHub'"
+page_has "the refs page says so" "$MIRROR/one/refs" "diverged from GitHub"
+page_has "and so does the activity" "$MIRROR/one/activity" "diverged from GitHub"
+gh_commit one README.md "one v3"
+check "a diverged branch stays put on the next sync" as alice spacehub space link "$MIRROR" --sync
+check "which finishes too" wait_for 40 synced
+same "still the hub's work" "$(hub_oid "$MIRROR/one" refs/heads/main)" "$HUB_WORK"
+check "unlink" as alice spacehub space link "$MIRROR" --remove
+check "the projects stay" listed three
+fi
+
 echo "collaborators"
 PAD="$ALICE/pad"; X="$WORK/x"; Y="$WORK/y"
-wait_for() { # wait_for <seconds> <cmd...>: until the command succeeds
-  local tries=$(($1 * 5)); shift
-  for _ in $(seq 1 "$tries"); do "$@" >/dev/null 2>&1 && return 0; sleep 0.2; done
-  return 1
-}
 who_has() { as alice spacehub space who "$PAD" | grep -q -- "$1"; }
 check "project create pad" as alice spacehub project create pad
 git init -q -b main "$X"

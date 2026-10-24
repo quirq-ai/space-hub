@@ -43,6 +43,10 @@ SPACES
   space member add <space> <name> [--owner]   Add a builder as a member (or owner)
   space member remove <space> <name>          (a member can remove itself)
   space member list <space>
+  space link <space> <github account>      Mirror a GitHub user's or organization's public repos
+                                    as projects with the same names, kept in step by the hub
+                                    (GitHub to hub; work done here is kept, never overwritten)
+  space link <space> --sync | --remove     Sync now, or stop mirroring (the projects stay)
 
 PROJECTS (alias: repo)
   project create <name> | <space>/<name>   Create a project (in your personal space by default)
@@ -458,7 +462,10 @@ async function projectView(args: string[]) {
   out(`pushed    ${when(sp.pushedAt)}`);
   out();
   if (refs.length === 0) out('(empty: push something to it)');
-  for (const r of refs) out(`${r.oid.slice(0, 12)}  ${r.name.replace(/^refs\/(heads|tags)\//, '$1/')}  ${when(r.updatedAt)}`);
+  const diverged = await snapshot(conn, tables.refSync.where(r => r.projectId.eq(sp.id)), () =>
+    new Set([...conn.db.refSync.iter()].filter(r => r.projectId === sp.id && r.status === 'diverged').map(r => r.ref))
+  );
+  for (const r of refs) out(`${r.oid.slice(0, 12)}  ${r.name.replace(/^refs\/(heads|tags)\//, '$1/')}  ${when(r.updatedAt)}${diverged.has(r.name) ? '  (diverged from GitHub)' : ''}`);
 }
 
 async function projectClone(args: string[]) {
@@ -750,6 +757,11 @@ async function spaceView(args: string[]) {
   const owners = sp.kind === 'personal' ? [sp.name] : roles.filter(r => r.role === 'owner').map(r => r.member);
   out(`owners    ${owners.join(', ') || (sp.kind === 'agent' ? `the owners of ${sp.parent}` : 'none')}`);
   out(`members   ${roles.filter(r => r.role === 'member').map(r => r.member).join(', ') || 'none'}`);
+  const link = await snapshot(conn, tables.spaceLink.where(r => r.space.eq(sp.name)), () => [...conn.db.spaceLink.iter()].find(r => r.space === sp.name));
+  if (link) {
+    const synced = link.syncedAt.microsSinceUnixEpoch > 0n ? `synced ${when(link.syncedAt)}` : 'not synced yet';
+    out(`github    ${link.source.replace('https://', '')} (${link.status === 'done' ? synced : link.status}: ${link.message})`);
+  }
   out();
   if (projects.length === 0) out('(no projects yet)');
   for (const p of projects) out(`${p.fullName}  ${when(p.pushedAt)}  ${p.description}`.trimEnd());
@@ -809,6 +821,29 @@ async function spaceMember(args: string[]) {
     await conn.reducers.removeSpaceMember({ space: target.space, member });
     out(`${member} is no longer in ${target.space}`);
   }
+}
+
+// space link <space> <github account> | --sync | --remove
+async function spaceLink(args: string[]) {
+  const sync = bool(args, '--sync');
+  const remove = bool(args, '--remove', '--unlink');
+  const space = (args[0] ?? die('usage: spacehub space link <space> <github account> | --sync | --remove')).toLowerCase();
+  const { conn } = await open();
+  if (remove) {
+    await conn.reducers.unlinkSpace({ space });
+    out(`${space} no longer mirrors GitHub; its projects stay`);
+    return;
+  }
+  if (sync) {
+    await conn.reducers.requestSync({ space });
+    out(`Asked the hub to sync ${space} from GitHub (spacehub space view ${space} shows how it went)`);
+    return;
+  }
+  const login = githubLogin(args[1] ?? die('usage: spacehub space link <space> <github account>'));
+  if (!login) die('link a GitHub user or organization, like anthropics or https://github.com/anthropics');
+  await conn.reducers.linkSpace({ space, source: `https://github.com/${login}` });
+  out(`${space} now mirrors github.com/${login}; the hub is importing its public repositories`);
+  out(`(spacehub space view ${space} shows how it goes)`);
 }
 
 // Whole-space clone and sync come later; until then these act on projects.
@@ -887,11 +922,12 @@ async function main() {
       case 'member': case 'members': return spaceMember(args);
       case 'clone': return spaceClone(args);
       case 'who': return spaceWho(args);
+      case 'link': return spaceLink(args);
       // Run inside a project's clone, as before.
       case 'sync': return projectSync(args);
       case 'watch': return projectWatch(args);
     }
-    die(`usage: spacehub space <create|list|view|edit|delete|member|clone|who>`);
+    die(`usage: spacehub space <create|list|view|edit|delete|member|link|clone|who>`);
   }
 
   die(`unknown command "${group}"; see spacehub help`);

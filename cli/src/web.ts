@@ -5,7 +5,8 @@
 //   GET/POST /-/signup           register a builder (new identity + name)
 //   POST     /-/logout           forget the session
 //   GET/POST /-/new              create a project, optionally imported from GitHub
-//   POST     /-/sync/<o>/<name>  pull the space's GitHub source again
+//   POST     /-/sync/<o>/<name>  pull a project's GitHub source again
+//   POST     /-/link/<space>     link a space to a GitHub account (or sync it, or unlink)
 //   GET      /-/live, /-/live.js live pages: a page's new rendering on every change (live.ts)
 //   *        /-/api/xo/v1/...    xo.quirq.dev's store and agents (xo.ts), only
 //                                with SPACEHUB_XO_KEY set
@@ -14,14 +15,10 @@
 // the user's identity token in an HttpOnly cookie, so every action runs as
 // that user and the module's own ownership checks apply.
 import http from 'node:http';
-import { spawn } from 'node:child_process';
-import fs from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { connectTo, errorMessage, findProject, findUser, quietSdkLogs, snapshot, tables, type Conn } from './conn';
 import { githubLogin, normalizeServer } from './config';
 import { esc, navFor, PAGE_CSP, shell } from '../../module/src/style';
+import { Fail, GithubSync, githubApi, githubBuilder as builderOf, githubInfo as infoOf, mirrorProject } from './github';
 import { LiveHub } from './live';
 import { handleXo, xoConfig } from './xo';
 
@@ -31,22 +28,34 @@ const PORT = Number(process.env.SPACEHUB_WEB_PORT ?? 3002);
 const SERVER = normalizeServer(process.env.SPACEHUB_SERVER ?? 'ws://127.0.0.1:3001');
 const DB = process.env.SPACEHUB_DB ?? 'spacehub';
 const MAX_IMPORT_MB = Number(process.env.SPACEHUB_IMPORT_MAX_MB ?? 500);
-const IMPORT_TIMEOUT_MS = 30 * 60 * 1000;
 const MAX_CONCURRENT_IMPORTS = 2;
-// git finds git-remote-quirq on PATH; also look next to this bundle.
-const HELPER_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../bin');
 const YEAR = 60 * 60 * 24 * 365;
 const XO = xoConfig(DB);
 // SpacetimeDB's HTTP side, where the module renders pages.
 const INTERNAL_HTTP = (process.env.SPACEHUB_INTERNAL_HTTP ?? SERVER.replace(/^ws/, 'http')).replace(/\/+$/, '');
 const LIVE = new LiveHub({ server: SERVER, db: DB, http: INTERNAL_HTTP });
+const GITHUB = githubApi();
+const githubInfo = (owner: string, repo: string) => infoOf(GITHUB, owner, repo);
+const githubBuilder = (login: string) => builderOf(GITHUB, login);
+// Spaces linked to GitHub sync as the hub admin, whose token the entrypoint
+// hands over.
+const ADMIN_TOKEN = process.env.SPACEHUB_ADMIN_TOKEN ?? '';
+const SYNC = ADMIN_TOKEN
+  ? new GithubSync({
+      server: SERVER,
+      db: DB,
+      adminToken: ADMIN_TOKEN,
+      api: GITHUB,
+      maxRepos: Number(process.env.SPACEHUB_GITHUB_MAX_REPOS ?? 100),
+      maxImportMb: MAX_IMPORT_MB,
+      everyMinutes: Number(process.env.SPACEHUB_GITHUB_SYNC_MINUTES ?? 60),
+    })
+  : null;
 
 const USERNAME = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
 const SPACE_NAME = /^[A-Za-z0-9._-]{1,100}$/;
 
 // ---------------------------------------------------------------- http bits
-
-class Fail extends Error {}
 
 function send(res: http.ServerResponse, status: number, html: string, extra: Record<string, string | string[]> = {}) {
   res.writeHead(status, {
@@ -158,47 +167,6 @@ function parseGithub(input: string) {
   return m ? { owner: m[1], repo: m[2], url: `https://github.com/${m[1]}/${m[2]}` } : null;
 }
 
-// Best effort: description, size and visibility from GitHub's API. When the
-// API is unreachable or rate-limited the import still goes ahead.
-async function githubInfo(owner: string, repo: string) {
-  try {
-    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
-      headers: { accept: 'application/vnd.github+json', 'user-agent': 'spacehub' },
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (res.status === 404) throw new Fail(`github.com/${owner}/${repo} was not found (only public repositories can be imported)`);
-    if (!res.ok) return null;
-    const info = (await res.json()) as { description?: string | null; size?: number; private?: boolean; owner?: { login?: string } };
-    return { description: info.description ?? '', sizeKb: info.size ?? 0, private: !!info.private, ownerLogin: info.owner?.login ?? owner };
-  } catch (err) {
-    if (err instanceof Fail) throw err;
-    return null;
-  }
-}
-
-// The GitHub account that built a repository, with its display name when
-// GitHub has one ("Anthropic" for anthropics). Throws when GitHub says the
-// account does not exist; if GitHub is unreachable the login is used as is.
-async function githubBuilder(login: string) {
-  let name = login;
-  let res: Response | null = null;
-  try {
-    res = await fetch(`https://api.github.com/users/${login}`, {
-      headers: { accept: 'application/vnd.github+json', 'user-agent': 'spacehub' },
-      signal: AbortSignal.timeout(10_000),
-    });
-  } catch {
-    // unreachable: keep the login as the name
-  }
-  if (res?.status === 404) throw new Fail(`There is no GitHub user or organization named "${login}".`);
-  if (res?.ok) {
-    const user = (await res.json()) as { login?: string; name?: string | null };
-    login = user.login ?? login;
-    name = user.name?.trim() || login;
-  }
-  return { handle: login, name, url: `https://github.com/${login}` };
-}
-
 // ---------------------------------------------------------------- imports
 
 interface Job {
@@ -211,59 +179,24 @@ interface Job {
 const queue: Job[] = [];
 let running = 0;
 
-// Imports run git on repositories from anywhere: they never see the xo key or
-// the admin's token.
-function childEnv() {
-  const { SPACEHUB_XO_KEY: _key, SPACEHUB_ADMIN_TOKEN: _admin, ...rest } = process.env;
-  return rest;
-}
-
-function run(cmd: string, args: string[], env: Record<string, string> = {}): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, {
-      env: { ...childEnv(), GIT_TERMINAL_PROMPT: '0', PATH: `${HELPER_DIR}:${process.env.PATH ?? ''}`, ...env },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    const out: Buffer[] = [];
-    const err: Buffer[] = [];
-    const timer = setTimeout(() => child.kill('SIGKILL'), IMPORT_TIMEOUT_MS);
-    child.stdout.on('data', d => out.push(d));
-    child.stderr.on('data', d => err.push(d));
-    child.on('error', reject);
-    child.on('close', code => {
-      clearTimeout(timer);
-      if (code === 0) resolve(Buffer.concat(out).toString('utf8'));
-      else {
-        const text = Buffer.concat(err).toString('utf8').trim().split('\n').slice(-3).join(' ');
-        reject(new Error(text || `${cmd} ${args[0]} failed (${code ?? 'killed'})`));
-      }
-    });
-  });
-}
-
+// An import or sync of one project, as the builder who asked: the same
+// rules as linked spaces, so work done on the hub is never overwritten.
 async function runJob(job: Job) {
-  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'spacehub-import-'));
-  const repo = path.join(tmp, 'repo.git');
   await withConn(job.token, async conn => {
     const report = (status: string, message: string) =>
       conn.reducers.updateImport({ space: job.space, status, message }).catch(() => undefined);
     try {
-      await report('running', 'cloning from GitHub');
-      await run('git', ['clone', '--bare', '--quiet', `${job.source}.git`, repo]);
-      await report('running', 'uploading to spacehub');
-      await run(
-        'git',
-        ['-C', repo, 'push', '--quiet', ...(job.sync ? ['--force', '--prune'] : []), `quirq://${job.space}`, 'refs/heads/*:refs/heads/*', 'refs/tags/*:refs/tags/*'],
-        { SPACEHUB_TOKEN: job.token, SPACEHUB_SERVER: SERVER, SPACEHUB_DB: DB, SPACEHUB_HOME: path.join(tmp, 'home') }
-      );
-      const head = (await run('git', ['-C', repo, 'symbolic-ref', '--short', 'HEAD']).catch(() => '')).trim();
-      if (head) await conn.reducers.editSpace({ space: job.space, description: undefined, defaultBranch: head }).catch(() => undefined);
-      await report('done', job.sync ? 'synced' : 'imported');
+      await report('running', 'copying from GitHub');
+      const project = (await findProject(conn, job.space)) ?? (() => { throw new Error(`no project ${job.space}`); })();
+      const result = await mirrorProject(conn, project, `${job.source}.git`, { SPACEHUB_TOKEN: job.token, SPACEHUB_SERVER: SERVER, SPACEHUB_DB: DB });
+      if (result.head && !job.sync) await conn.reducers.editSpace({ space: job.space, description: undefined, defaultBranch: result.head }).catch(() => undefined);
+      if (result.failed && result.failed === result.refs) throw new Error(`no refs could be pushed`);
+      const note = `${result.diverged ? `; ${result.diverged} refs diverged (kept here)` : ''}${result.failed ? `; ${result.failed} refs not pushed` : ''}`;
+      await report('done', `${job.sync ? 'synced' : 'imported'}${note}`);
     } catch (err) {
       await report('failed', errorMessage(err).slice(-500));
     }
   }).catch(err => process.stderr.write(`spacehub-web: import of ${job.space} could not report: ${errorMessage(err)}\n`));
-  await fs.rm(tmp, { recursive: true, force: true });
 }
 
 function pump() {
@@ -470,6 +403,30 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     }
   }
 
+  // A space's GitHub link: link (with a source), sync now, or unlink.
+  const link = /^\/-\/link\/([^/]+)$/.exec(route);
+  if (link && req.method === 'POST') {
+    const session = await sessionOf(req);
+    if (!session) return redirect(res, `/-/login?next=${encodeURIComponent(`/${link[1]}`)}`);
+    const space = decodeURIComponent(link[1]);
+    const form = await readForm(req);
+    const action = form.get('action') ?? 'link';
+    try {
+      await withConn(session.token, async conn => {
+        if (action === 'sync') await conn.reducers.requestSync({ space });
+        else if (action === 'unlink') await conn.reducers.unlinkSpace({ space });
+        else {
+          const login = githubLogin((form.get('source') ?? '').trim());
+          if (!login) throw new Fail('Link a GitHub user or organization, like anthropics or https://github.com/anthropics.');
+          await conn.reducers.linkSpace({ space, source: `https://github.com/${login}` });
+        }
+      });
+      return redirect(res, `/${link[1]}`);
+    } catch (err) {
+      return send(res, 400, page('GitHub link · spacehub', session.username, `<h1><b>Could not change the GitHub link</b></h1><div class="banner err">${esc(errorMessage(err))}</div><p><a href="/${esc(link[1])}">Back to ${esc(space)}</a></p>`));
+    }
+  }
+
   return send(res, 404, page('Not found · spacehub', null, '<h1>Not found</h1>'));
 }
 
@@ -483,3 +440,5 @@ http
   })
   .listen(PORT, '127.0.0.1', () => process.stderr.write(`spacehub-web: listening on 127.0.0.1:${PORT} (database ${DB} at ${SERVER})${XO ? ', xo API on' : ''}\n`));
 LIVE.start();
+if (SYNC) SYNC.start();
+else process.stderr.write('spacehub-web: no SPACEHUB_ADMIN_TOKEN, so spaces linked to GitHub are not synced\n');

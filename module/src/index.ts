@@ -14,6 +14,8 @@
 //   object_chunk  bodies of objects larger than one chunk, split in order
 //   space_member  (code: projectMember) collaborators on one project
 //   presence      which connected clients follow which project right now
+//   space_link    the GitHub user or organization a space mirrors
+//   ref_sync      where GitHub had each mirrored ref at the last sync
 //
 // Stored table and column names predate projects: a table keeps its stored
 // name (`space` holds projects) and `spaceId` columns hold a project's id,
@@ -27,7 +29,7 @@
 // caller saw its current value (compare-and-swap) and, unless forced, the
 // move is a fast-forward.
 import { schema, table, t, Router, SenderError, SyncResponse, type InferSchema, type ReducerCtx } from 'spacetimedb/server';
-import { Identity, type Timestamp } from 'spacetimedb';
+import { Identity, Timestamp } from 'spacetimedb';
 import { Sha1, objectHeader } from './sha1';
 import { CHUNK_SIZE, PRESENCE_STALE_SECONDS, commitParents, inSpace, memberKey, objectKey, ownsSpace, readObject, refKey, roleKey } from './store';
 import { renderUi } from './ui';
@@ -221,6 +223,39 @@ const presence = table(
   }
 );
 
+// The GitHub account (user or organization) a space mirrors: its public
+// repositories become projects with the same names, kept in step by the
+// web service, which syncs as the hub admin. GitHub to hub only.
+const spaceLink = table(
+  { name: 'space_link', public: true },
+  {
+    space: t.string().primaryKey(),
+    source: t.string(), // https://github.com/<login>
+    status: t.string(), // requested | running | done | failed
+    message: t.string(),
+    requestedAt: t.timestamp(),
+    updatedAt: t.timestamp(),
+    syncedAt: t.timestamp(), // the last sync that finished (the epoch before one has)
+    projects: t.u32(), // repositories mirrored at the last sync
+  }
+);
+
+// Where GitHub had each ref of a mirrored project at the last sync. A ref
+// that still holds that value has no work done here, so it follows GitHub,
+// force pushes included; a ref that moved here only moves forward, and is
+// left alone and marked diverged when GitHub went another way.
+const refSync = table(
+  { name: 'ref_sync', public: true },
+  {
+    key: t.string().primaryKey(), // "<projectId>:<ref>"
+    projectId: t.u64().index('btree'),
+    ref: t.string(),
+    githubOid: t.string(),
+    status: t.string(), // synced | diverged
+    at: t.timestamp(),
+  }
+);
+
 // Flags for one-off jobs, e.g. rebuilding the activity feed's history, and
 // the hub's settings: who its admin is ("admin") and where accounts come from
 // ("accounts": "xo" once xo makes them).
@@ -268,6 +303,8 @@ const spacetimedb = schema({
   presence,
   hubSpace,
   spaceRole,
+  spaceLink,
+  refSync,
   hubState,
   xoRecord,
   xoAgent,
@@ -293,6 +330,18 @@ const SPACE_NAME = /^[A-Za-z0-9._-]{1,100}$/;
 const OID = /^[0-9a-f]{40}$/;
 const KINDS = new Set(['commit', 'tree', 'blob', 'tag']);
 const ZERO_OID = '';
+
+// The hub admin acting for a space that mirrors GitHub (the web service's
+// sync). Shown in the activity feed as "GitHub sync".
+const SYNCER = '-github';
+
+function isAdmin(ctx: Ctx) {
+  return ctx.db.hubState.key.find('admin')?.value === ctx.sender.toHexString();
+}
+
+function isSyncer(ctx: Ctx, space: string) {
+  return isAdmin(ctx) && !!ctx.db.spaceLink.space.find(space);
+}
 
 function requireUser(ctx: Ctx) {
   const me = ctx.db.user.identity.find(ctx.sender);
@@ -334,7 +383,7 @@ function requireProject(ctx: Ctx, fullName: string) {
 // collaborators, delete. The owners of its space.
 function requireProjectAdmin(ctx: Ctx, fullName: string) {
   const row = requireProject(ctx, fullName);
-  if (!isOwner(ctx, row.owner, actorName(ctx))) {
+  if (!isOwner(ctx, row.owner, actorName(ctx)) && !isSyncer(ctx, row.owner)) {
     throw new SenderError(`permission denied: only owners of "${row.owner}" can change "${fullName}"`);
   }
   return row;
@@ -344,7 +393,7 @@ function requireProjectAdmin(ctx: Ctx, fullName: string) {
 function requireWritable(ctx: Ctx, fullName: string) {
   const row = requireProject(ctx, fullName);
   const me = actorName(ctx);
-  if (isMember(ctx, row.owner, me)) return row;
+  if (isMember(ctx, row.owner, me) || isSyncer(ctx, row.owner)) return row;
   if (me && ctx.db.projectMember.key.find(memberKey(row.id, me))) return row;
   throw new SenderError(`permission denied: you are not an owner or member of "${row.owner}", nor a collaborator on "${fullName}"`);
 }
@@ -378,7 +427,7 @@ function logActivity(ctx: Ctx, e: ActivityIn) {
     at: e.at ?? ctx.timestamp,
     spaceId: e.spaceId ?? 0n,
     space: e.space ?? '',
-    agent: e.agent ?? ctx.db.user.identity.find(ctx.sender)?.username ?? '',
+    agent: e.agent ?? actorName(ctx) ?? (isAdmin(ctx) ? SYNCER : ''),
     kind: e.kind,
     subject: e.subject ?? '',
     oid: e.oid ?? '',
@@ -566,12 +615,12 @@ export const xoLinkAgent = spacetimedb.reducer(
 );
 
 function createProjectIn(ctx: Ctx, space: string, name: string, description: string) {
-  const me = requireActor(ctx);
+  const me = isSyncer(ctx, space) ? SYNCER : requireActor(ctx);
   if (!SPACE_NAME.test(name) || name === '.' || name === '..' || name.endsWith('.git')) {
     throw new SenderError('a project name may use letters, digits, ".", "_" and "-" and must not end in .git');
   }
   if (!ctx.db.hubSpace.name.find(space) && space !== me) throw new SenderError(`no space named "${space}"`);
-  if (!isMember(ctx, space, me)) throw new SenderError(`permission denied: only owners and members of "${space}" create projects in it`);
+  if (me !== SYNCER && !isMember(ctx, space, me)) throw new SenderError(`permission denied: only owners and members of "${space}" create projects in it`);
   const fullName = `${space}/${name}`;
   if (ctx.db.project.fullName.find(fullName)) throw new SenderError(`project "${fullName}" already exists`);
   const created = ctx.db.project.insert({
@@ -609,6 +658,7 @@ export const deleteSpace = spacetimedb.reducer({ space: t.string() }, (ctx, { sp
   for (const chunk of [...ctx.db.objectChunk.bySpaceOid.filter(sp.id)]) ctx.db.objectChunk.id.delete(chunk.id);
   for (const m of [...ctx.db.projectMember.spaceId.filter(sp.id)]) ctx.db.projectMember.id.delete(m.id);
   for (const p of [...ctx.db.presence.spaceId.filter(sp.id)]) ctx.db.presence.connectionId.delete(p.connectionId);
+  for (const r of [...ctx.db.refSync.projectId.filter(sp.id)]) ctx.db.refSync.key.delete(r.key);
   ctx.db.projectImport.spaceId.delete(sp.id);
   ctx.db.projectBuilder.spaceId.delete(sp.id);
   ctx.db.project.id.delete(sp.id);
@@ -812,6 +862,7 @@ export const deleteTeam = spacetimedb.reducer({ space: t.string() }, (ctx, { spa
   const agents = [...ctx.db.hubSpace.kind.filter('agent')].filter(a => a.parent === space).length;
   if (projects || agents) throw new SenderError(`"${space}" still has ${projects} projects and ${agents} agents; delete or move them first`);
   for (const r of [...ctx.db.spaceRole.space.filter(space)]) ctx.db.spaceRole.id.delete(r.id);
+  ctx.db.spaceLink.space.delete(space);
   ctx.db.hubSpace.name.delete(space);
   logActivity(ctx, { kind: 'team_deleted', space, subject: space });
 });
@@ -852,6 +903,94 @@ export const removeSpaceMember = spacetimedb.reducer({ space: t.string(), member
   ctx.db.spaceRole.id.delete(row.id);
   logActivity(ctx, { kind: 'team_member_removed', space, subject: member });
 });
+
+// ---------------------------------------------------------------- GitHub links
+
+const GITHUB_ACCOUNT = /^https:\/\/github\.com\/([A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38})\/?$/;
+
+// Mirror a GitHub user's or organization's public repositories into the
+// space, and sync now.
+export const linkSpace = spacetimedb.reducer({ space: t.string(), source: t.string() }, (ctx, { space, source }) => {
+  requireSpaceOwner(ctx, space);
+  const m = GITHUB_ACCOUNT.exec(source.trim());
+  if (!m) throw new SenderError('link a GitHub user or organization, like https://github.com/anthropics');
+  const url = `https://github.com/${m[1]}`;
+  const current = ctx.db.spaceLink.space.find(space);
+  const row = {
+    space,
+    source: url,
+    status: 'requested',
+    message: 'waiting for the hub',
+    requestedAt: ctx.timestamp,
+    updatedAt: ctx.timestamp,
+    syncedAt: current && current.source === url ? current.syncedAt : Timestamp.UNIX_EPOCH,
+    projects: current && current.source === url ? current.projects : 0,
+  };
+  if (current) ctx.db.spaceLink.space.update(row);
+  else ctx.db.spaceLink.insert(row);
+  if (current?.source !== url) logActivity(ctx, { kind: 'space_linked', space, subject: url });
+});
+
+export const requestSync = spacetimedb.reducer({ space: t.string() }, (ctx, { space }) => {
+  requireSpaceOwner(ctx, space);
+  const row = ctx.db.spaceLink.space.find(space);
+  if (!row) throw new SenderError(`"${space}" is not linked to GitHub`);
+  if (row.status === 'requested' || row.status === 'running') return;
+  ctx.db.spaceLink.space.update({ ...row, status: 'requested', message: 'waiting for the hub', requestedAt: ctx.timestamp, updatedAt: ctx.timestamp });
+});
+
+// Stop mirroring; the projects stay.
+export const unlinkSpace = spacetimedb.reducer({ space: t.string() }, (ctx, { space }) => {
+  requireSpaceOwner(ctx, space);
+  const row = ctx.db.spaceLink.space.find(space);
+  if (!row) throw new SenderError(`"${space}" is not linked to GitHub`);
+  ctx.db.spaceLink.space.delete(space);
+  logActivity(ctx, { kind: 'space_unlinked', space, subject: row.source });
+});
+
+// The web service's progress on a space's sync.
+export const setLinkStatus = spacetimedb.reducer(
+  { space: t.string(), status: t.string(), message: t.string(), projects: t.u32() },
+  (ctx, { space, status, message, projects }) => {
+    requireAdmin(ctx);
+    const row = ctx.db.spaceLink.space.find(space);
+    if (!row) throw new SenderError(`"${space}" is not linked to GitHub`);
+    if (!['running', 'done', 'failed'].includes(status)) throw new SenderError(`invalid sync status "${status}"`);
+    const done = status === 'done';
+    ctx.db.spaceLink.space.update({ ...row, status, message: message.slice(0, 2000), updatedAt: ctx.timestamp, syncedAt: done ? ctx.timestamp : row.syncedAt, projects: done ? projects : row.projects });
+    if (done) logActivity(ctx, { kind: 'space_synced', space, subject: row.source, count: projects, text: message });
+    if (status === 'failed') logActivity(ctx, { kind: 'space_sync_failed', space, subject: row.source, text: message });
+  }
+);
+
+const RefSyncIn = t.object('RefSyncIn', { ref: t.string(), githubOid: t.string(), status: t.string() });
+
+// Where GitHub had refs at this sync, and whether the hub's copy follows
+// each one ("synced"), went its own way ("diverged"), or is gone with it
+// ("gone").
+export const recordRefSync = spacetimedb.reducer(
+  { project: t.string(), refs: t.array(RefSyncIn) },
+  (ctx, { project: fullName, refs }) => {
+    const sp = requireProjectAdmin(ctx, fullName);
+    for (const { ref, githubOid, status } of refs) {
+      if (!validRefName(ref)) throw new SenderError(`invalid ref name "${ref}"`);
+      const key = `${sp.id}:${ref}`;
+      const current = ctx.db.refSync.key.find(key);
+      if (status === 'gone') {
+        if (current) ctx.db.refSync.key.delete(key);
+        continue;
+      }
+      if (status !== 'synced' && status !== 'diverged') throw new SenderError(`invalid ref status "${status}"`);
+      if (!OID.test(githubOid)) throw new SenderError(`invalid object id "${githubOid}"`);
+      const row = { key, projectId: sp.id, ref, githubOid, status, at: ctx.timestamp };
+      if (current) ctx.db.refSync.key.update(row);
+      else ctx.db.refSync.insert(row);
+      if (status === 'diverged' && current?.status !== 'diverged') {
+        logActivity(ctx, { kind: 'ref_diverged', spaceId: sp.id, space: sp.fullName, subject: ref, oid: githubOid });
+      }
+    }
+  }
+);
 
 // ---------------------------------------------------------------- collaborators
 

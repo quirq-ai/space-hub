@@ -93,6 +93,23 @@ export const Presence = __t.object("Presence", {
 });
 export type Presence = __Infer<typeof Presence>;
 
+export const RefSync = __t.object("RefSync", {
+  key: __t.string(),
+  projectId: __t.u64(),
+  ref: __t.string(),
+  githubOid: __t.string(),
+  status: __t.string(),
+  at: __t.timestamp(),
+});
+export type RefSync = __Infer<typeof RefSync>;
+
+export const RefSyncIn = __t.object("RefSyncIn", {
+  ref: __t.string(),
+  githubOid: __t.string(),
+  status: __t.string(),
+});
+export type RefSyncIn = __Infer<typeof RefSyncIn>;
+
 export const Space = __t.object("Space", {
   id: __t.u64(),
   fullName: __t.string(),
@@ -125,6 +142,18 @@ export const SpaceImport = __t.object("SpaceImport", {
   updatedAt: __t.timestamp(),
 });
 export type SpaceImport = __Infer<typeof SpaceImport>;
+
+export const SpaceLink = __t.object("SpaceLink", {
+  space: __t.string(),
+  source: __t.string(),
+  status: __t.string(),
+  message: __t.string(),
+  requestedAt: __t.timestamp(),
+  updatedAt: __t.timestamp(),
+  syncedAt: __t.timestamp(),
+  projects: __t.u32(),
+});
+export type SpaceLink = __Infer<typeof SpaceLink>;
 
 export const SpaceMember = __t.object("SpaceMember", {
   id: __t.u64(),

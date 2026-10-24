@@ -59,6 +59,39 @@ that is not a space (it means your own project), or run inside a clone act
 on that project as before, and `space create <name> --source ...` still makes
 a project.
 
+## Mirroring GitHub
+
+A space can mirror a GitHub user or organization: every public repository
+becomes a project with the same name, so `github.com/acme/site` is
+`hub/acme/site`. GitHub to hub only; pushing back to GitHub comes later.
+
+```sh
+spacehub space link acme https://github.com/acme   # owners only; syncs now
+spacehub space link acme --sync                    # sync again now
+spacehub space link acme --remove                  # stop; the projects stay
+spacehub space view acme                           # what it mirrors, how the last sync went
+```
+
+The space page has the same, as a **GitHub** box with **Link**, **Sync now**
+and **Unlink** for owners. The hub syncs every linked space every
+`SPACEHUB_GITHUB_SYNC_MINUTES` (60) as well. New repositories become new
+projects, credited to the GitHub account.
+
+**Work done here is never overwritten.** For each branch and tag the sync
+compares GitHub's value now, the hub's, and GitHub's value at the last sync:
+
+| Case | What happens |
+| --- | --- |
+| Nobody changed it here | It follows GitHub, force pushes and deletions included |
+| Changed here, and GitHub built on that | Fast-forward |
+| Changed here, GitHub unchanged | Kept as it is here |
+| Changed here, GitHub went another way | Kept as it is here, marked **diverged** on the refs page, in `project view` and in the activity feed |
+| Deleted here | Stays deleted until GitHub moves it |
+
+Every push carries a lease on the value the sync saw, so a push made during
+a sync wins and the sync tries that ref again next time. Imports and **Sync
+from GitHub** on a single project follow the same rules.
+
 ## Editing together
 
 Several builders and agents can work in one project at the same time.
@@ -116,6 +149,9 @@ projects.
 | `PORT` | `3000` | Public port |
 | `SPACEHUB_DB` | `spacehub` | Database name clients pass with `--db` |
 | `SPACEHUB_IMPORT_MAX_MB` | `500` | Largest GitHub repository the UI will import |
+| `SPACEHUB_GITHUB_SYNC_MINUTES` | `60` | How often spaces linked to GitHub sync on their own (`0`: only when asked) |
+| `SPACEHUB_GITHUB_MAX_REPOS` | `100` | Most repositories mirrored per linked space |
+| `SPACEHUB_GITHUB_TOKEN` | unset | A GitHub token for a higher API rate limit (read-only public access is enough) |
 | `SPACEHUB_XO_KEY` | unset | Turns on xo.quirq.dev's API and makes xo the only source of builders (see xo below) |
 | `/data` volume | | Databases, the server's signing keys, and the identity that owns the module. **Mount persistent storage here and back it up.** Without it, a restart forgets every project and invalidates every client token |
 
@@ -319,7 +355,7 @@ spacetime start                           # terminal 1
 scripts/setup.sh                          # terminal 2: build, publish "spacehub" to the local server
 export PATH="$PWD/cli/bin:$PATH"          # or scripts/install-cli.sh
 spacehub auth login --server ws://127.0.0.1:3000 --builder <name>
-scripts/e2e.sh                            # 205 checks against a throwaway in-memory server
+scripts/e2e.sh                            # 233 checks against a throwaway in-memory server and a stand-in GitHub
 SPACEHUB_E2E_GITHUB=1 scripts/e2e.sh      # also imports a small public GitHub repository
 SPACEHUB_E2E_SERVER=ws://127.0.0.1:3000 scripts/e2e.sh   # against a running server, e.g. the Docker one
 ```
@@ -327,8 +363,8 @@ SPACEHUB_E2E_SERVER=ws://127.0.0.1:3000 scripts/e2e.sh   # against a running ser
 After changing the module, regenerate the client bindings with
 `cd cli && npm run generate`. Unit tests need no server: `cd module && npm
 test` runs the reducers in SpacetimeDB's in-process harness, and `cd cli &&
-npm test` runs the xo API against a stand-in database and autosync against
-plain git repositories.
+npm test` runs the xo API against a stand-in database, and autosync and the
+GitHub sync's rules against plain git repositories.
 
 ## Layout
 
@@ -348,6 +384,8 @@ cli/src/xo.ts            xo.quirq.dev's API: xo's per-user records and builders
 cli/src/git.ts           git plumbing: rev-list, cat-file, packfile writer
 cli/src/web.ts           web service: sign in/up, create and import projects
 cli/src/live.ts          live pages: the /-/live event stream (livepage.ts: the page script)
+cli/src/github.ts        GitHub's API, mirroring a repository, syncing linked spaces as the admin
+cli/src/refplan.ts       the sync's rules: what moves, what is kept, what diverged
 cli/src/autosync.ts      autosync: commit, rebase, push; stop on a conflict
 cli/src/module_bindings  generated, do not edit
 Dockerfile               targets: server (default), client
@@ -377,6 +415,8 @@ tables or columns in place. In the code they are called projects.
 | `git_object` | project + oid | kind, size, raw body (inline up to 1 MiB) and `pos`, its place in the project's object log |
 | `object_chunk` | project + oid + index | 1 MiB pieces of larger objects |
 | `space_member` | project + builder | a project's collaborators |
+| `space_link` | space | the GitHub account it mirrors, the last sync's status and time |
+| `ref_sync` | project + ref | GitHub's value at the last sync, and whether the hub's copy follows it or diverged |
 | `presence` | connection | which project a connected client follows, its mode and branch, and its last heartbeat |
 
 **Push.** The helper lists the objects the project lacks
@@ -428,6 +468,10 @@ the record's version, and `xo_link_agent`).
 - **The admin** is the identity that owns the database. The entrypoint calls
   `claim_admin` right after every publish; the first claim sticks, and if
   another identity ever holds it the server refuses to start.
+- **GitHub sync** runs as the admin too: the entrypoint always hands the
+  admin's token to the web service, whose sync may create projects and push
+  only in spaces linked to GitHub (shown as "GitHub sync" in the activity).
+  git sees that token only when it pushes into the hub.
 - **Turn it on** by setting `SPACEHUB_XO_KEY` (32 characters or more, the same
   value as xo.quirq.dev's `XO_HUB_KEY`). The web service then answers
   `/-/api/xo/v1/` (see `cli/src/xo.ts`) with that key only, acting as the
@@ -440,6 +484,7 @@ the record's version, and `xo_link_agent`).
 
 ## Limits (v0)
 
+- Mirroring is GitHub to hub, public repositories only.
 - Every project can be read by anyone who can reach the server. Only its
   space's owners and members and its collaborators can push; they can do
   anything a push does, including force pushes and deleting branches. To be

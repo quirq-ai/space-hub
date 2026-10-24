@@ -25,6 +25,7 @@ function commit(message: string, parent?: string) {
 }
 
 const SPACE = 'alice/notes';
+const TEAM_PROJECT_NAME = 'acme/site';
 
 function hub() {
   const h = createModuleTestHarness(spacetimedb, mod);
@@ -198,5 +199,46 @@ describe('spaces', () => {
     call(alice, mod.migrateSpaces);
     call(alice, mod.migrateSpaces);
     expect(h.db.hubSpace.name.find('alice')).toMatchObject({ kind: 'personal' });
+  });
+});
+
+describe('GitHub links', () => {
+  function linked() {
+    const t = hub();
+    const admin = as('admin');
+    t.call(admin, mod.claimAdmin);
+    t.call(t.alice, mod.createTeam, { name: 'acme', description: '' });
+    return { ...t, admin };
+  }
+
+  it('lets only owners link a space, to a GitHub account', () => {
+    const { h, call, alice, bob } = linked();
+    expect(() => call(bob, mod.linkSpace, { space: 'acme', source: 'https://github.com/acme' })).toThrow(/permission denied/);
+    expect(() => call(alice, mod.linkSpace, { space: 'acme', source: 'https://example.com/acme' })).toThrow(/GitHub user or organization/);
+    expect(() => call(alice, mod.linkSpace, { space: 'acme', source: 'https://github.com/acme/repo' })).toThrow(/GitHub user or organization/);
+    call(alice, mod.linkSpace, { space: 'acme', source: 'https://github.com/acme/' });
+    expect(h.db.spaceLink.space.find('acme')).toMatchObject({ source: 'https://github.com/acme', status: 'requested' });
+  });
+
+  it('lets the hub admin sync a linked space only', () => {
+    const { h, call, alice, admin, kinds } = linked();
+    expect(() => call(admin, mod.createProject, { space: 'acme', name: 'site', description: '' })).toThrow(/no builder name/);
+    call(alice, mod.linkSpace, { space: 'acme', source: 'https://github.com/acme' });
+    call(admin, mod.setLinkStatus, { space: 'acme', status: 'running', message: 'listing', projects: 0 });
+    call(admin, mod.createProject, { space: 'acme', name: 'site', description: '' });
+    const first = commit('from github');
+    call(admin, mod.putObjects, { space: TEAM_PROJECT_NAME, objects: [TREE, first] });
+    call(admin, mod.updateRef, { space: TEAM_PROJECT_NAME, name: 'refs/heads/main', oldOid: '', newOid: first.oid, force: false });
+    call(admin, mod.recordRefSync, { project: TEAM_PROJECT_NAME, refs: [{ ref: 'refs/heads/main', githubOid: first.oid, status: 'synced' }] });
+    call(admin, mod.recordRefSync, { project: TEAM_PROJECT_NAME, refs: [{ ref: 'refs/heads/main', githubOid: first.oid, status: 'diverged' }] });
+    expect(h.db.refSync.key.find(`${h.db.project.fullName.find(TEAM_PROJECT_NAME)!.id}:refs/heads/main`)?.status).toBe('diverged');
+    call(admin, mod.setLinkStatus, { space: 'acme', status: 'done', message: '1 project', projects: 1 });
+    expect(h.db.spaceLink.space.find('acme')).toMatchObject({ status: 'done', projects: 1 });
+    expect(kinds()).toEqual(expect.arrayContaining(['-github space_created', '-github ref_created refs/heads/main', '-github ref_diverged refs/heads/main', '-github space_synced https://github.com/acme']));
+    // Not in a space that is not linked.
+    expect(() => call(admin, mod.createProject, { space: 'alice', name: 'x', description: '' })).toThrow(/no builder name/);
+    expect(() => call(alice, mod.setLinkStatus, { space: 'acme', status: 'done', message: '', projects: 0 })).toThrow(/only the hub admin/);
+    call(alice, mod.unlinkSpace, { space: 'acme' });
+    expect(() => call(admin, mod.putObjects, { space: TEAM_PROJECT_NAME, objects: [TREE] })).toThrow(/permission denied/);
   });
 });

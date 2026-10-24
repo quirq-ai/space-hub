@@ -47,15 +47,20 @@ import EditHubSpaceReducer from "./edit_hub_space_reducer";
 import EditSpaceReducer from "./edit_space_reducer";
 import FinishObjectReducer from "./finish_object_reducer";
 import LeaveSpaceReducer from "./leave_space_reducer";
+import LinkSpaceReducer from "./link_space_reducer";
 import MigrateSpacesReducer from "./migrate_spaces_reducer";
 import PutChunkReducer from "./put_chunk_reducer";
 import PutObjectsReducer from "./put_objects_reducer";
+import RecordRefSyncReducer from "./record_ref_sync_reducer";
 import RegisterUserReducer from "./register_user_reducer";
 import RemoveMemberReducer from "./remove_member_reducer";
 import RemoveSpaceMemberReducer from "./remove_space_member_reducer";
+import RequestSyncReducer from "./request_sync_reducer";
 import SetAccountsReducer from "./set_accounts_reducer";
 import SetBuilderReducer from "./set_builder_reducer";
+import SetLinkStatusReducer from "./set_link_status_reducer";
 import StartImportReducer from "./start_import_reducer";
+import UnlinkSpaceReducer from "./unlink_space_reducer";
 import UpdateImportReducer from "./update_import_reducer";
 import UpdateRefReducer from "./update_ref_reducer";
 import WatchSpaceReducer from "./watch_space_reducer";
@@ -75,6 +80,8 @@ import ProjectRow from "./project_table";
 import ProjectBuilderRow from "./project_builder_table";
 import ProjectImportRow from "./project_import_table";
 import ProjectMemberRow from "./project_member_table";
+import RefSyncRow from "./ref_sync_table";
+import SpaceLinkRow from "./space_link_table";
 import SpaceRoleRow from "./space_role_table";
 import UserRow from "./user_table";
 
@@ -183,6 +190,20 @@ const tablesSchema = __schema({
       { name: 'presence_connection_id_key', constraint: 'unique', columns: ['connectionId'] },
     ],
   }, PresenceRow),
+  refSync: __table({
+    name: 'ref_sync',
+    indexes: [
+      { accessor: 'key', name: 'ref_sync_key_idx_btree', algorithm: 'btree', columns: [
+        'key',
+      ] },
+      { accessor: 'projectId', name: 'ref_sync_project_id_idx_btree', algorithm: 'btree', columns: [
+        'projectId',
+      ] },
+    ],
+    constraints: [
+      { name: 'ref_sync_key_key', constraint: 'unique', columns: ['key'] },
+    ],
+  }, RefSyncRow),
   project: __table({
     name: 'space',
     indexes: [
@@ -226,6 +247,17 @@ const tablesSchema = __schema({
       { name: 'space_import_space_id_key', constraint: 'unique', columns: ['spaceId'] },
     ],
   }, ProjectImportRow),
+  spaceLink: __table({
+    name: 'space_link',
+    indexes: [
+      { accessor: 'space', name: 'space_link_space_idx_btree', algorithm: 'btree', columns: [
+        'space',
+      ] },
+    ],
+    constraints: [
+      { name: 'space_link_space_key', constraint: 'unique', columns: ['space'] },
+    ],
+  }, SpaceLinkRow),
   projectMember: __table({
     name: 'space_member',
     indexes: [
@@ -300,15 +332,20 @@ const reducersSchema = __reducers(
   __reducerSchema("edit_space", EditSpaceReducer),
   __reducerSchema("finish_object", FinishObjectReducer),
   __reducerSchema("leave_space", LeaveSpaceReducer),
+  __reducerSchema("link_space", LinkSpaceReducer),
   __reducerSchema("migrate_spaces", MigrateSpacesReducer),
   __reducerSchema("put_chunk", PutChunkReducer),
   __reducerSchema("put_objects", PutObjectsReducer),
+  __reducerSchema("record_ref_sync", RecordRefSyncReducer),
   __reducerSchema("register_user", RegisterUserReducer),
   __reducerSchema("remove_member", RemoveMemberReducer),
   __reducerSchema("remove_space_member", RemoveSpaceMemberReducer),
+  __reducerSchema("request_sync", RequestSyncReducer),
   __reducerSchema("set_accounts", SetAccountsReducer),
   __reducerSchema("set_builder", SetBuilderReducer),
+  __reducerSchema("set_link_status", SetLinkStatusReducer),
   __reducerSchema("start_import", StartImportReducer),
+  __reducerSchema("unlink_space", UnlinkSpaceReducer),
   __reducerSchema("update_import", UpdateImportReducer),
   __reducerSchema("update_ref", UpdateRefReducer),
   __reducerSchema("watch_space", WatchSpaceReducer),

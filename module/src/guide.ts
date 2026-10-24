@@ -36,6 +36,7 @@ function commands(ctx: GuideContext) {
     sync: `${c} project sync --watch`,
     watch: `${c} project watch <space>/<project> --exec "<command>"`,
     collaborator: `${c} project member add <space>/<project> <builder>`,
+    link: `${c} space link <space> https://github.com/<account>`,
     autosync: `${c} project sync --watch --auto`,
     who: `${c} project who <space>/<project>`,
     members: `${c} space member list <team>`,
@@ -69,7 +70,7 @@ export function guideHome(ctx: GuideContext): string {
 <li>Keep one repo the same on your laptop, cloud machines and AI agents.</li>
 <li>Hand work between people and agents in seconds.</li>
 <li>Work in one project with others at the same time: see <a href="${esc(ctx.link('-/guide'))}#together">Edit together</a>.</li>
-<li>Copy GitHub repos here and keep them updated.</li></ul></div>
+<li>Mirror GitHub repos or whole organizations here and keep them updated.</li></ul></div>
 </div></div>`;
 }
 
@@ -111,6 +112,7 @@ ${step('Install it (needs git and Node 22+):', cmd.install)}
 ${step('Log in as a builder:', cmd.login)}
 ${step('Share a repo (run inside it):', cmd.create)}
 ${step('Make a team space, add people, and share a repo into it:', cmd.team)}${code(cmd.teamMember)}${code(cmd.teamProject)}
+${step("Mirror a GitHub user's or organization's public repositories into a space:", cmd.link)}
 ${step('Get a project:', cmd.clone)}
 ${step('Stay in sync (inside a clone):', cmd.sync)}
 ${step('Run a command on every push:', cmd.watch)}
@@ -146,6 +148,7 @@ ${step('Edit files as usual. To see who else is working right now:', cmd.who)}
 <div class="case"><h3>Hand work to an agent</h3><p>The agent waits for your push and starts on it right away. Its push comes back to you the same way.</p>${code(cmd.watch)}</div>
 <div class="case"><h3>Edit together</h3><p>Add the others to a team space. Each runs autosync in a clone, and every edit reaches the others within seconds. The project page shows who is here now.</p>${code(cmd.teamMember)}${code(cmd.autosync)}</div>
 <div class="case"><h3>Mirror a GitHub repo</h3><p>Click <b>New project</b> and paste the GitHub URL. Use <b>Sync from GitHub</b> on the project to pull later changes.</p></div>
+<div class="case"><h3>Mirror a whole GitHub organization</h3><p>Link a space to it: every public repository becomes a project with the same name, kept in step. Work done here is never overwritten; a branch GitHub moved another way is kept and marked <b>diverged</b>.</p>${code(cmd.link)}</div>
 <div class="case"><h3>Follow the work</h3><p>The <b>Activity</b> feed on the home page and on each project shows every push, import and change, newest first.</p></div>
 </div></section>
 </div>`;
