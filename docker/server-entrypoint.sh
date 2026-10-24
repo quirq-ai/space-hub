@@ -76,21 +76,26 @@ if ! claim="$(spacetime --root-dir "$ROOT" call --server "http://$INTERNAL" "$DB
   exit 1
 fi
 
-# xo.quirq.dev's API (/-/api/xo/v1/) is on only with SPACEHUB_XO_KEY. It acts
-# as the admin, and agents then come from xo only.
+# The web service acts as the admin for two things: syncing spaces linked to
+# GitHub, and (only with SPACEHUB_XO_KEY) xo.quirq.dev's API at /-/api/xo/v1/,
+# which also makes xo the only source of builders.
+# The CLI keeps the owner's token as spacetimedb_token in its cli.toml.
+SPACEHUB_ADMIN_TOKEN="$(sed -n 's/^[[:space:]]*spacetimedb_token[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
+  "$ROOT/config/cli.toml" 2>/dev/null | head -n 1)"
+if [ -z "$SPACEHUB_ADMIN_TOKEN" ]; then
+  SPACEHUB_ADMIN_TOKEN="$(spacetime --root-dir "$ROOT" login show --token 2>/dev/null \
+    | grep -oE 'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+' | head -n 1)"
+fi
+if [ -n "$SPACEHUB_ADMIN_TOKEN" ]; then
+  export SPACEHUB_ADMIN_TOKEN
+else
+  echo "spacehub: the admin's token could not be read; spaces linked to GitHub will not sync" >&2
+fi
 if [ -n "${SPACEHUB_XO_KEY:-}" ]; then
-  # The CLI keeps the owner's token as spacetimedb_token in its cli.toml.
-  SPACEHUB_ADMIN_TOKEN="$(sed -n 's/^[[:space:]]*spacetimedb_token[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
-    "$ROOT/config/cli.toml" 2>/dev/null | head -n 1)"
-  if [ -z "$SPACEHUB_ADMIN_TOKEN" ]; then
-    SPACEHUB_ADMIN_TOKEN="$(spacetime --root-dir "$ROOT" login show --token 2>/dev/null \
-      | grep -oE 'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+' | head -n 1)"
-  fi
   if [ -z "$SPACEHUB_ADMIN_TOKEN" ]; then
     echo "spacehub: SPACEHUB_XO_KEY is set but the admin's token could not be read" >&2
     exit 1
   fi
-  export SPACEHUB_ADMIN_TOKEN
   spacetime --root-dir "$ROOT" call --server "http://$INTERNAL" "$DB" set_accounts '"xo"' >/dev/null
 fi
 

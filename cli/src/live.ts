@@ -123,6 +123,18 @@ export class LiveHub {
     const role = (ctx: { event: { tag: string } }, r: { space: string; member: string }) => {
       if (live(ctx)) this.touch(['hub', `space:${r.space}`, `space:${r.member}`]);
     };
+    const link = (ctx: { event: { tag: string } }, r: { space: string }) => {
+      if (live(ctx)) this.touch(['hub', `space:${r.space}`]);
+    };
+    db.spaceLink.onInsert(link);
+    db.spaceLink.onUpdate((ctx, _old, r) => link(ctx, r));
+    db.spaceLink.onDelete(link);
+    const synced = (ctx: { event: { tag: string } }, r: { projectId: bigint }) => {
+      if (live(ctx)) forSpace(r.projectId);
+    };
+    db.refSync.onInsert(synced);
+    db.refSync.onUpdate((ctx, _old, r) => synced(ctx, r));
+    db.refSync.onDelete(synced);
     db.spaceRole.onInsert(role);
     db.spaceRole.onUpdate((ctx, _old, r) => role(ctx, r));
     db.spaceRole.onDelete(role);
@@ -138,7 +150,7 @@ export class LiveHub {
           resolve();
         })
         .onError(ctx => reject(new Error(`subscription failed: ${(ctx as { event?: unknown }).event}`)))
-        .subscribe([tables.user, tables.hubSpace, tables.spaceRole, tables.project, tables.gitRef, tables.projectMember, tables.presence, tables.projectImport, tables.projectBuilder]);
+        .subscribe([tables.user, tables.hubSpace, tables.spaceRole, tables.spaceLink, tables.refSync, tables.project, tables.gitRef, tables.projectMember, tables.presence, tables.projectImport, tables.projectBuilder]);
     });
   }
 

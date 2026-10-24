@@ -278,7 +278,9 @@ function option(line: string): string {
     case 'cas': {
       const i = value.indexOf(':');
       if (i < 0) return 'unsupported';
-      leases.set(value.slice(0, i), value.slice(i + 1));
+      // git says "must not exist yet" with an all-zero id; the hub says "".
+      const expect = value.slice(i + 1);
+      leases.set(value.slice(0, i), /^0{40}$/.test(expect) ? '' : expect);
       return 'ok';
     }
     default:

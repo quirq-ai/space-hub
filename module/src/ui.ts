@@ -672,7 +672,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
   // One activity as a sentence: who did what, where, and when.
   activityItem(e: Activity) {
     const sp = e.spaceId ? this.db.project.id.find(e.spaceId) : undefined;
-    const who = e.agent ? this.a(e.agent, `<b>${esc(e.agent)}</b>`) : '<b>someone</b>';
+    const who = e.agent === '-github' ? '<b>GitHub sync</b>' : e.agent ? this.a(e.agent, `<b>${esc(e.agent)}</b>`) : '<b>someone</b>';
     const space = sp ? this.a(sp.fullName, `<b>${esc(sp.fullName)}</b>`) : `<b>${esc(e.space)}</b>`;
     const refName = shortRef(e.subject);
     const refKind = e.subject.startsWith('refs/tags/') ? 'tag' : 'branch';
@@ -747,8 +747,26 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
         line = `${who} started syncing ${space} from ${source}`;
         break;
       case 'import_done':
-        line = e.text === 'synced' ? `${who} synced ${space} from ${source}` : `${who} imported ${source} into ${space}`;
+        line = e.text.startsWith('synced') ? `${who} synced ${space} from ${source}` : `${who} imported ${source} into ${space}`;
         more = e.count ? `${plural(e.count, 'branch or tag').replace('branch or tags', 'branches and tags')}` : '';
+        break;
+      case 'space_linked':
+        line = `${who} linked ${team} to ${source}`;
+        break;
+      case 'space_unlinked':
+        line = `${who} unlinked ${team} from ${source}`;
+        break;
+      case 'space_synced':
+        line = `${who} synced ${team} from ${source}`;
+        more = esc(e.text);
+        break;
+      case 'space_sync_failed':
+        line = `${who}'s sync of ${team} from ${source} failed`;
+        more = esc(e.text);
+        break;
+      case 'ref_diverged':
+        line = `${refKind} ${refLink} in ${space} diverged from GitHub; the hub kept its own commits`;
+        more = e.oid ? `GitHub has ${esc(e.oid.slice(0, 7))}` : '';
         break;
       case 'import_failed':
         line = `${who}'s import of ${source} into ${space} failed`;
@@ -830,6 +848,24 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     return [...this.db.spaceRole.space.filter(space)].sort((a, b) => (a.role === b.role ? a.member.localeCompare(b.member) : a.role === 'owner' ? -1 : 1));
   }
 
+  // A space's GitHub link: what it mirrors and how the last sync went, with
+  // the owners' forms (behind the server's proxy, where the web service is).
+  githubBox(name: string) {
+    const link = this.db.spaceLink.space.find(name);
+    const owner = this.base !== null && ownsSpace(this.db, name, this.viewer);
+    const form = (action: string, label: string, extra = '') =>
+      `<form method="post" action="/-/link/${encodeURIComponent(name)}" class="inline"><input type="hidden" name="action" value="${action}">${extra}<button class="btn" type="submit">${label}</button></form>`;
+    if (!link) {
+      if (!owner) return '';
+      return `<h2>GitHub</h2><div class="box" style="padding:12px 16px"><p class="muted" style="margin:0 0 8px">Mirror a GitHub user's or organization's public repositories here, as projects with the same names.</p>${form('link', 'Link', '<input type="text" name="source" placeholder="https://github.com/owner" aria-label="GitHub account" style="margin:0 0 8px">')}</div>`;
+    }
+    const synced = seconds(link.syncedAt) > 0 ? `synced ${this.ago(seconds(link.syncedAt))}` : 'not synced yet';
+    const state = link.status === 'running' || link.status === 'requested' ? `<b>${esc(link.status === 'running' ? 'syncing' : 'sync requested')}</b> ${esc(link.message)}` : `${synced}${link.status === 'failed' ? ' · <b>last sync failed</b>' : ''}`;
+    const detail = link.status === 'done' || link.status === 'failed' ? `<div class="muted">${esc(link.message)}</div>` : '';
+    const forms = owner ? `<div style="margin-top:8px">${form('sync', 'Sync now')} ${form('unlink', 'Unlink')}</div>` : '';
+    return `<h2>GitHub</h2><div class="box github" style="padding:12px 16px">Mirrors <a href="${esc(link.source)}">${esc(link.source.replace(/^https:\/\//, ''))}</a><div class="muted">${state}</div>${detail}${forms}</div>`;
+  }
+
   // /<name>: a builder's personal space, a team space, or (phase 4) an agent.
   spacePage(name: string) {
     const row = this.db.hubSpace.name.find(name);
@@ -852,13 +888,14 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
         .map(s => `<tr><td>${this.a(s.fullName, `<b>${esc(s.fullName)}</b>`)}</td><td class="r muted">collaborator</td></tr>`)
         .join('');
       const memberOf = teams + collab ? `<h2 style="margin:24px 0 8px">Member of</h2><div class="box"><table>${teams}${collab}</table></div>` : '';
-      return this.page(name, `${title}${since}${list}${memberOf}`);
+      const github = this.githubBox(name);
+      return this.page(name, `${title}${since}${github ? `<div class="grid"><div>${list}${memberOf}</div><aside>${github}</aside></div>` : `${list}${memberOf}`}`);
     }
     const created = row ? `<p class="desc">${kind === 'team' ? 'Team space' : 'Agent'} · created by ${this.a(row.createdBy, esc(row.createdBy))} ${this.ago(seconds(row.createdAt))} · ${plural(projects.length, 'project')}</p>` : '';
     const people = this.roles(name)
       .map(r => `<tr><td>${this.a(r.member, `<b>${esc(r.member)}</b>`)} ${this.spacePill(r.member)}</td><td class="r muted">${esc(r.role)}</td></tr>`)
       .join('');
-    const aside = `<aside><h2>Members</h2><div class="box members">${people ? `<table>${people}</table>` : '<div class="empty">No members yet.</div>'}</div><h2>Here now</h2>${here}</aside>`;
+    const aside = `<aside><h2>Members</h2><div class="box members">${people ? `<table>${people}</table>` : '<div class="empty">No members yet.</div>'}</div>${this.githubBox(name)}<h2>Here now</h2>${here}</aside>`;
     return this.page(name, `${title}${created}<div class="grid"><div>${list}</div>${aside}</div>`);
   }
 
@@ -1113,15 +1150,22 @@ ${bodyText ? `<pre>${esc(bodyText)}</pre>` : ''}
     );
   }
 
+  // Refs whose GitHub copy went another way: the hub kept its own.
+  diverged(sp: Space) {
+    return new Map([...this.db.refSync.projectId.filter(sp.id)].filter(r => r.status === 'diverged').map(r => [r.ref, r.githubOid]));
+  }
+
   refsPage(sp: Space) {
     const refs = this.refs(sp);
+    const diverged = this.diverged(sp);
+    const mark = (ref: string) => (diverged.has(ref) ? ` <span class="pill" title="GitHub has ${esc(diverged.get(ref)!.slice(0, 7))}">diverged from GitHub</span>` : '');
     const branches = refs
       .filter(r => r.name.startsWith('refs/heads/'))
       .map(r => {
         const name = shortRef(r.name);
         const c = this.commit(sp, r.oid);
         const isDefault = name === sp.defaultBranch ? ' <span class="pill">default</span>' : '';
-        return `<tr><td>${this.a(`${sp.fullName}/tree/${name}`, `<b>${esc(name)}</b>`)}${isDefault}${c ? `<div class="muted">${esc(c.message.split('\n')[0])}</div>` : ''}</td>
+        return `<tr><td>${this.a(`${sp.fullName}/tree/${name}`, `<b>${esc(name)}</b>`)}${isDefault}${mark(r.name)}${c ? `<div class="muted">${esc(c.message.split('\n')[0])}</div>` : ''}</td>
 <td class="r muted">${c ? `${esc(c.author.name)} · ${this.ago(c.committer.time)}<br>` : ''}<span class="mono">${this.a(`${sp.fullName}/commit/${c?.oid ?? r.oid}`, (c?.oid ?? r.oid).slice(0, 7))}</span></td></tr>`;
       })
       .join('');
@@ -1138,7 +1182,7 @@ ${bodyText ? `<pre>${esc(bodyText)}</pre>` : ''}
           const who = tagger ? parsePerson(tagger[1]) : null;
           note = `<div class="muted">${esc(message.split('\n')[0])}${who ? ` · tagged by ${esc(who.name)} ${this.ago(who.time)}` : ''}</div>`;
         }
-        return `<tr><td>${this.a(`${sp.fullName}/tree/${name}`, `<b>${esc(name)}</b>`)}${note}</td>
+        return `<tr><td>${this.a(`${sp.fullName}/tree/${name}`, `<b>${esc(name)}</b>`)}${mark(r.name)}${note}</td>
 <td class="r muted"><span class="mono">${c ? this.a(`${sp.fullName}/commit/${c.oid}`, c.oid.slice(0, 7)) : r.oid.slice(0, 7)}</span><br>${c ? this.ago(c.committer.time) : ''}</td></tr>`;
       })
       .join('');
