@@ -71,6 +71,17 @@ export const ObjectIn = __t.object("ObjectIn", {
 });
 export type ObjectIn = __Infer<typeof ObjectIn>;
 
+export const Presence = __t.object("Presence", {
+  connectionId: __t.connectionId(),
+  spaceId: __t.u64(),
+  agent: __t.string(),
+  mode: __t.string(),
+  branch: __t.string(),
+  since: __t.timestamp(),
+  seenAt: __t.timestamp(),
+});
+export type Presence = __Infer<typeof Presence>;
+
 export const Space = __t.object("Space", {
   id: __t.u64(),
   fullName: __t.string(),
@@ -104,10 +115,37 @@ export const SpaceImport = __t.object("SpaceImport", {
 });
 export type SpaceImport = __Infer<typeof SpaceImport>;
 
+export const SpaceMember = __t.object("SpaceMember", {
+  id: __t.u64(),
+  key: __t.string(),
+  spaceId: __t.u64(),
+  agent: __t.string(),
+  addedBy: __t.string(),
+  addedAt: __t.timestamp(),
+});
+export type SpaceMember = __Infer<typeof SpaceMember>;
+
 export const User = __t.object("User", {
   identity: __t.identity(),
   username: __t.string(),
   createdAt: __t.timestamp(),
 });
 export type User = __Infer<typeof User>;
+
+export const XoAgent = __t.object("XoAgent", {
+  subject: __t.string(),
+  username: __t.string(),
+  identity: __t.identity(),
+  token: __t.string(),
+  createdAt: __t.timestamp(),
+});
+export type XoAgent = __Infer<typeof XoAgent>;
+
+export const XoRecord = __t.object("XoRecord", {
+  subject: __t.string(),
+  doc: __t.string(),
+  version: __t.u64(),
+  updatedAt: __t.timestamp(),
+});
+export type XoRecord = __Infer<typeof XoRecord>;
 

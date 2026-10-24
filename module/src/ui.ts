@@ -1,5 +1,7 @@
 // The web UI: a GitHub-like view of everything in the database, rendered to
-// HTML inside the module. No JavaScript.
+// HTML inside the module. Pages work without JavaScript; behind the server's
+// proxy, live pages (home, agents, spaces) also load /-/live.js, which swaps
+// in each new rendering the web service streams when their data changes.
 //
 //   /                                     spaces and people
 //   /<owner>                              an owner's spaces
@@ -21,7 +23,7 @@
 // SpacetimeDB (/v1/database/<db>/route/ui?p=<path>) links stay as ?p=<path>.
 // Sign-in state comes from a display-only cookie; every write goes through
 // the web service (/-/...), which checks the real session.
-import { readObject, type Db } from './store';
+import { PRESENCE_STALE_SECONDS, readObject, type Db } from './store';
 import { DELETE, INSERT, diffLines, toHunks } from './diff';
 import { renderMarkdown, type Resolve } from './markdown';
 import { esc, navFor, PAGE_CSP, shell } from './style';
@@ -43,6 +45,7 @@ export interface UiResponse {
 
 type Space = NonNullable<ReturnType<Db['space']['fullName']['find']>>;
 type Activity = NonNullable<ReturnType<Db['activity']['id']['find']>>;
+type Presence = NonNullable<ReturnType<Db['presence']['connectionId']['find']>>;
 
 interface Person {
   name: string;
@@ -265,6 +268,8 @@ class Renderer {
   private commits = new Map<string, Commit | null>();
   private trees = new Map<string, Entry[]>();
   private refreshing = false;
+  // Set by route() for pages the web service keeps live.
+  live = false;
 
   constructor(
     private db: Db,
@@ -309,7 +314,11 @@ class Renderer {
 
   page(title: string, body: string, status = 200): UiResponse {
     const nav = this.base === null ? '' : navFor(this.viewer);
-    const head = this.refreshing ? '<meta http-equiv="refresh" content="4">' : '';
+    // Live pages update themselves; without JavaScript they fall back to
+    // reloading while an import runs.
+    const live = this.live && this.base !== null;
+    const refresh = '<meta http-equiv="refresh" content="4">';
+    const head = `${this.refreshing ? (live ? `<noscript>${refresh}</noscript>` : refresh) : ''}${live ? '<script src="/-/live.js" defer></script>' : ''}`;
     return { status, headers: { 'content-type': 'text/html; charset=utf-8' }, body: shell(title, nav, body, head, this.link('')) };
   }
 
@@ -504,6 +513,42 @@ class Renderer {
     return `<form method="post" action="/-/sync/${encodeURIComponent(sp.owner)}/${encodeURIComponent(sp.name)}" class="inline"><button class="btn" type="submit">${esc(label)}</button></form>`;
   }
 
+  members(sp: Space) {
+    return [...this.db.spaceMember.spaceId.filter(sp.id)].sort((a, b) => a.agent.localeCompare(b.agent));
+  }
+
+  // Connections that follow a space (or the whole hub) and are still
+  // heartbeating; one line per agent, mode, branch and space.
+  hereNow(spaceId: bigint | null) {
+    const rows = spaceId === null ? [...this.db.presence.iter()] : [...this.db.presence.spaceId.filter(spaceId)];
+    const groups = new Map<string, { row: Presence; count: number }>();
+    for (const p of rows) {
+      if (this.now - seconds(p.seenAt) > PRESENCE_STALE_SECONDS) continue;
+      const key = `${p.spaceId}:${p.agent}:${p.mode}:${p.branch}`;
+      const g = groups.get(key);
+      if (!g) groups.set(key, { row: p, count: 1 });
+      else {
+        g.count++;
+        if (seconds(p.since) < seconds(g.row.since)) g.row = p;
+      }
+    }
+    return [...groups.values()].sort((x, y) => x.row.agent.localeCompare(y.row.agent) || seconds(x.row.since) - seconds(y.row.since));
+  }
+
+  hereBox(groups: { row: Presence; count: number }[], withSpace: boolean) {
+    const rows = groups
+      .slice(0, 30)
+      .map(({ row: p, count }) => {
+        const sp = withSpace ? this.db.space.id.find(p.spaceId) : undefined;
+        const branch = p.branch ? ` ${esc(p.branch)}` : '';
+        const where = sp ? ` <span class="muted">in</span> ${this.a(sp.fullName, esc(sp.fullName))}` : '';
+        const times = count > 1 ? ` <span class="muted">×${count}</span>` : '';
+        return `<tr><td>${this.a(p.agent, `<b>${esc(p.agent)}</b>`)} <span class="pill">${esc(p.mode)}</span><span class="muted">${branch}</span>${where}${times}</td><td class="r muted">${this.ago(seconds(p.since))}</td></tr>`;
+      })
+      .join('');
+    return `<div class="box here">${rows ? `<table>${rows}</table>` : '<div class="empty">Nobody is connected right now.</div>'}</div>`;
+  }
+
   importBanner(sp: Space) {
     const row = this.importRow(sp);
     if (!row) return '';
@@ -567,9 +612,12 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
       : '';
     const sync = row && row.status !== 'running' ? this.syncForm(sp, 'Sync from GitHub') : '';
     const count = commits >= COUNT_CAP ? `${COUNT_CAP.toLocaleString('en-US')}+` : commits.toLocaleString('en-US');
+    const here = this.hereNow(sp.id);
+    const members = this.members(sp).map(m => this.a(m.agent, esc(m.agent)));
     return `<aside><h2>Clone</h2><code class="clone">spacehub space clone ${esc(sp.fullName)}</code>
 <code class="clone">git clone -o quirq quirq://${esc(this.host)}/${esc(sp.fullName)}</code>
-<h2>About</h2><dl><dt>Agent</dt><dd>${this.a(sp.owner, esc(sp.owner))}</dd><dt>Builder</dt><dd>${this.builderLink(this.builderOf(sp))}</dd><dt>Default</dt><dd>${esc(sp.defaultBranch)}</dd>
+<h2>Here now <span class="muted">${here.reduce((n, g) => n + g.count, 0)}</span></h2>${this.hereBox(here, false)}
+<h2>About</h2><dl><dt>Agent</dt><dd>${this.a(sp.owner, esc(sp.owner))}</dd><dt>Members</dt><dd class="members">${members.join(', ') || '<span class="muted">none</span>'}</dd><dt>Builder</dt><dd>${this.builderLink(this.builderOf(sp))}</dd><dt>Default</dt><dd>${esc(sp.defaultBranch)}</dd>
 <dt>Commits</dt><dd>${this.a(`${sp.fullName}/commits/${ref}`, count)}</dd>
 <dt>Branches</dt><dd>${this.a(`${sp.fullName}/refs`, String(refs.filter(r => r.name.startsWith('refs/heads/')).length))}</dd><dt>Tags</dt><dd>${this.a(`${sp.fullName}/refs`, String(refs.filter(r => r.name.startsWith('refs/tags/')).length))}</dd>
 <dt>Objects</dt><dd>${sp.objectCount}</dd><dt>Created</dt><dd>${this.ago(seconds(sp.createdAt))}</dd><dt>Pushed</dt><dd>${this.ago(seconds(sp.pushedAt))}</dd>${source}</dl>${sync}</aside>`;
@@ -669,6 +717,12 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
         line = `${who}'s import of ${source} into ${space} failed`;
         more = esc(e.text);
         break;
+      case 'member_added':
+        line = `${who} added ${this.a(e.subject, `<b>${esc(e.subject)}</b>`)} as a member of ${space}`;
+        break;
+      case 'member_removed':
+        line = e.subject === e.agent ? `${who} left the members of ${space}` : `${who} removed ${this.a(e.subject, `<b>${esc(e.subject)}</b>`)} from the members of ${space}`;
+        break;
       default:
         line = `${who} ${esc(e.kind.replace(/_/g, ' '))} ${space}`;
     }
@@ -722,7 +776,8 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
 <p class="desc">Git spaces on this server, most recently pushed first.</p>
 <div class="box">${rows ? `<table>${rows}</table>` : '<div class="empty">No spaces yet.</div>'}</div>
 <h2 style="margin:24px 0 8px">Activity</h2>${this.activityFeed([...this.db.activity.iter()], '')}</div>
-<aside><h2>Agents <span class="muted">${users.length}</span></h2><div class="box">${people ? `<table>${people}</table>` : '<div class="empty">No agents yet.</div>'}</div>
+<aside><h2>Here now</h2>${this.hereBox(this.hereNow(null), true)}
+<h2>Agents <span class="muted">${users.length}</span></h2><div class="box">${people ? `<table>${people}</table>` : '<div class="empty">No agents yet.</div>'}</div>
 <h2>${this.a('builders', 'Builders')} <span class="muted">${builders.length}</span></h2><div class="box">${builderRows ? `<table>${builderRows}</table>` : '<div class="empty">No builders yet.</div>'}</div></aside></div>`
     );
   }
@@ -738,7 +793,14 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
       )
       .join('');
     const since = user ? `<p class="desc">Agent · registered ${this.ago(seconds(user.createdAt))} · ${plural(spaces.length, 'space')}</p>` : '';
-    return this.page(name, `<h1><b>${esc(name)}</b></h1>${since}<div class="box">${rows ? `<table>${rows}</table>` : '<div class="empty">No spaces yet.</div>'}</div>`);
+    const memberOf = [...this.db.spaceMember.agent.filter(name)]
+      .map(m => this.db.space.id.find(m.spaceId))
+      .filter((s): s is Space => !!s)
+      .sort((a, b) => a.fullName.localeCompare(b.fullName))
+      .map(s => `<tr><td>${this.a(s.fullName, `<b>${esc(s.fullName)}</b>`)}${s.description ? `<div class="muted">${esc(s.description)}</div>` : ''}</td><td class="r muted">Updated ${this.ago(seconds(s.pushedAt))}</td></tr>`)
+      .join('');
+    const member = memberOf ? `<h2 style="margin:24px 0 8px">Member of</h2><div class="box"><table>${memberOf}</table></div>` : '';
+    return this.page(name, `<h1><b>${esc(name)}</b></h1>${since}<div class="box">${rows ? `<table>${rows}</table>` : '<div class="empty">No spaces yet.</div>'}</div>${member}`);
   }
 
   emptySpace(sp: Space) {
@@ -1070,6 +1132,8 @@ ${bodyText ? `<pre>${esc(bodyText)}</pre>` : ''}
   }
 
   route(segs: string[]): UiResponse {
+    // The guide and builder pages stay still; everything else follows its data.
+    this.live = !(segs[0] === 'guide' && segs.length === 1) && segs[0] !== 'builders' && segs[2] !== 'raw';
     if (segs.length === 0) return this.home();
     if (segs.length === 1 && segs[0] === 'guide') {
       const scheme = this.secure ? 'wss' : 'ws';

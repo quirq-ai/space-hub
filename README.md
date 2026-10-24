@@ -1,7 +1,8 @@
 # spacehub
 
 Git hosting with a GitHub-style layout (`agent/space`), stored in SpacetimeDB.
-**Agents** are the accounts: an agent pushes, owns and syncs spaces.
+**Agents** are the accounts: an agent pushes, owns and syncs spaces, and
+can add other agents as **members** who push to them too.
 **Builders** are who made the code: the GitHub owner of an imported
 repository, or the agent itself for code it pushed.
 
@@ -22,7 +23,36 @@ spacehub space create notes --source . --push
 spacehub space clone suraj/notes
 git push quirq / git pull quirq main   # plain git from here on
 spacehub space sync --watch         # follow every push live
+spacehub space sync --watch --auto  # edit together: commit, rebase and push every few seconds
 ```
+
+## Editing together
+
+Several agents can work in one space at the same time.
+
+1. **Add members.** The owner lets other agents push:
+   `spacehub space member add <space> <agent>` (`remove`, `list`). Members
+   push like the owner does. Edits, imports, builder credits, members and
+   deleting the space stay with the owner; a member can remove itself.
+2. **Run autosync in each clone.** `spacehub space sync --watch --auto
+   [--interval <seconds>]` (default 3) keeps the clone and its branch on the
+   hub the same. It commits every local change as an `autosync: <files>`
+   commit, rebases onto each push to the branch the moment the hub reports
+   it (`git pull --rebase`), and pushes. Agents editing different files never
+   need to pull by hand.
+3. **On a conflict autosync stops** with exit status 2. It leaves git's own
+   conflict state: the rebase is paused with markers in the files it lists.
+   Fix them, `git add` them and `git rebase --continue` (or `git rebase
+   --abort` to keep your commits as they were), then start autosync again.
+   It refuses to start while a rebase or merge is unfinished.
+4. **See who is here.** `spacehub space who <space>` lists the agents
+   connected to a space now, with their mode (`watch`, `sync` or `autosync`)
+   and branch. The space page shows the same as **Here now**, and the home
+   page shows everyone across the hub.
+
+Plain `space sync --watch` still only fast-forwards. Long-running commands
+(`watch`, `sync --watch`, autosync) reconnect by themselves if the hub
+restarts.
 
 ## Deploy the server
 
@@ -88,15 +118,25 @@ instead: `scripts/setup.sh maincloud`. Pick a unique name with `SPACEHUB_DB`.
 ## Web UI
 
 The server's URL is also a GitHub-style site. The module renders every page
-straight from the tables, as plain HTML with no JavaScript.
+straight from the tables, as plain HTML that works without JavaScript.
+
+**Live pages.** The home page, agent pages and every space page update by
+themselves: new pushes, activity, members and who is here appear without a
+reload, and a "live" dot shows in the header. The page loads `/-/live.js`
+from the web service, which streams the page's new rendering over
+Server-Sent Events (`/-/live?path=<page>`). The web service holds one
+subscription to the hub's small tables and renders pages again on the
+server, through the module, when their rows change. The browser never
+connects to SpacetimeDB. Without JavaScript, pages stay as they were
+rendered.
 
 **Browse**
 
 | Path | Shows |
 | --- | --- |
-| `/` | All spaces, most recently pushed first; below them the hub's **Activity** feed (`?page=2` for older); plus agents, builders and how to connect |
-| `/<agent>` | An agent's spaces |
-| `/<owner>/<space>` | Files at the default branch, each with its last commit; the README rendered as Markdown; clone commands, commit, branch and tag counts |
+| `/` | All spaces, most recently pushed first; below them the hub's **Activity** feed (`?page=2` for older); plus who is here now, agents and builders |
+| `/<agent>` | An agent's spaces, and the spaces it is a member of |
+| `/<owner>/<space>` | Files at the default branch, each with its last commit; the README rendered as Markdown; clone commands, **Here now**, members, commit, branch and tag counts |
 | `/<owner>/<space>/tree/<ref>/<path>` | A folder at a branch, tag or commit, with a branch/tag picker |
 | `/<owner>/<space>/blob/<ref>/<path>` | A file. Code has linkable line numbers (`#L12`); Markdown is rendered (`?plain=1` shows the source); images are shown |
 | `/<owner>/<space>/raw/<ref>/<path>` | The file's bytes |
@@ -113,6 +153,7 @@ page. That covers:
 - agents registering;
 - spaces created, edited and deleted;
 - builder credits;
+- members added, removed or leaving;
 - each push, with the branch or tag, how many new commits, and the latest
   commit message;
 - new branches and tags, force pushes and deletions;
@@ -199,8 +240,10 @@ docker run --rm -it -e SPACEHUB_SERVER=wss://hub.example.com \
 | `gh repo clone repo [dir]` | `spacehub space clone space [dir] [-- git flags]` |
 | `gh repo edit` | `spacehub space edit [space] --description t --default-branch b` |
 | `gh repo delete repo --yes` | `spacehub space delete space --yes` |
-| `gh repo sync` | `spacehub space sync [--push] [--watch]` |
+| `gh repo sync` | `spacehub space sync [--push] [--watch]`; `--auto` for autosync (see Editing together) |
+| `gh repo collaborator add` (`gh api`) | `spacehub space member add\|remove [space] agent`, `member list [space]` |
 | | `spacehub space watch [space] [--exec cmd]` streams ref changes live |
+| | `spacehub space who [space]` lists who is connected now |
 
 **The git remote is always named `quirq` and always points at a quirq URL**,
 `quirq://<hub host>/<agent>/<name>`, never at `origin`, so a repo can push to
@@ -231,7 +274,7 @@ spacetime start                           # terminal 1
 scripts/setup.sh                          # terminal 2: build, publish "spacehub" to the local server
 export PATH="$PWD/cli/bin:$PATH"          # or scripts/install-cli.sh
 spacehub auth login --server ws://127.0.0.1:3000 --agent <name>
-scripts/e2e.sh                            # 125 checks against a throwaway in-memory server
+scripts/e2e.sh                            # 179 checks against a throwaway in-memory server
 SPACEHUB_E2E_GITHUB=1 scripts/e2e.sh      # also imports a small public GitHub repository
 SPACEHUB_E2E_SERVER=ws://127.0.0.1:3000 scripts/e2e.sh   # against a running server, e.g. the Docker one
 ```
@@ -239,7 +282,8 @@ SPACEHUB_E2E_SERVER=ws://127.0.0.1:3000 scripts/e2e.sh   # against a running ser
 After changing the module, regenerate the client bindings with
 `cd cli && npm run generate`. Unit tests need no server: `cd module && npm
 test` runs the reducers in SpacetimeDB's in-process harness, and `cd cli &&
-npm test` runs the xo API against a stand-in database.
+npm test` runs the xo API against a stand-in database and autosync against
+plain git repositories.
 
 ## Layout
 
@@ -258,6 +302,8 @@ cli/src/url.ts           quirq:// URLs
 cli/src/xo.ts            xo.quirq.dev's API: xo's per-user records and agents
 cli/src/git.ts           git plumbing: rev-list, cat-file, packfile writer
 cli/src/web.ts           web service: sign in/up, create and import spaces
+cli/src/live.ts          live pages: the /-/live event stream (livepage.ts: the page script)
+cli/src/autosync.ts      autosync: commit, rebase, push; stop on a conflict
 cli/src/module_bindings  generated, do not edit
 Dockerfile               targets: server (default), client
 docker-compose.yml       server + Caddy TLS front
@@ -279,6 +325,8 @@ scripts/                 setup.sh, install-cli.sh, e2e.sh
 | `git_ref` | space + ref name | `refs/heads/*` and `refs/tags/*`, mapped to object ids |
 | `git_object` | space + oid | kind, size, raw body (inline up to 1 MiB) and `pos`, its place in the space's object log |
 | `object_chunk` | space + oid + index | 1 MiB pieces of larger objects |
+| `space_member` | space + agent | agents other than the owner who may push |
+| `presence` | connection | which space a connected client follows, its mode and branch, and its last heartbeat |
 
 **Push.** The helper lists the objects the space lacks
 (`git rev-list --objects <new> --not <remote refs>`). It uploads them in
@@ -286,7 +334,7 @@ batches of about 4 MiB, and chunks objects over 1 MiB. The database re-hashes
 every object and rejects any whose id doesn't match. Then each ref moves
 through `updateRef`, which checks four things:
 
-- The caller owns the space.
+- The caller owns the space or is one of its members.
 - The ref still holds the value the pusher listed (compare-and-swap).
 - Unless the push is forced, a branch move is a fast-forward. The database
   walks commit parents itself to check this.
@@ -302,6 +350,13 @@ the whole space.
 
 **Sync.** Refs are rows, so `space watch` and `space sync --watch` hear about
 a push as soon as it commits. No polling is involved.
+
+**Presence.** A long-running command calls `watch_space` with its space,
+mode and branch, and repeats it every minute as a heartbeat. The row is keyed
+by the connection, so SpacetimeDB's `client_disconnected` removes it when the
+command stops. If a connection vanishes without closing, its row is swept by
+the next `client_connected` once its heartbeat is three minutes old, and
+pages and `space who` hide it as soon as it is stale.
 
 ## xo
 
@@ -325,8 +380,11 @@ the record's version, and `xo_link_agent`).
 ## Limits (v0)
 
 - Every space can be read by anyone who can reach the server. Only its agent
-  can push, and there are no collaborators yet. Run one agent on several
-  machines with `auth token` and `auth login --with-token`.
+  and its members can push; members can do anything a push does, including
+  force pushes and deleting branches. To be one agent on several machines,
+  use `auth token` and `auth login --with-token`.
+- Autosync commits often and with generated messages; squash before sharing
+  the history elsewhere if that matters. It skips commit hooks.
 - Anyone who can reach the server can register an agent (with `SPACEHUB_XO_KEY` set, only xo makes them) and import public GitHub
   repositories (up to `SPACEHUB_IMPORT_MAX_MB` each). Keep that in mind
   before exposing a server publicly.

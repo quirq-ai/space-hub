@@ -72,6 +72,7 @@ details.menu .pop{position:absolute;z-index:10;top:calc(100% + 4px);left:0;min-w
 .cases{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}.case{border:1px solid var(--line);border-radius:6px;padding:12px 16px}.case h3{margin:0 0 6px}.case p{margin:0 0 8px}
 .guide{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.7fr) minmax(0,1fr);gap:12px 28px}@media (max-width:900px){.guide{grid-template-columns:minmax(0,1fr)}}
 .guide h3{font-size:13px;font-weight:600;margin:0 0 6px}.guide ul,.guide ol{margin:0;padding-left:18px}.guide li{margin:0 0 6px}.guide p{margin:6px 0 0}.guide .clone{margin:4px 0 6px;white-space:pre-wrap;overflow-wrap:anywhere}
+header .live{font-size:12px;opacity:.85}header .live::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--A);margin-right:6px}header .live.off::before{background:var(--muted)}
 `;
 
 // The page frame: header (home link + `nav` HTML) and the main column.
@@ -85,5 +86,6 @@ export function navFor(viewer: string | null): string {
   return `<a href="/guide">Guide</a><a href="/-/new">+ New space</a><a class="me" href="/${encodeURIComponent(viewer)}">${esc(viewer)}</a><form method="post" action="/-/logout"><button type="submit">Sign out</button></form>`;
 }
 
+// Scripts and connections only to this site: /-/live.js and its stream.
 export const PAGE_CSP =
-  "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+  "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";

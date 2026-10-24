@@ -6,29 +6,45 @@
 import { type Infer as __Infer } from "spacetimedb";
 
 // Import all reducer arg schemas
+import AddMemberReducer from "../add_member_reducer";
 import BackfillActivityReducer from "../backfill_activity_reducer";
+import ClaimAdminReducer from "../claim_admin_reducer";
 import CreateSpaceReducer from "../create_space_reducer";
 import DeleteSpaceReducer from "../delete_space_reducer";
 import EditSpaceReducer from "../edit_space_reducer";
 import FinishObjectReducer from "../finish_object_reducer";
+import LeaveSpaceReducer from "../leave_space_reducer";
 import PutChunkReducer from "../put_chunk_reducer";
 import PutObjectsReducer from "../put_objects_reducer";
 import RegisterUserReducer from "../register_user_reducer";
+import RemoveMemberReducer from "../remove_member_reducer";
+import SetAccountsReducer from "../set_accounts_reducer";
 import SetBuilderReducer from "../set_builder_reducer";
 import StartImportReducer from "../start_import_reducer";
 import UpdateImportReducer from "../update_import_reducer";
 import UpdateRefReducer from "../update_ref_reducer";
+import WatchSpaceReducer from "../watch_space_reducer";
+import XoLinkAgentReducer from "../xo_link_agent_reducer";
+import XoPutRecordReducer from "../xo_put_record_reducer";
 
+export type AddMemberParams = __Infer<typeof AddMemberReducer>;
 export type BackfillActivityParams = __Infer<typeof BackfillActivityReducer>;
+export type ClaimAdminParams = __Infer<typeof ClaimAdminReducer>;
 export type CreateSpaceParams = __Infer<typeof CreateSpaceReducer>;
 export type DeleteSpaceParams = __Infer<typeof DeleteSpaceReducer>;
 export type EditSpaceParams = __Infer<typeof EditSpaceReducer>;
 export type FinishObjectParams = __Infer<typeof FinishObjectReducer>;
+export type LeaveSpaceParams = __Infer<typeof LeaveSpaceReducer>;
 export type PutChunkParams = __Infer<typeof PutChunkReducer>;
 export type PutObjectsParams = __Infer<typeof PutObjectsReducer>;
 export type RegisterUserParams = __Infer<typeof RegisterUserReducer>;
+export type RemoveMemberParams = __Infer<typeof RemoveMemberReducer>;
+export type SetAccountsParams = __Infer<typeof SetAccountsReducer>;
 export type SetBuilderParams = __Infer<typeof SetBuilderReducer>;
 export type StartImportParams = __Infer<typeof StartImportReducer>;
 export type UpdateImportParams = __Infer<typeof UpdateImportReducer>;
 export type UpdateRefParams = __Infer<typeof UpdateRefReducer>;
+export type WatchSpaceParams = __Infer<typeof WatchSpaceReducer>;
+export type XoLinkAgentParams = __Infer<typeof XoLinkAgentReducer>;
+export type XoPutRecordParams = __Infer<typeof XoPutRecordReducer>;
 
