@@ -35,6 +35,11 @@ function commands(ctx: GuideContext) {
     member: `${c} space member add <name> <agent>`,
     autosync: `${c} space sync --watch --auto`,
     who: `${c} space who <agent>/<name>`,
+    members: `${c} space member list <agent>/<name>`,
+    leave: `${c} space member remove <agent>/<name> <your agent>`,
+    interval: `${c} space sync --watch --auto --interval 10`,
+    resolve: 'git add <files> && git rebase --continue',
+    gitRebase: `git pull --rebase ${HUB.remote} main && git push ${HUB.remote} main`,
     token: `${c} auth token`,
     gitClone: `git clone -o ${HUB.remote} ${HUB.url(ctx.host, '<agent>/<name>')}`,
     gitPush: `git push ${HUB.remote} main`,
@@ -60,6 +65,7 @@ export function guideHome(ctx: GuideContext): string {
 <div><h3>Use cases</h3><ul>
 <li>Keep one repo the same on your laptop, cloud machines and AI agents.</li>
 <li>Hand work between people and agents in seconds.</li>
+<li>Edit one space with other agents at the same time: see <a href="${esc(ctx.link('guide'))}#together">Edit together</a>.</li>
 <li>Copy GitHub repos here and keep them updated.</li></ul></div>
 </div></div>`;
 }
@@ -71,7 +77,7 @@ export function guidePage(ctx: GuideContext): string {
   return `<div class="guide-page">
 <h1><b>Guide</b></h1>
 <p class="desc">${esc(LEAD)}</p>
-<nav class="toc"><a href="#what">What it is</a><a href="#who">Who can use it</a><a href="#how">How to use it</a><a href="#use-cases">Use cases</a></nav>
+<nav class="toc"><a href="#what">What it is</a><a href="#who">Who can use it</a><a href="#how">How to use it</a><a href="#together">Edit together</a><a href="#use-cases">Use cases</a></nav>
 
 <section id="what"><h2>What it is</h2>
 <p>A hub for git repositories. You use plain git to push and pull. The hub tells every connected copy about each push as it happens, so machines, people and AI agents stay on the same code.</p>
@@ -108,6 +114,25 @@ ${step('See who is connected to a space:', cmd.who)}
 </ol>
 <h3>With plain git</h3><p>After installing the CLI, git understands the hub's addresses. The hub's remote is called <code>${esc(HUB.remote)}</code>, so <code>origin</code> stays free for GitHub.</p>
 ${code(cmd.gitClone)}${code(cmd.gitPush)}${code(cmd.gitPull)}
+</section>
+
+<section id="together"><h2>Edit together</h2>
+<p>Several agents, people or AI, can work in one space at the same time. Each works in its own clone, and the hub keeps the clones the same within seconds.</p>
+<h3>Set it up</h3><ol>
+${step("The space's agent adds each other agent as a member:", cmd.member)}
+${step('Each agent clones the space:', cmd.clone)}
+${step('Each agent starts autosync inside its clone and leaves it running:', cmd.autosync)}
+${step('Edit files as usual. To see who else is working right now:', cmd.who)}
+</ol>
+<h3>How it works</h3><ul>
+<li><b>Members.</b> A space's agent can push to it, and so can its members. Only the agent changes the space's settings and members, imports, or deletes it. Members are listed on the space page and with ${code(cmd.members)} A member can leave with ${code(cmd.leave)}</li>
+<li><b>Autosync.</b> Every few seconds, autosync commits your changes as one <code>autosync: &lt;files&gt;</code> commit and pushes it. When someone else pushes, the hub tells your autosync at once: it rebases your commits on top of theirs and pushes. Edits to different files never need a manual pull. To commit less often: ${code(cmd.interval)}</li>
+<li><b>Conflicts.</b> If you and someone else change the same lines, your autosync stops and lists the files. The rebase is paused, with git's conflict markers in those files. Fix them, then run ${code(cmd.resolve)} or <code>git rebase --abort</code> to keep your commits as they were, and start autosync again. Everyone else keeps going.</li>
+<li><b>Here now.</b> Every running autosync, sync or watch tells the hub which space and branch it follows. The space page lists them under <b>Here now</b>, the home page shows everyone on the hub, and they disappear when the command stops.</li>
+<li><b>Live pages.</b> The home page, agent pages and space pages update by themselves: new commits, activity, members and who is here appear without a reload. The green <b>live</b> dot at the top right shows a page is following the hub.</li>
+</ul>
+<h3>Without autosync</h3><p>Members can also use plain git, pulling before they push:</p>${code(cmd.gitRebase)}
+<p><code>space sync --watch</code> on its own only fast-forwards, for copies you read but do not edit.</p>
 </section>
 
 <section id="use-cases"><h2>Use cases</h2>

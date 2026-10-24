@@ -144,7 +144,7 @@ rendered.
 | `/<owner>/<space>/commit/<oid>` | One commit: message, author, parents, and a line diff of every changed file |
 | `/<owner>/<space>/refs` | Branches and tags, with tag messages |
 | `/<owner>/<space>/activity` | That space's activity, paginated |
-| `/guide` | What the hub is, who can use it, how to use it (browser, CLI, plain git) and use cases; the home page shows a short version |
+| `/guide` | What the hub is, who can use it, how to use it (browser, CLI, plain git), editing together (how members, autosync, conflicts, Here now and live pages work) and use cases; the home page shows a short version |
 | `/builders`, `/builders/<login>` | Who built the spaces' code, and everything a GitHub builder built |
 
 **Activity.** Every change on the hub is logged, newest first, 30 per
@@ -274,7 +274,7 @@ spacetime start                           # terminal 1
 scripts/setup.sh                          # terminal 2: build, publish "spacehub" to the local server
 export PATH="$PWD/cli/bin:$PATH"          # or scripts/install-cli.sh
 spacehub auth login --server ws://127.0.0.1:3000 --agent <name>
-scripts/e2e.sh                            # 179 checks against a throwaway in-memory server
+scripts/e2e.sh                            # 180 checks against a throwaway in-memory server
 SPACEHUB_E2E_GITHUB=1 scripts/e2e.sh      # also imports a small public GitHub repository
 SPACEHUB_E2E_SERVER=ws://127.0.0.1:3000 scripts/e2e.sh   # against a running server, e.g. the Docker one
 ```
