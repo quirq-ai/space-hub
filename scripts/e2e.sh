@@ -237,6 +237,7 @@ page_has "guide: what it is" "guide" 'id="what"'
 page_has "guide: who can use it" "guide" 'id="who"'
 page_has "guide: how to use it" "guide" 'id="how"'
 page_has "guide: use cases" "guide" 'id="use-cases"'
+page_has "guide: editing together" "guide" 'id="together"'
 page_has "home lists the space" "" "$NOTES"
 page_has "owner page lists the space" "$ALICE" "notes"
 page_has "space page shows the file tree" "$NOTES" "many"
