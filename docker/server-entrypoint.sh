@@ -109,6 +109,16 @@ SPACEHUB_SERVER="ws://$INTERNAL" SPACEHUB_INTERNAL_HTTP="http://$INTERNAL" SPACE
 web=$!
 echo "spacehub: serving database \"$DB\" on port $PORT"
 
+# Count the size of projects from before sizes were kept, one project per
+# call, in the background, so startup and health checks never wait for it.
+(
+  n=0
+  while [ "$n" -lt 100000 ] && spacetime --root-dir "$ROOT" call --server "http://$INTERNAL" "$DB" measure_next_project >/dev/null 2>&1; do
+    n=$((n + 1))
+  done
+  if [ "$n" -gt 0 ]; then echo "spacehub: measured $n projects from before sizes were kept"; fi
+) &
+
 while kill -0 "$server" 2>/dev/null && kill -0 "$proxy" 2>/dev/null && kill -0 "$web" 2>/dev/null; do
   sleep 2
 done

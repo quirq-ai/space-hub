@@ -52,6 +52,7 @@ import EditSpaceReducer from "./edit_space_reducer";
 import FinishObjectReducer from "./finish_object_reducer";
 import LeaveSpaceReducer from "./leave_space_reducer";
 import LinkSpaceReducer from "./link_space_reducer";
+import MeasureNextProjectReducer from "./measure_next_project_reducer";
 import MigrateSpacesReducer from "./migrate_spaces_reducer";
 import PutChunkReducer from "./put_chunk_reducer";
 import PutObjectsReducer from "./put_objects_reducer";
@@ -87,6 +88,7 @@ import ProjectRow from "./project_table";
 import ProjectBuilderRow from "./project_builder_table";
 import ProjectImportRow from "./project_import_table";
 import ProjectMemberRow from "./project_member_table";
+import ProjectSizeRow from "./project_size_table";
 import RefSyncRow from "./ref_sync_table";
 import SpaceLinkRow from "./space_link_table";
 import SpaceRoleRow from "./space_role_table";
@@ -212,6 +214,17 @@ const tablesSchema = __schema({
       { name: 'presence_connection_id_key', constraint: 'unique', columns: ['connectionId'] },
     ],
   }, PresenceRow),
+  projectSize: __table({
+    name: 'project_size',
+    indexes: [
+      { accessor: 'projectId', name: 'project_size_project_id_idx_btree', algorithm: 'btree', columns: [
+        'projectId',
+      ] },
+    ],
+    constraints: [
+      { name: 'project_size_project_id_key', constraint: 'unique', columns: ['projectId'] },
+    ],
+  }, ProjectSizeRow),
   refSync: __table({
     name: 'ref_sync',
     indexes: [
@@ -359,6 +372,7 @@ const reducersSchema = __reducers(
   __reducerSchema("finish_object", FinishObjectReducer),
   __reducerSchema("leave_space", LeaveSpaceReducer),
   __reducerSchema("link_space", LinkSpaceReducer),
+  __reducerSchema("measure_next_project", MeasureNextProjectReducer),
   __reducerSchema("migrate_spaces", MigrateSpacesReducer),
   __reducerSchema("put_chunk", PutChunkReducer),
   __reducerSchema("put_objects", PutObjectsReducer),

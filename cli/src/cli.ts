@@ -155,6 +155,36 @@ function takeFlag(args: string[], names: string[], boolean = false): string | tr
 const opt = (args: string[], ...names: string[]) => takeFlag(args, names) as string | undefined;
 const bool = (args: string[], ...names: string[]) => takeFlag(args, names, true) === true;
 
+function formatBytes(n: bigint) {
+  const b = Number(n);
+  if (b < 1024) return `${b} B`;
+  if (b < 1024 ** 2) return `${(b / 1024).toFixed(1)} KB`;
+  if (b < 1024 ** 3) return `${(b / 1024 ** 2).toFixed(1)} MB`;
+  return `${(b / 1024 ** 3).toFixed(2)} GB`;
+}
+
+// Bytes each project stores (git objects, uncompressed); a project the hub is
+// still measuring has no entry.
+function projectSizes(conn: Conn) {
+  return snapshot(conn, tables.projectSize, () => new Map([...conn.db.projectSize.iter()].map(r => [r.projectId, r.bytes])));
+}
+
+function sizeText(sizes: Map<bigint, bigint>, id: bigint) {
+  const b = sizes.get(id);
+  return b === undefined ? 'measuring' : formatBytes(b);
+}
+
+function totalText(sizes: Map<bigint, bigint>, ids: bigint[]) {
+  let total = 0n;
+  let waiting = 0;
+  for (const id of ids) {
+    const b = sizes.get(id);
+    if (b === undefined) waiting++;
+    else total += b;
+  }
+  return `${formatBytes(total)}${waiting ? ` (${waiting} still measuring)` : ''}`;
+}
+
 function when(ts: { microsSinceUnixEpoch: bigint }) {
   return new Date(Number(ts.microsSinceUnixEpoch / 1000n)).toISOString().replace('T', ' ').slice(0, 16);
 }
@@ -458,9 +488,10 @@ async function projectList(args: string[]) {
     out(owner ? `no projects in ${owner}` : 'no projects yet');
     return;
   }
+  const sizes = await projectSizes(conn);
   const width = Math.max(...spaces.map(s => s.fullName.length));
   for (const s of spaces.sort((a, b) => Number(b.pushedAt.microsSinceUnixEpoch - a.pushedAt.microsSinceUnixEpoch))) {
-    out(`${s.fullName.padEnd(width)}  ${when(s.pushedAt)}  ${s.description}`.trimEnd());
+    out(`${s.fullName.padEnd(width)}  ${sizeText(sizes, s.id).padStart(9)}  ${when(s.pushedAt)}  ${s.description}`.trimEnd());
   }
 }
 
@@ -499,7 +530,7 @@ async function projectView(args: string[]) {
   const members = await memberRows(conn, sp.id);
   out(`collaborators  ${members.map(m => m.agent).join(', ') || 'none'}`);
   out(`builder   ${await builderLine(conn, sp)}`);
-  out(`objects   ${sp.objectCount}`);
+  out(`size      ${sizeText(await projectSizes(conn), sp.id)} (${sp.objectCount} objects)`);
   out(`created   ${when(sp.createdAt)}`);
   out(`pushed    ${when(sp.pushedAt)}`);
   out();
@@ -765,9 +796,11 @@ async function spaceView(args: string[]) {
     const synced = link.syncedAt.microsSinceUnixEpoch > 0n ? `synced ${when(link.syncedAt)}` : 'not synced yet';
     out(`github    ${link.source.replace('https://', '')} (${link.status === 'done' ? synced : link.status}: ${link.message})`);
   }
+  const sizes = await projectSizes(conn);
+  if (projects.length) out(`size      ${totalText(sizes, projects.map(p => p.id))} in ${projects.length} projects`);
   out();
   if (projects.length === 0) out('(no projects yet)');
-  for (const p of projects) out(`${p.fullName}  ${when(p.pushedAt)}  ${p.description}`.trimEnd());
+  for (const p of projects) out(`${p.fullName}  ${sizeText(sizes, p.id)}  ${when(p.pushedAt)}  ${p.description}`.trimEnd());
 }
 
 async function spaceEdit(args: string[]) {
