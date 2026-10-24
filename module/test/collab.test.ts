@@ -1,4 +1,4 @@
-// Members and presence, run in SpacetimeDB's in-process module harness (no
+// Spaces, collaborators and presence, run in SpacetimeDB's in-process module harness (no
 // server needed): npm test.
 import { describe, expect, it } from 'vitest';
 import { ConnectionId, TimeDuration } from 'spacetimedb';
@@ -43,7 +43,7 @@ function hub() {
   return { h, call, alice, bob, push, kinds };
 }
 
-describe('members', () => {
+describe('collaborators', () => {
   it('lets the owner add a member, who can then push', () => {
     const { h, call, alice, bob, push, kinds } = hub();
     const first = commit('first');
@@ -51,9 +51,9 @@ describe('members', () => {
     expect(() => call(bob, mod.addMember, { space: SPACE, agent: 'bob' })).toThrow(/permission denied/);
     call(alice, mod.addMember, { space: SPACE, agent: 'Bob' });
     call(alice, mod.addMember, { space: SPACE, agent: 'bob' }); // twice is a no-op
-    expect([...h.db.spaceMember.iter()].map(m => m.agent)).toEqual(['bob']);
+    expect([...h.db.projectMember.iter()].map(m => m.agent)).toEqual(['bob']);
     push(bob, first, '');
-    const sp = h.db.space.fullName.find(SPACE)!;
+    const sp = h.db.project.fullName.find(SPACE)!;
     expect(h.db.gitRef.spaceId.filter(sp.id).next().value?.oid).toBe(first.oid);
     expect(kinds()).toContain('alice member_added bob');
     expect(kinds()).toContain('bob ref_created refs/heads/main');
@@ -63,8 +63,8 @@ describe('members', () => {
 
   it('refuses unknown agents and the owner', () => {
     const { call, alice } = hub();
-    expect(() => call(alice, mod.addMember, { space: SPACE, agent: 'nobody' })).toThrow(/no agent named/);
-    expect(() => call(alice, mod.addMember, { space: SPACE, agent: 'alice' })).toThrow(/owns/);
+    expect(() => call(alice, mod.addMember, { space: SPACE, agent: 'nobody' })).toThrow(/no builder or agent named/);
+    expect(() => call(alice, mod.addMember, { space: SPACE, agent: 'alice' })).toThrow(/can already push/);
   });
 
   it('keeps edits, imports, builders, members and deletes with the owner', () => {
@@ -87,8 +87,8 @@ describe('members', () => {
     expect(() => call(bob, mod.removeMember, { space: SPACE, agent: 'carol' })).toThrow(/permission denied/);
     call(bob, mod.removeMember, { space: SPACE, agent: 'bob' });
     call(alice, mod.removeMember, { space: SPACE, agent: 'carol' });
-    expect([...h.db.spaceMember.iter()]).toEqual([]);
-    expect(() => call(alice, mod.removeMember, { space: SPACE, agent: 'bob' })).toThrow(/not a member/);
+    expect([...h.db.projectMember.iter()]).toEqual([]);
+    expect(() => call(alice, mod.removeMember, { space: SPACE, agent: 'bob' })).toThrow(/not a collaborator/);
     expect(() => push(bob, commit('late'), '')).toThrow(/permission denied/);
     expect(kinds()).toContain('bob member_removed bob');
     expect(kinds()).toContain('alice member_removed carol');
@@ -126,9 +126,77 @@ describe('presence', () => {
 
   it('needs an agent, a known space and a valid mode', () => {
     const { call, bob } = hub();
-    expect(() => call(as('anonymous'), mod.watchSpace, { space: SPACE, mode: 'watch', branch: '' })).toThrow(/no agent name/);
+    expect(() => call(as('anonymous'), mod.watchSpace, { space: SPACE, mode: 'watch', branch: '' })).toThrow(/no builder name/);
     expect(() => call(bob, mod.watchSpace, { space: 'alice/missing', mode: 'watch', branch: '' })).toThrow(/not found/);
     expect(() => call(bob, mod.watchSpace, { space: SPACE, mode: 'lurk', branch: '' })).toThrow(/invalid presence mode/);
     expect(() => call(bob, mod.watchSpace, { space: SPACE, mode: 'sync', branch: 'a..b' })).toThrow(/invalid branch/);
+  });
+});
+
+describe('spaces', () => {
+  const TEAM_PROJECT = 'acme/site';
+
+  it('gives every builder a personal space, and names are shared', () => {
+    const { h, call } = hub();
+    expect(h.db.hubSpace.name.find('alice')).toMatchObject({ kind: 'personal' });
+    expect(() => call(as('x'), mod.createTeam, { name: 'alice', description: '' })).toThrow(/no builder name/);
+    expect(() => call(as('alice'), mod.createTeam, { name: 'bob', description: '' })).toThrow(/taken/);
+    call(as('alice'), mod.createTeam, { name: 'Acme', description: 'the team' });
+    expect(h.db.hubSpace.name.find('acme')).toMatchObject({ kind: 'team', displayName: 'Acme', createdBy: 'alice' });
+    expect(() => call(as('carol'), mod.registerUser, { username: 'acme' })).toThrow(/taken/);
+  });
+
+  it('lets team members create projects and push; others cannot', () => {
+    const { h, call, alice, bob, kinds } = hub();
+    call(alice, mod.createTeam, { name: 'acme', description: '' });
+    expect(() => call(bob, mod.createProject, { space: 'acme', name: 'site', description: '' })).toThrow(/permission denied/);
+    expect(() => call(bob, mod.addSpaceMember, { space: 'acme', member: 'bob', role: 'member' })).toThrow(/permission denied/);
+    call(alice, mod.addSpaceMember, { space: 'acme', member: 'bob', role: 'member' });
+    call(bob, mod.createProject, { space: 'acme', name: 'site', description: '' });
+    const first = commit('first');
+    call(bob, mod.putObjects, { space: TEAM_PROJECT, objects: [TREE, first] });
+    call(bob, mod.updateRef, { space: TEAM_PROJECT, name: 'refs/heads/main', oldOid: '', newOid: first.oid, force: false });
+    expect(h.db.project.fullName.find(TEAM_PROJECT)?.owner).toBe('acme');
+    // Members push; owners manage.
+    expect(() => call(bob, mod.editSpace, { space: TEAM_PROJECT, description: 'x', defaultBranch: undefined })).toThrow(/permission denied/);
+    call(alice, mod.editSpace, { space: TEAM_PROJECT, description: 'x', defaultBranch: undefined });
+    const carol = as('carol');
+    call(carol, mod.registerUser, { username: 'carol' });
+    expect(() => call(carol, mod.putObjects, { space: TEAM_PROJECT, objects: [TREE] })).toThrow(/permission denied/);
+    expect(kinds()).toEqual(expect.arrayContaining(['alice team_created acme', 'alice team_member_added bob', 'bob space_created']));
+  });
+
+  it('keeps a team owned, and lets members leave', () => {
+    const { h, call, alice, bob } = hub();
+    call(alice, mod.createTeam, { name: 'acme', description: '' });
+    expect(() => call(alice, mod.removeSpaceMember, { space: 'acme', member: 'alice' })).toThrow(/last owner/);
+    call(alice, mod.addSpaceMember, { space: 'acme', member: 'bob', role: 'owner' });
+    call(bob, mod.removeSpaceMember, { space: 'acme', member: 'alice' });
+    expect([...h.db.spaceRole.space.filter('acme')].map(r => `${r.member}:${r.role}`)).toEqual(['bob:owner']);
+    call(bob, mod.addSpaceMember, { space: 'acme', member: 'alice', role: 'member' });
+    call(alice, mod.removeSpaceMember, { space: 'acme', member: 'alice' });
+    expect(() => call(alice, mod.addSpaceMember, { space: 'alice', member: 'bob', role: 'owner' })).toThrow(/only team spaces/);
+  });
+
+  it('deletes only an empty team space', () => {
+    const { h, call, alice } = hub();
+    call(alice, mod.createTeam, { name: 'acme', description: '' });
+    call(alice, mod.createProject, { space: 'acme', name: 'site', description: '' });
+    expect(() => call(alice, mod.deleteTeam, { space: 'acme' })).toThrow(/still has 1 projects/);
+    call(alice, mod.createTeam, { name: 'empty', description: '' });
+    call(alice, mod.deleteTeam, { space: 'empty' });
+    expect(h.db.hubSpace.name.find('empty')).toBeNull();
+    expect(() => call(alice, mod.deleteTeam, { space: 'alice' })).toThrow(/not a team space/);
+  });
+
+  it('migrates builders from before spaces', () => {
+    const { h, call, alice } = hub();
+    h.withReducerTx(alice, ctx => ctx.db.hubSpace.name.delete('alice'));
+    expect(h.db.hubSpace.name.find('alice')).toBeNull();
+    // Until it runs, a builder still owns its personal space.
+    call(alice, mod.createProject, { space: 'alice', name: 'more', description: '' });
+    call(alice, mod.migrateSpaces);
+    call(alice, mod.migrateSpaces);
+    expect(h.db.hubSpace.name.find('alice')).toMatchObject({ kind: 'personal' });
   });
 });

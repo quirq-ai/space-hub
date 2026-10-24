@@ -3,8 +3,9 @@
 //   GET /-/live.js              the page script (no inline code, so the CSP stays strict)
 //   GET /-/live?path=<page>     Server-Sent Events: the page's new <main> on every change
 //
-// The service keeps one subscription to the hub's small tables (agents,
-// spaces, refs, members, presence, imports, builders). When rows behind a
+// The service keeps one subscription to the hub's small tables (builders,
+// spaces and their members, projects, refs, collaborators, presence,
+// imports, builder credits). When rows behind a
 // page change, it renders that page again on the server, through the
 // module's own UI route, and streams the result; live.js swaps it in. The
 // browser only ever talks to this service, never to SpacetimeDB.
@@ -62,24 +63,24 @@ export class LiveHub {
     this.conn = conn;
     const db = conn.db;
     const live = (ctx: { event: { tag: string } }) => ctx.event.tag !== 'SubscribeApplied' && ctx.event.tag !== 'UnsubscribeApplied';
-    const space = (id: bigint) => this.spaces.get(id);
+    const project = (id: bigint) => this.spaces.get(id);
     const forSpace = (id: bigint, ...more: string[]) => {
-      const sp = space(id);
-      this.touch(['hub', ...(sp ? [`space:${sp.fullName}`, `agent:${sp.owner}`] : []), ...more]);
+      const sp = project(id);
+      this.touch(['hub', ...(sp ? [`project:${sp.fullName}`, `space:${sp.owner}`] : []), ...more]);
     };
     const remember = (r: { id: bigint; fullName: string; owner: string }) => this.spaces.set(r.id, { fullName: r.fullName, owner: r.owner });
 
-    db.space.onInsert((ctx, r) => {
+    db.project.onInsert((ctx, r) => {
       remember(r);
       if (live(ctx)) forSpace(r.id);
     });
     // A push's object uploads only move counters; wait for the ref.
-    db.space.onUpdate((_ctx, old, r) => {
+    db.project.onUpdate((_ctx, old, r) => {
       remember(r);
       if (old.description !== r.description || old.defaultBranch !== r.defaultBranch || old.pushedAt.microsSinceUnixEpoch !== r.pushedAt.microsSinceUnixEpoch) forSpace(r.id);
     });
     // The name stays known for rows of the same space that go with it.
-    db.space.onDelete((ctx, r) => {
+    db.project.onDelete((ctx, r) => {
       if (live(ctx)) forSpace(r.id);
     });
     const row = (ctx: { event: { tag: string } }, r: { spaceId: bigint }) => {
@@ -88,17 +89,17 @@ export class LiveHub {
     db.gitRef.onInsert(row);
     db.gitRef.onUpdate((ctx, _old, r) => row(ctx, r));
     db.gitRef.onDelete(row);
-    db.spaceImport.onInsert(row);
-    db.spaceImport.onUpdate((ctx, _old, r) => row(ctx, r));
-    db.spaceImport.onDelete(row);
-    db.spaceBuilder.onInsert(row);
-    db.spaceBuilder.onUpdate((ctx, _old, r) => row(ctx, r));
-    db.spaceBuilder.onDelete(row);
+    db.projectImport.onInsert(row);
+    db.projectImport.onUpdate((ctx, _old, r) => row(ctx, r));
+    db.projectImport.onDelete(row);
+    db.projectBuilder.onInsert(row);
+    db.projectBuilder.onUpdate((ctx, _old, r) => row(ctx, r));
+    db.projectBuilder.onDelete(row);
     const member = (ctx: { event: { tag: string } }, r: { spaceId: bigint; agent: string }) => {
-      if (live(ctx)) forSpace(r.spaceId, `agent:${r.agent}`);
+      if (live(ctx)) forSpace(r.spaceId, `space:${r.agent}`);
     };
-    db.spaceMember.onInsert(member);
-    db.spaceMember.onDelete(member);
+    db.projectMember.onInsert(member);
+    db.projectMember.onDelete(member);
     // Heartbeats only move seenAt; who is here changes on join, leave or mode.
     db.presence.onInsert(row);
     db.presence.onDelete(row);
@@ -108,11 +109,23 @@ export class LiveHub {
         forSpace(r.spaceId);
       }
     });
-    const agent = (ctx: { event: { tag: string } }, r: { username: string }) => {
-      if (live(ctx)) this.touch(['hub', `agent:${r.username}`]);
+    const builder = (ctx: { event: { tag: string } }, r: { username: string }) => {
+      if (live(ctx)) this.touch(['hub', `space:${r.username}`]);
     };
-    db.user.onInsert(agent);
-    db.user.onDelete(agent);
+    db.user.onInsert(builder);
+    db.user.onDelete(builder);
+    const hubSpace = (ctx: { event: { tag: string } }, r: { name: string; parent: string }) => {
+      if (live(ctx)) this.touch(['hub', `space:${r.name}`, ...(r.parent ? [`space:${r.parent}`] : [])]);
+    };
+    db.hubSpace.onInsert(hubSpace);
+    db.hubSpace.onUpdate((ctx, _old, r) => hubSpace(ctx, r));
+    db.hubSpace.onDelete(hubSpace);
+    const role = (ctx: { event: { tag: string } }, r: { space: string; member: string }) => {
+      if (live(ctx)) this.touch(['hub', `space:${r.space}`, `space:${r.member}`]);
+    };
+    db.spaceRole.onInsert(role);
+    db.spaceRole.onUpdate((ctx, _old, r) => role(ctx, r));
+    db.spaceRole.onDelete(role);
 
     await new Promise<void>((resolve, reject) => {
       let first = true;
@@ -125,7 +138,7 @@ export class LiveHub {
           resolve();
         })
         .onError(ctx => reject(new Error(`subscription failed: ${(ctx as { event?: unknown }).event}`)))
-        .subscribe([tables.user, tables.space, tables.gitRef, tables.spaceMember, tables.presence, tables.spaceImport, tables.spaceBuilder]);
+        .subscribe([tables.user, tables.hubSpace, tables.spaceRole, tables.project, tables.gitRef, tables.projectMember, tables.presence, tables.projectImport, tables.projectBuilder]);
     });
   }
 

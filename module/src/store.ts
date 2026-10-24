@@ -20,6 +20,27 @@ export function memberKey(spaceId: bigint, agent: string) {
   return `${spaceId}:${agent}`;
 }
 
+export function roleKey(space: string, member: string) {
+  return `${space}:${member}`;
+}
+
+// Owners of a space: a personal space's builder, a team space's owner rows,
+// an agent's parent's owners. A space without a row yet (before
+// migrateSpaces) is a builder's personal space.
+export function ownsSpace(db: Db, space: string, actor: string | null, depth = 0): boolean {
+  if (!actor) return false;
+  const row = db.hubSpace.name.find(space);
+  if (!row || row.kind === 'personal') return actor === space;
+  if (row.kind === 'agent') return depth < 4 && ownsSpace(db, row.parent, actor, depth + 1);
+  return db.spaceRole.key.find(roleKey(space, actor))?.role === 'owner';
+}
+
+// Owners and members: who pushes to every project of the space.
+export function inSpace(db: Db, space: string, actor: string | null): boolean {
+  if (!actor) return false;
+  return ownsSpace(db, space, actor) || !!db.spaceRole.key.find(roleKey(space, actor));
+}
+
 // Clients repeat watchSpace about once a minute; a presence row this much
 // older belongs to a connection that is gone.
 export const PRESENCE_STALE_SECONDS = 180;

@@ -40,9 +40,9 @@ export const LIVE_JS = `(function () {
 })();
 `;
 
-// Which changes a page follows: the home page everything, an agent's page
-// that agent, a space's pages that space. Pages that never change, and
-// anything outside the UI, are not live.
+// Which changes a page follows: the home page everything, a space's page
+// that space, a project's pages that project. The hub's own pages (/-/...),
+// raw files and anything outside the UI are not live.
 export function liveTopic(target: string): string | null {
   if (target.length > 2048) return null;
   const pathname = target.split('?')[0];
@@ -54,9 +54,9 @@ export function liveTopic(target: string): string | null {
     return null;
   }
   if (segs.length === 0) return 'hub';
-  if (segs[0] === 'guide' || segs[0] === 'builders' || segs[2] === 'raw') return null;
-  if (segs.length === 1) return `agent:${segs[0]}`;
-  return `space:${segs[0]}/${segs[1]}`;
+  if (segs[2] === 'raw') return null;
+  if (segs.length === 1) return `space:${segs[0]}`;
+  return `project:${segs[0]}/${segs[1]}`;
 }
 
 const ENTITIES: Record<string, string> = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'" };

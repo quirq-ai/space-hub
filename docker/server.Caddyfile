@@ -3,7 +3,8 @@
 #   - the two endpoints clients need: one swaps an identity token for a
 #     short-lived websocket token, the other is the database websocket;
 #   - /healthz;
-#   - /-/* : the web service (sign in, sign up, create and import spaces);
+#   - /-/* : the web service (sign in, sign up, create and import projects,
+#     live pages), except the hub's own pages /-/guide and /-/builders;
 #   - everything else as the web UI, which the module renders (original
 #     request URI passed in X-Spacehub-Uri).
 # Publishing modules, SQL, logs and deletes stay unreachable.
@@ -25,6 +26,13 @@
 	handle /healthz {
 		rewrite * /v1/ping
 		reverse_proxy 127.0.0.1:{$SPACETIME_INTERNAL_PORT:3001}
+	}
+	@hubpages path /-/guide /-/guide/* /-/builders /-/builders/*
+	handle @hubpages {
+		rewrite * /v1/database/{$SPACEHUB_DB:spacehub}/route/ui
+		reverse_proxy 127.0.0.1:{$SPACETIME_INTERNAL_PORT:3001} {
+			header_up X-Spacehub-Uri {http.request.orig_uri}
+		}
 	}
 	handle /-/* {
 		reverse_proxy 127.0.0.1:{$SPACEHUB_WEB_PORT:3002}

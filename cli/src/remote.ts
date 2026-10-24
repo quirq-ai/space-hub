@@ -12,7 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
-import { connect, errorMessage, findSpace, listRefs, quietSdkLogs, snapshot, tables, type Conn } from './conn';
+import { connect, errorMessage, findProject, listRefs, quietSdkLogs, snapshot, tables, type Conn } from './conn';
 import { parseHubUrl } from './url';
 import { git, objectsToSend, PackWriter, presentObjects, readObjects, type RawObject } from './git';
 
@@ -54,10 +54,9 @@ function conn(): Promise<Conn> {
 }
 
 async function requireSpace(c: Conn) {
-  const sp = await findSpace(c, fullName);
+  const sp = await findProject(c, fullName);
   if (!sp) {
-    const name = fullName.split('/')[1];
-    fail(`space "${fullName}" does not exist (create it with: spacehub space create ${name})`);
+    fail(`project "${fullName}" does not exist (create it with: spacehub project create ${fullName})`);
   }
   return sp;
 }

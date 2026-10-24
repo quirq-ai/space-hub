@@ -2,9 +2,9 @@
 // SpacetimeDB inside the server image, behind the same proxy, at /-/*:
 //
 //   GET/POST /-/login            sign in with an identity token
-//   GET/POST /-/signup           register an agent (new identity + name)
+//   GET/POST /-/signup           register a builder (new identity + name)
 //   POST     /-/logout           forget the session
-//   GET/POST /-/new              create a space, optionally imported from GitHub
+//   GET/POST /-/new              create a project, optionally imported from GitHub
 //   POST     /-/sync/<o>/<name>  pull the space's GitHub source again
 //   GET      /-/live, /-/live.js live pages: a page's new rendering on every change (live.ts)
 //   *        /-/api/xo/v1/...    xo.quirq.dev's store and agents (xo.ts), only
@@ -19,7 +19,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { connectTo, errorMessage, findSpace, findUser, quietSdkLogs, snapshot, tables, type Conn } from './conn';
+import { connectTo, errorMessage, findProject, findUser, quietSdkLogs, snapshot, tables, type Conn } from './conn';
 import { githubLogin, normalizeServer } from './config';
 import { esc, navFor, PAGE_CSP, shell } from '../../module/src/style';
 import { LiveHub } from './live';
@@ -135,6 +135,17 @@ async function sessionOf(req: http.IncomingMessage): Promise<{ token: string; us
   } catch {
     return null;
   }
+}
+
+// Where the signed-in builder may create projects: its personal space and
+// the spaces it belongs to.
+async function spacesOf(session: { token: string; username: string }): Promise<string[]> {
+  const others = await withConn(session.token, conn =>
+    snapshot(conn, tables.spaceRole.where(r => r.member.eq(session.username)), () =>
+      [...conn.db.spaceRole.iter()].filter(r => r.member === session.username).map(r => r.space)
+    )
+  ).catch(() => [] as string[]);
+  return [session.username, ...others.sort()];
 }
 
 // ---------------------------------------------------------------- GitHub
@@ -273,47 +284,49 @@ function loginPage(viewer: string | null, error = '', next = '/') {
     'Sign in · spacehub',
     viewer,
     `<h1><b>Sign in</b></h1>
-<p class="desc">spacehub has no passwords: an agent signs in with its identity token. Print it with <code>spacehub auth token</code> on a machine where the agent is logged in, or register a new agent.</p>
+<p class="desc">spacehub has no passwords: a builder signs in with an identity token. Print it with <code>spacehub auth token</code> on a machine where you are logged in, or register.</p>
 ${error ? `<div class="banner err">${esc(error)}</div>` : ''}
 <form method="post" action="/-/login"><input type="hidden" name="next" value="${esc(next)}">
 <label for="token">Identity token</label><textarea id="token" name="token" required spellcheck="false" autocomplete="off"></textarea>
 <p><button class="btn primary" type="submit">Sign in</button></p></form>
-<p class="muted">New here? <a href="/-/signup">Register an agent</a>.</p>`
+<p class="muted">New here? <a href="/-/signup">Register</a>.</p>`
   );
 }
 
 function signupPage(viewer: string | null, error = '', username = '') {
   return page(
-    'Register an agent · spacehub',
+    'Register · spacehub',
     viewer,
-    `<h1><b>Register an agent</b></h1>
-<p class="desc">Pick the agent's name. Agents build and own spaces: <code>&lt;agent&gt;/&lt;space&gt;</code>.</p>
+    `<h1><b>Register</b></h1>
+<p class="desc">Pick your builder name. It is also your personal space: your projects live at <code>&lt;name&gt;/&lt;project&gt;</code>.</p>
 ${error ? `<div class="banner err">${esc(error)}</div>` : ''}
-<form method="post" action="/-/signup"><label for="username">Agent name <span class="muted">lowercase letters, digits and hyphens</span></label>
+<form method="post" action="/-/signup"><label for="username">Builder name <span class="muted">lowercase letters, digits and hyphens</span></label>
 <input type="text" id="username" name="username" value="${esc(username)}" required pattern="[a-z0-9][a-z0-9-]{0,38}" autocomplete="username">
-<p><button class="btn primary" type="submit">Register agent</button></p></form>
+<p><button class="btn primary" type="submit">Register</button></p></form>
 <p class="muted">Already registered? <a href="/-/login">Sign in</a>.</p>`
   );
 }
 
-function newPage(viewer: string, error = '', values: Record<string, string> = {}) {
+function newPage(viewer: string, spaces: string[], error = '', values: Record<string, string> = {}) {
   const v = (k: string) => esc(values[k] ?? '');
+  const chosen = values.space || viewer;
+  const options = spaces.map(sp => `<option value="${esc(sp)}"${sp === chosen ? ' selected' : ''}>${esc(sp)}</option>`).join('');
   return page(
-    'New space · spacehub',
+    'New project · spacehub',
     viewer,
-    `<h1><b>Create a new space</b></h1>
+    `<h1><b>Create a new project</b></h1>
 <p class="desc">Import a public GitHub repository with its branches, tags and history, or start empty.</p>
 ${error ? `<div class="banner err">${esc(error)}</div>` : ''}
 <form method="post" action="/-/new">
 <label for="github">Import from GitHub <span class="muted">optional, e.g. https://github.com/owner/repo</span></label>
 <input type="url" id="github" name="github" value="${v('github')}" placeholder="https://github.com/owner/repo">
-<label for="name">Space name <span class="muted">defaults to the repository's name</span></label>
-<div style="display:flex;gap:8px;align-items:center"><span class="muted nowrap">${esc(viewer)} /</span><input type="text" id="name" name="name" value="${v('name')}" pattern="[A-Za-z0-9._-]{1,100}"></div>
+<label for="name">Space and project name <span class="muted">the name defaults to the repository's</span></label>
+<div style="display:flex;gap:8px;align-items:center"><select id="space" name="space" aria-label="Space">${options}</select><span class="muted">/</span><input type="text" id="name" name="name" value="${v('name')}" pattern="[A-Za-z0-9._-]{1,100}"></div>
 <label for="description">Description <span class="muted">optional; defaults to GitHub's</span></label>
 <input type="text" id="description" name="description" value="${v('description')}" maxlength="500">
-<label for="builder">Built by <span class="muted">optional; a GitHub user or organization (name or github.com URL). Defaults to the GitHub owner when importing, otherwise this agent</span></label>
+<label for="builder">Built by <span class="muted">optional; a GitHub user or organization (name or github.com URL). Defaults to the GitHub owner when importing, otherwise you</span></label>
 <input type="text" id="builder" name="builder" value="${v('builder')}" maxlength="100">
-<p><button class="btn primary" type="submit">Create space</button></p></form>`
+<p><button class="btn primary" type="submit">Create project</button></p></form>`
   );
 }
 
@@ -322,11 +335,11 @@ function welcomePage(username: string, token: string) {
     'Welcome · spacehub',
     username,
     `<h1>Welcome, <b>${esc(username)}</b></h1>
-<div class="banner ok">Your agent is registered and signed in on this browser.</div>
-<h2>Save the agent's identity token</h2>
-<p class="desc">This token is the agent. There is no password reset, so keep it somewhere safe. Use it to sign in elsewhere, or with the CLI: <code>spacehub auth login --with-token</code>.</p>
+<div class="banner ok">You are registered and signed in on this browser.</div>
+<h2>Save your identity token</h2>
+<p class="desc">This token is your login. There is no password reset, so keep it somewhere safe. Use it to sign in elsewhere, or with the CLI: <code>spacehub auth login --with-token</code>.</p>
 <code class="clone">${esc(token)}</code>
-<p><a class="btn primary" href="/-/new">Create your first space</a> <a class="btn" href="/">Go to spaces</a></p>`
+<p><a class="btn primary" href="/-/new">Create your first project</a> <a class="btn" href="/">Go to the hub</a></p>`
   );
 }
 
@@ -353,7 +366,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     } catch {
       return send(res, 400, loginPage(null, 'That token is not valid on this server.', next));
     }
-    if (!username) return send(res, 400, loginPage(null, 'That identity has no agent name yet. Register an agent instead.', next));
+    if (!username) return send(res, 400, loginPage(null, 'That identity has no builder name yet. Register instead.', next));
     return redirect(res, next, sessionCookies(req, token, username));
   }
 
@@ -381,14 +394,17 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   if (route === '/-/new') {
     const session = await sessionOf(req);
     if (!session) return redirect(res, `/-/login?next=${encodeURIComponent('/-/new')}`);
-    if (req.method === 'GET') return send(res, 200, newPage(session.username));
+    const spaces = await spacesOf(session);
+    if (req.method === 'GET') return send(res, 200, newPage(session.username, spaces));
     const form = await readForm(req);
-    const values = Object.fromEntries(['github', 'name', 'description', 'builder'].map(k => [k, (form.get(k) ?? '').trim()]));
+    const values = Object.fromEntries(['github', 'space', 'name', 'description', 'builder'].map(k => [k, (form.get(k) ?? '').trim()]));
     try {
       const source = values.github ? parseGithub(values.github) : null;
       if (values.github && !source) throw new Fail('Use a GitHub repository URL like https://github.com/owner/repo.');
       const name = (values.name || source?.repo || '').replace(/\.git$/, '');
-      if (!SPACE_NAME.test(name)) throw new Fail('Pick a space name: letters, digits, ".", "_" and "-".');
+      if (!SPACE_NAME.test(name)) throw new Fail('Pick a project name: letters, digits, ".", "_" and "-".');
+      const owner = values.space || session.username;
+      if (!spaces.includes(owner)) throw new Fail(`You cannot create projects in "${owner}".`);
       let description = values.description;
       let builder: { handle: string; name: string; url: string } | null = null;
       if (values.builder) {
@@ -403,9 +419,9 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
         description ||= info?.description ?? '';
         builder ??= await githubBuilder(info?.ownerLogin ?? source.owner);
       }
-      const space = `${session.username}/${name}`;
+      const space = `${owner}/${name}`;
       await withConn(session.token, async conn => {
-        await conn.reducers.createSpace({ name, description });
+        await conn.reducers.createProject({ space: owner, name, description });
         if (builder) await conn.reducers.setBuilder({ space, ...builder });
         if (source) await conn.reducers.startImport({ space, source: source.url });
       });
@@ -413,9 +429,9 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
         queue.push({ token: session.token, space, source: source.url, sync: false });
         pump();
       }
-      return redirect(res, `/${encodeURIComponent(session.username)}/${encodeURIComponent(name)}`);
+      return redirect(res, `/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`);
     } catch (err) {
-      return send(res, 400, newPage(session.username, errorMessage(err), values));
+      return send(res, 400, newPage(session.username, spaces, errorMessage(err), values));
     }
   }
 
@@ -427,16 +443,16 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     const back = `/${sync[1]}/${sync[2]}`;
     try {
       const source = await withConn(session.token, async conn => {
-        const sp = await findSpace(conn, space);
-        if (!sp) throw new Fail(`No space ${space}.`);
-        const row = await snapshot(conn, tables.spaceImport.where(r => r.spaceId.eq(sp.id)), () =>
-          [...conn.db.spaceImport.iter()].find(r => r.spaceId === sp.id)
+        const sp = await findProject(conn, space);
+        if (!sp) throw new Fail(`No project ${space}.`);
+        const row = await snapshot(conn, tables.projectImport.where(r => r.spaceId.eq(sp.id)), () =>
+          [...conn.db.projectImport.iter()].find(r => r.spaceId === sp.id)
         );
         if (!row) throw new Fail(`${space} was not imported from GitHub.`);
         await conn.reducers.startImport({ space, source: row.source });
         // Spaces imported before builders existed get theirs on first sync.
-        const credited = await snapshot(conn, tables.spaceBuilder.where(r => r.spaceId.eq(sp.id)), () =>
-          [...conn.db.spaceBuilder.iter()].some(r => r.spaceId === sp.id)
+        const credited = await snapshot(conn, tables.projectBuilder.where(r => r.spaceId.eq(sp.id)), () =>
+          [...conn.db.projectBuilder.iter()].some(r => r.spaceId === sp.id)
         );
         const owner = /^https:\/\/github\.com\/([^/]+)\//.exec(row.source)?.[1];
         if (!credited && owner) {
