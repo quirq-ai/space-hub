@@ -618,6 +618,67 @@ for d in "$WA/one" "$WB/one"; do git -C "$d" rebase --abort 2>/dev/null || true;
 check "space sync once fast-forwards the folder" bash -c "cd '$WB' && SPACEHUB_HOME='$WORK/home-bob' spacehub space sync >/dev/null 2>&1 && [[ \$(git -C '$WB/two' rev-parse HEAD) == \$(git -C '$WORK/src-two' rev-parse HEAD) ]]"
 check "space sync inside one project's clone syncs just that project" bash -c "cd '$WB/three' && SPACEHUB_HOME='$WORK/home-bob' spacehub space sync >/dev/null 2>&1"
 
+echo "agents"
+AG="scout$RUN"; AT="agteam$RUN"; AT2="agmore$RUN"; AW="$WORK/agent-run"
+check "create an agent" as alice spacehub agent create "$AG" -d "e2e agent"
+check "with its definition in <agent>/home" bash -c "SPACEHUB_HOME='$WORK/home-alice' git ls-remote '$HUB/$AG/home' refs/heads/main | grep -q main"
+page_has "in the xo-agent-template layout" "$AG/home" "SOUL.md"
+page_has "the agent has a page" "$AG" "Not running."
+page_has "the builder's page lists it" "$ALICE" ">$AG</b>"
+expect_fail "agents share names with builders and teams" "taken" as alice spacehub agent create "$BOB"
+expect_fail "only its owners read its token" "permission denied" as bob spacehub agent token "$AG"
+AG_TOKEN="$(as alice spacehub agent token "$AG")"
+same "its owners do" "${AG_TOKEN:0:3}" "eyJ"
+check "a team space for it to work in" as alice spacehub space create "$AT"
+git init -q -b main "$WORK/src-work"; (cd "$WORK/src-work" && echo work >notes.txt && git add . && commit -m work)
+as alice spacehub project create "$AT/work" --source "$WORK/src-work" --push >/dev/null 2>&1
+expect_fail "others cannot connect it to their spaces" "permission denied" as bob spacehub agent connect "$AG" "$BOB"
+check "connect it to the team" as alice spacehub agent connect "$AG" "$AT"
+check "agent list shows the connection" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub agent list | grep -q '^$AG .*connected to $AT'"
+# As XO Swarm launches it: logged in as the agent itself.
+(env SPACEHUB_TOKEN="$AG_TOKEN" SPACEHUB_HOME="$WORK/home-agent" spacehub agent run "$AG" "$AW" --interval 0.5 --host e2e-host >"$WORK/agent.log" 2>&1) &
+AR=$!; BG="$BG $AR"
+agent_ready() { [[ -f "$AW/$AG/home/SOUL.md" && -f "$AW/$AT/work/notes.txt" ]]; }
+check "agent run checks out its home and every connected space" wait_for 30 agent_ready
+agent_here() { as alice spacehub space who "$AT" | grep -q "^$AG  *agent"; }
+check "it shows as running in the space" wait_for 15 agent_here
+page_has "and on its page, with its host" "$AG" "e2e-host"
+echo "found something" >"$AW/$AT/work/finding.txt"
+agent_pushed() { [[ "$(as alice git ls-remote "$HUB/$AT/work" refs/heads/main | cut -f1)" == "$(git -C "$AW/$AT/work" rev-parse HEAD)" ]] && [[ -n "$(as alice git ls-remote "$HUB/$AT/work" refs/heads/main)" ]] && git -C "$AW/$AT/work" log -1 --format=%s | grep -q finding; }
+check "what it writes is pushed" wait_for 30 agent_pushed
+same "as the agent" "$(git -C "$AW/$AT/work" log -1 --format=%an)" "$AG"
+page_has "credited to the agent in the activity" "$AT/work/activity" "<b>$AG</b>"
+echo "learned a thing" >>"$AW/$AG/home/MEMORY.md"
+memory_pushed() { as alice git ls-remote "$HUB/$AG/home" refs/heads/main | cut -f1 | grep -q "$(git -C "$AW/$AG/home" rev-parse HEAD)" && git -C "$AW/$AG/home" log -1 --format=%s | grep -q MEMORY; }
+check "its memory goes back to its home" wait_for 30 memory_pushed
+(cd "$WORK/src-work" && as alice git pull -q --ff-only quirq main 2>/dev/null && echo "from alice" >>notes.txt && commit -am "alice adds a note" && as alice git push -q quirq main 2>/dev/null)
+alice_arrived() { grep -q "from alice" "$AW/$AT/work/notes.txt"; }
+check "others' pushes reach its folder" wait_for 30 alice_arrived
+check "a second space" as alice spacehub space create "$AT2"
+git init -q -b main "$WORK/src-more"; (cd "$WORK/src-more" && echo more >more.txt && git add . && commit -m more)
+as alice spacehub project create "$AT2/more" --source "$WORK/src-more" --push >/dev/null 2>&1
+check "connect it while it runs" as alice spacehub agent connect "$AG" "$AT2"
+more_ready() { [[ -f "$AW/$AT2/more/more.txt" ]]; }
+check "and it starts following that space too" wait_for 30 more_ready
+check "disconnect it" as alice spacehub agent disconnect "$AG" "$AT2"
+dropped() { grep -q "$AT2: no longer connected" "$WORK/agent.log"; }
+check "and it stops following that space" wait_for 20 dropped
+kill "$AR" 2>/dev/null; wait "$AR" 2>/dev/null || true
+agent_gone() { ! as alice spacehub space who "$AT" | grep -q "^$AG "; }
+check "stopping it ends its presence" wait_for 15 agent_gone
+(SPACEHUB_HOME="$WORK/home-alice" spacehub agent run "$AG" "$WORK/agent-owner" --interval 0.5 >"$WORK/agent-owner.log" 2>&1) &
+AO=$!; BG="$BG $AO"
+owner_ready() { [[ -f "$WORK/agent-owner/$AT/work/finding.txt" ]]; }
+check "its owners can run it too (with its token from the hub)" wait_for 30 owner_ready
+kill "$AO" 2>/dev/null; wait "$AO" 2>/dev/null || true
+expect_fail "deleting it needs --yes" "--yes" as alice spacehub agent delete "$AG"
+check "delete the agent and its home" as alice spacehub agent delete "$AG" --yes
+status_is "it is gone" "$AG" 404
+for t in "$AT" "$AT2"; do
+  for p in $(as alice spacehub project list "$t" | cut -d' ' -f1); do as alice spacehub project delete "$p" --yes >/dev/null; done
+  as alice spacehub space delete "$t" --yes >/dev/null
+done
+
 echo "create from an existing repo, edit"
 P="$WORK/p"; git init -q -b main "$P"; (cd "$P" && echo p >p.txt && git add . && commit -m p)
 check "space create --source --push still makes a project (older form)" as alice spacehub space create proj --source "$P" --push

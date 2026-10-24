@@ -24,6 +24,20 @@ export const Activity = __t.object("Activity", {
 });
 export type Activity = __Infer<typeof Activity>;
 
+export const Agent = __t.object("Agent", {
+  name: __t.string(),
+  identity: __t.identity(),
+  createdBy: __t.string(),
+  createdAt: __t.timestamp(),
+});
+export type Agent = __Infer<typeof Agent>;
+
+export const AgentSecret = __t.object("AgentSecret", {
+  name: __t.string(),
+  token: __t.string(),
+});
+export type AgentSecret = __Infer<typeof AgentSecret>;
+
 export const GitObject = __t.object("GitObject", {
   id: __t.u64(),
   key: __t.string(),
@@ -91,6 +105,7 @@ export const Presence = __t.object("Presence", {
   since: __t.timestamp(),
   seenAt: __t.timestamp(),
   space: __t.string(),
+  host: __t.string(),
 });
 export type Presence = __Infer<typeof Presence>;
 

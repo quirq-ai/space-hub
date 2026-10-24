@@ -73,6 +73,7 @@ export interface SpaceSyncOptions {
   restart: string; // the command that starts this again, for conflict help
   log: (line: string) => void;
   env?: Record<string, string>;
+  author?: string; // commit as this name (agents)
 }
 
 export class SpaceSync {
@@ -173,7 +174,7 @@ export class SpaceSync {
       p.paused = true;
       return this.check();
     }
-    const engine = new Autosync({ cwd: p.dir, remote: REMOTE, branch: p.branch, agent: this.o.agent, log: line => this.log(p.name, line), env: this.o.env });
+    const engine = new Autosync({ cwd: p.dir, remote: REMOTE, branch: p.branch, agent: this.o.agent, log: line => this.log(p.name, line), env: this.o.env, author: this.o.author });
     try {
       await engine.init();
     } catch (err) {

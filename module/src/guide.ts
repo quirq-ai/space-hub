@@ -38,6 +38,9 @@ function commands(ctx: GuideContext) {
     collaborator: `${c} project member add <space>/<project> <builder>`,
     link: `${c} space link <space> https://github.com/<account>`,
     spaceClone: `${c} space clone <space>`,
+    agentCreate: `${c} agent create <name>`,
+    agentConnect: `${c} agent connect <name> <space>`,
+    agentRun: `${c} agent run <name>`,
     spaceSync: `cd <space> && ${c} space sync --watch --auto`,
     autosync: `${c} project sync --watch --auto`,
     who: `${c} project who <space>/<project>`,
@@ -88,9 +91,10 @@ export function guidePage(ctx: GuideContext): string {
 <section id="what"><h2>What it is</h2>
 <p>A hub for git repositories, laid out like GitHub. You use plain git to push and pull. The hub tells every connected copy about each push as it happens, so machines, people and AI agents stay on the same code.</p>
 <dl class="terms">
-<dt>Space</dt><dd>A name at the top of the hub, <code>/&lt;space&gt;</code>, like a GitHub user or organization. A builder's personal space has the builder's name; a team space groups projects for several builders.</dd>
+<dt>Space</dt><dd>A name at the top of the hub, <code>/&lt;space&gt;</code>, like a GitHub user or organization. A builder's personal space has the builder's name; a team space groups projects for several builders; an agent is a space too.</dd>
 <dt>Project</dt><dd>A git repository in a space, <code>/&lt;space&gt;/&lt;project&gt;</code>, like a GitHub repository.</dd>
 <dt>Builder</dt><dd>A person with a login here. Builders also means who made a project's code: GitHub accounts show as builders for the repos imported from them.</dd>
+<dt>Agent</dt><dd>A space of its own with its own identity: its definition lives in <code>&lt;agent&gt;/home</code>, it is connected to the spaces it works in, and it runs anywhere with <code>spacehub agent run</code> (XO Swarm launches it the same way).</dd>
 <dt>Member</dt><dd>Belongs to a team space and pushes to all of its projects. Owners also manage the space.</dd>
 <dt>Collaborator</dt><dd>May push to one project outside their own spaces.</dd>
 <dt>Activity</dt><dd>The log of every change on the hub: pushes, new projects and spaces, imports and edits.</dd>
@@ -116,6 +120,7 @@ ${step('Share a repo (run inside it):', cmd.create)}
 ${step('Make a team space, add people, and share a repo into it:', cmd.team)}${code(cmd.teamMember)}${code(cmd.teamProject)}
 ${step("Mirror a GitHub user's or organization's public repositories into a space:", cmd.link)}
 ${step('Clone every project of a space into one folder, and keep them all current:', cmd.spaceClone)}${code(cmd.spaceSync)}
+${step('Make an agent, let it work in a space, and run it:', cmd.agentCreate)}${code(cmd.agentConnect)}${code(cmd.agentRun)}
 ${step('Get a project:', cmd.clone)}
 ${step('Stay in sync (inside a clone):', cmd.sync)}
 ${step('Run a command on every push:', cmd.watch)}
@@ -152,6 +157,7 @@ ${step('Edit files as usual. To see who else is working right now:', cmd.who)}
 <div class="case"><h3>Hand work to an agent</h3><p>The agent waits for your push and starts on it right away. Its push comes back to you the same way.</p>${code(cmd.watch)}</div>
 <div class="case"><h3>Edit together</h3><p>Add the others to a team space. Each runs autosync in a clone, and every edit reaches the others within seconds. The project page shows who is here now.</p>${code(cmd.teamMember)}${code(cmd.autosync)}</div>
 <div class="case"><h3>Mirror a GitHub repo</h3><p>Click <b>New project</b> and paste the GitHub URL. Use <b>Sync from GitHub</b> on the project to pull later changes.</p></div>
+<div class="case"><h3>Agents that work in your spaces</h3><p>An agent is a space with its own identity. Its definition (soul, identity, memory, skills) is a project, it is connected to the spaces it may work in, and <code>agent run</code> keeps all of it in one folder, pushing as the agent. XO Swarm launches it the same way.</p>${code(cmd.agentCreate)}${code(cmd.agentConnect)}${code(cmd.agentRun)}</div>
 <div class="case"><h3>Mirror a whole GitHub organization</h3><p>Link a space to it: every public repository becomes a project with the same name, kept in step. Work done here is never overwritten; a branch GitHub moved another way is kept and marked <b>diverged</b>.</p>${code(cmd.link)}</div>
 <div class="case"><h3>Follow the work</h3><p>The <b>Activity</b> feed on the home page and on each project shows every push, import and change, newest first.</p></div>
 </div></section>

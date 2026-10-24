@@ -81,6 +81,7 @@ export interface AutosyncOptions {
   agent: string; // committer name when git has none configured
   log: (line: string) => void;
   env?: Record<string, string>; // for git, e.g. the hub token to push with
+  author?: string; // commit as this name whatever git has configured (agents)
 }
 
 export class Autosync {
@@ -99,9 +100,11 @@ export class Autosync {
   // Commits need an author; agents in fresh sandboxes often have none, so
   // fall back to the agent's name.
   async init() {
-    const name = (await this.git(['config', 'user.name'])).out.trim();
-    const email = (await this.git(['config', 'user.email'])).out.trim();
-    this.identity = [...(name ? [] : ['-c', `user.name=${this.o.agent}`]), ...(email ? [] : ['-c', `user.email=${this.o.agent}@spacehub`])];
+    const forced = this.o.author;
+    const name = forced ? '' : (await this.git(['config', 'user.name'])).out.trim();
+    const email = forced ? '' : (await this.git(['config', 'user.email'])).out.trim();
+    const who = forced ?? this.o.agent;
+    this.identity = [...(name ? [] : ['-c', `user.name=${who}`]), ...(email ? [] : ['-c', `user.email=${who}@spacehub`])];
     const state = await this.conflictState();
     if (state) throw new AutosyncStop(UNFINISHED, state);
   }

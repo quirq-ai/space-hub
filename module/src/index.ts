@@ -14,6 +14,8 @@
 //   object_chunk  bodies of objects larger than one chunk, split in order
 //   space_member  (code: projectMember) collaborators on one project
 //   presence      which connected clients follow which project right now
+//   agent         an agent: a space of its own, with its own identity
+//   agent_secret  (private) an agent's token, for its owners to launch it with
 //   space_link    the GitHub user or organization a space mirrors
 //   ref_sync      where GitHub had each mirrored ref at the last sync
 //
@@ -221,8 +223,26 @@ const presence = table(
     since: t.timestamp(),
     seenAt: t.timestamp(),
     space: t.string().default(''), // the project's space, or the space followed whole
+    host: t.string().default(''), // where a running agent runs, as it says
   }
 );
+
+// An agent is a space (hub_space kind "agent") with an identity of its own:
+// it pushes as itself to its own projects and to the spaces it is connected
+// to (as a member there). Its owners are its parent space's owners. XO Swarm
+// launches it with `spacehub agent run`, which needs its token.
+const agent = table(
+  { name: 'agent', public: true },
+  {
+    name: t.string().primaryKey(),
+    identity: t.identity().unique(),
+    createdBy: t.string(),
+    createdAt: t.timestamp(),
+  }
+);
+
+// Private: only the module reads it, for the agent's owners (agentToken).
+const agentSecret = table({ name: 'agent_secret' }, { name: t.string().primaryKey(), token: t.string() });
 
 // The GitHub account (user or organization) a space mirrors: its public
 // repositories become projects with the same names, kept in step by the
@@ -306,6 +326,8 @@ const spacetimedb = schema({
   spaceRole,
   spaceLink,
   refSync,
+  agent,
+  agentSecret,
   hubState,
   xoRecord,
   xoAgent,
@@ -350,13 +372,15 @@ function requireUser(ctx: Ctx) {
   return me;
 }
 
-// Who is calling: a builder's name, or null.
+// Who is calling: a builder's name, an agent's name, or null.
 function actorName(ctx: Ctx): string | null {
-  return ctx.db.user.identity.find(ctx.sender)?.username ?? null;
+  return ctx.db.user.identity.find(ctx.sender)?.username ?? ctx.db.agent.identity.find(ctx.sender)?.name ?? null;
 }
 
 function requireActor(ctx: Ctx): string {
-  return actorName(ctx) ?? requireUser(ctx).username;
+  const me = actorName(ctx);
+  if (!me) throw new SenderError('no builder or agent name for this identity: run spacehub auth login --builder <name>');
+  return me;
 }
 
 function requireHubSpace(ctx: Ctx, name: string) {
@@ -524,6 +548,8 @@ export const registerUser = spacetimedb.reducer({ username: t.string() }, (ctx, 
   }
   const existing = ctx.db.user.identity.find(ctx.sender);
   if (existing) throw new SenderError(`this identity is already the builder "${existing.username}"`);
+  const agent = ctx.db.agent.identity.find(ctx.sender);
+  if (agent) throw new SenderError(`this identity is the agent "${agent.name}"`);
   addBuilder(ctx, ctx.sender, username);
 });
 
@@ -876,7 +902,9 @@ export const addSpaceMember = spacetimedb.reducer(
   (ctx, { space, member: raw, role }) => {
     const row = requireSpaceOwner(ctx, space);
     const member = raw.trim().toLowerCase();
-    requireMemberName(ctx, member);
+    if (requireMemberName(ctx, member) === 'agent' && !isOwner(ctx, member, actorName(ctx))) {
+      throw new SenderError(`permission denied: only the owners of the agent "${member}" connect it`);
+    }
     if (role !== 'owner' && role !== 'member') throw new SenderError('a role is "owner" or "member"');
     if (row.kind !== 'team' && role === 'owner') throw new SenderError(`only team spaces have more owners; "${space}" is a ${row.kind} space`);
     if (member === space || (row.kind === 'agent' && isOwner(ctx, space, member))) throw new SenderError(`${member} already owns "${space}"`);
@@ -905,6 +933,90 @@ export const removeSpaceMember = spacetimedb.reducer({ space: t.string(), member
   ctx.db.spaceRole.id.delete(row.id);
   logActivity(ctx, { kind: 'team_member_removed', space, subject: member });
 });
+
+// ---------------------------------------------------------------- agents
+
+// Make an agent: a space named `name`, owned by `parent` (your personal space
+// or a team you own), whose identity is `identity`. The caller made that
+// identity and holds its token, which the hub keeps for the agent's owners.
+export const createAgent = spacetimedb.reducer(
+  { name: t.string(), parent: t.string(), identity: t.string(), token: t.string(), description: t.string() },
+  (ctx, { name: raw, parent, identity: hex, token, description }) => {
+    const me = requireUser(ctx).username;
+    const name = raw.trim().toLowerCase();
+    const owner = requireHubSpace(ctx, parent);
+    if (owner.kind === 'agent') throw new SenderError('an agent belongs to a builder or a team space, not to another agent');
+    if (!isOwner(ctx, parent, me)) throw new SenderError(`permission denied: only owners of "${parent}" make agents in it`);
+    checkSpaceName(ctx, name);
+    if (!/^(0x)?[0-9a-fA-F]{64}$/.test(hex)) throw new SenderError('identity must be 64 hex digits');
+    if (!token || token.length > 4096) throw new SenderError('invalid token');
+    const identity = Identity.fromString(hex.replace(/^0x/, '').toLowerCase());
+    if (ctx.db.user.identity.find(identity) || ctx.db.agent.identity.find(identity)) throw new SenderError('that identity is already a builder or an agent');
+    ctx.db.hubSpace.insert({ name, kind: 'agent', displayName: raw.trim(), description: description.slice(0, 500), parent, createdBy: me, createdAt: ctx.timestamp });
+    ctx.db.agent.insert({ name, identity, createdBy: me, createdAt: ctx.timestamp });
+    ctx.db.agentSecret.insert({ name, token });
+    logActivity(ctx, { kind: 'agent_created', space: name, subject: parent });
+  }
+);
+
+function requireAgent(ctx: Ctx, name: string) {
+  const row = ctx.db.hubSpace.name.find(name);
+  if (row?.kind !== 'agent') throw new SenderError(`no agent named "${name}"`);
+  return row;
+}
+
+// Delete an agent with no projects left (delete them first).
+export const deleteAgent = spacetimedb.reducer({ name: t.string() }, (ctx, { name }) => {
+  requireAgent(ctx, name);
+  if (!isOwner(ctx, name, actorName(ctx))) throw new SenderError(`permission denied: only the owners of "${name}" delete it`);
+  const projects = [...ctx.db.project.owner.filter(name)].length;
+  if (projects) throw new SenderError(`"${name}" still has ${projects} projects; delete them first`);
+  for (const r of [...ctx.db.spaceRole.member.filter(name)]) ctx.db.spaceRole.id.delete(r.id);
+  for (const r of [...ctx.db.spaceRole.space.filter(name)]) ctx.db.spaceRole.id.delete(r.id);
+  for (const m of [...ctx.db.projectMember.agent.filter(name)]) ctx.db.projectMember.id.delete(m.id);
+  for (const p of [...ctx.db.presence.iter()]) if (p.agent === name) ctx.db.presence.connectionId.delete(p.connectionId);
+  ctx.db.agentSecret.name.delete(name);
+  ctx.db.agent.name.delete(name);
+  ctx.db.hubSpace.name.delete(name);
+  logActivity(ctx, { kind: 'agent_deleted', space: name });
+});
+
+// Connect an agent to a space: it becomes a member there. The caller must
+// own both, so neither side is volunteered by the other.
+export const connectAgent = spacetimedb.reducer({ agent: t.string(), space: t.string() }, (ctx, { agent: name, space }) => {
+  requireAgent(ctx, name);
+  const row = requireSpaceOwner(ctx, space);
+  const me = requireActor(ctx);
+  if (!isOwner(ctx, name, me)) throw new SenderError(`permission denied: only the owners of "${name}" connect it`);
+  if (row.kind === 'agent') throw new SenderError('agents connect to builders\' and team spaces, not to other agents');
+  const key = roleKey(space, name);
+  if (ctx.db.spaceRole.key.find(key)) return;
+  ctx.db.spaceRole.insert({ id: 0n, key, space, member: name, role: 'member', addedBy: me, addedAt: ctx.timestamp });
+  logActivity(ctx, { kind: 'agent_connected', space, subject: name });
+});
+
+// Owners of either side can disconnect.
+export const disconnectAgent = spacetimedb.reducer({ agent: t.string(), space: t.string() }, (ctx, { agent: name, space }) => {
+  requireAgent(ctx, name);
+  const me = actorName(ctx);
+  if (!isOwner(ctx, name, me) && !isOwner(ctx, space, me)) throw new SenderError(`permission denied: only owners of "${name}" or "${space}" disconnect them`);
+  const row = ctx.db.spaceRole.key.find(roleKey(space, name));
+  if (!row) throw new SenderError(`${name} is not connected to "${space}"`);
+  ctx.db.spaceRole.id.delete(row.id);
+  logActivity(ctx, { kind: 'agent_disconnected', space, subject: name });
+});
+
+// An agent's token, for its owners (to launch it, e.g. from XO Swarm).
+// A procedure, so the token goes back to the caller alone.
+export const agentToken = spacetimedb.procedure({ agent: t.string() }, t.string(), (ctx, { agent: name }) =>
+  ctx.withTx(tx => {
+    const db = tx.db as Ctx['db'];
+    const me = db.user.identity.find(ctx.sender)?.username ?? null;
+    if (db.hubSpace.name.find(name)?.kind !== 'agent') throw new SenderError(`no agent named "${name}"`);
+    if (!ownsSpace(db, name, me)) throw new SenderError(`permission denied: only the owners of "${name}" read its token`);
+    return db.agentSecret.name.find(name)?.token ?? '';
+  })
+);
 
 // ---------------------------------------------------------------- GitHub links
 
@@ -1001,7 +1113,9 @@ export const recordRefSync = spacetimedb.reducer(
 export const addMember = spacetimedb.reducer({ space: t.string(), agent: t.string() }, (ctx, { space: fullName, agent }) => {
   const sp = requireProjectAdmin(ctx, fullName);
   const name = agent.trim().toLowerCase();
-  requireMemberName(ctx, name);
+  if (requireMemberName(ctx, name) === 'agent' && !isOwner(ctx, name, actorName(ctx))) {
+    throw new SenderError(`permission denied: only the owners of the agent "${name}" connect it`);
+  }
   if (isMember(ctx, sp.owner, name)) throw new SenderError(`${name} belongs to "${sp.owner}" and can already push to "${sp.fullName}"`);
   const key = memberKey(sp.id, name);
   if (ctx.db.projectMember.key.find(key)) return;
@@ -1025,7 +1139,7 @@ export const removeMember = spacetimedb.reducer({ space: t.string(), agent: t.st
 
 // ---------------------------------------------------------------- presence
 
-const PRESENCE_MODES = new Set(['watch', 'sync', 'autosync']);
+const PRESENCE_MODES = new Set(['watch', 'sync', 'autosync', 'agent']);
 const PRESENCE_STALE_MICROS = BigInt(PRESENCE_STALE_SECONDS) * 1_000_000n;
 
 // This connection follows `space` (`branch` for sync and autosync). Called
@@ -1033,7 +1147,7 @@ const PRESENCE_STALE_MICROS = BigInt(PRESENCE_STALE_SECONDS) * 1_000_000n;
 export const watchSpace = spacetimedb.reducer(
   { space: t.string(), mode: t.string(), branch: t.string() },
   (ctx, { space: fullName, mode, branch }) => {
-    const me = requireUser(ctx);
+    const me = { username: requireActor(ctx) };
     const sp = requireProject(ctx, fullName);
     if (!PRESENCE_MODES.has(mode)) throw new SenderError(`invalid presence mode "${mode}"`);
     if (branch !== '' && !validRefName(`refs/heads/${branch}`)) throw new SenderError(`invalid branch name "${branch}"`);
@@ -1041,14 +1155,15 @@ export const watchSpace = spacetimedb.reducer(
     if (!connectionId) throw new SenderError('presence needs a live connection');
     const current = ctx.db.presence.connectionId.find(connectionId);
     const same = current && current.spaceId === sp.id && current.mode === mode && current.branch === branch;
-    const row = { connectionId, spaceId: sp.id, agent: me.username, mode, branch, since: same ? current.since : ctx.timestamp, seenAt: ctx.timestamp, space: sp.owner };
+    const row = { connectionId, spaceId: sp.id, agent: me.username, mode, branch, since: same ? current.since : ctx.timestamp, seenAt: ctx.timestamp, space: sp.owner, host: '' };
     if (current) ctx.db.presence.connectionId.update(row);
     else ctx.db.presence.insert(row);
   }
 );
 
-// This connection follows every project of `space` (space clone and sync).
-export const watchHub = spacetimedb.reducer({ space: t.string(), mode: t.string() }, (ctx, { space, mode }) => {
+// This connection follows every project of `space` (space clone and sync,
+// and agents, which name the host they run on).
+export const watchHub = spacetimedb.reducer({ space: t.string(), mode: t.string(), host: t.string() }, (ctx, { space, mode, host }) => {
   const me = requireActor(ctx);
   requireHubSpace(ctx, space);
   if (!PRESENCE_MODES.has(mode)) throw new SenderError(`invalid presence mode "${mode}"`);
@@ -1056,7 +1171,7 @@ export const watchHub = spacetimedb.reducer({ space: t.string(), mode: t.string(
   if (!connectionId) throw new SenderError('presence needs a live connection');
   const current = ctx.db.presence.connectionId.find(connectionId);
   const same = current && current.spaceId === 0n && current.space === space && current.mode === mode;
-  const row = { connectionId, spaceId: 0n, agent: me, mode, branch: '', since: same ? current.since : ctx.timestamp, seenAt: ctx.timestamp, space };
+  const row = { connectionId, spaceId: 0n, agent: me, mode, branch: '', since: same ? current.since : ctx.timestamp, seenAt: ctx.timestamp, space, host: host.slice(0, 100) };
   if (current) ctx.db.presence.connectionId.update(row);
   else ctx.db.presence.insert(row);
 });
