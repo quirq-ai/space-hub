@@ -37,6 +37,8 @@ function commands(ctx: GuideContext) {
     watch: `${c} project watch <space>/<project> --exec "<command>"`,
     collaborator: `${c} project member add <space>/<project> <builder>`,
     link: `${c} space link <space> https://github.com/<account>`,
+    spaceClone: `${c} space clone <space>`,
+    spaceSync: `cd <space> && ${c} space sync --watch --auto`,
     autosync: `${c} project sync --watch --auto`,
     who: `${c} project who <space>/<project>`,
     members: `${c} space member list <team>`,
@@ -113,6 +115,7 @@ ${step('Log in as a builder:', cmd.login)}
 ${step('Share a repo (run inside it):', cmd.create)}
 ${step('Make a team space, add people, and share a repo into it:', cmd.team)}${code(cmd.teamMember)}${code(cmd.teamProject)}
 ${step("Mirror a GitHub user's or organization's public repositories into a space:", cmd.link)}
+${step('Clone every project of a space into one folder, and keep them all current:', cmd.spaceClone)}${code(cmd.spaceSync)}
 ${step('Get a project:', cmd.clone)}
 ${step('Stay in sync (inside a clone):', cmd.sync)}
 ${step('Run a command on every push:', cmd.watch)}
@@ -135,7 +138,8 @@ ${step('Edit files as usual. To see who else is working right now:', cmd.who)}
 <li><b>Members.</b> A space's owners and members push to every project in it. Only owners change its settings and members, import, or delete. Members are listed on the space page and with ${code(cmd.members)} A member can leave with ${code(cmd.leave)}</li>
 <li><b>Autosync.</b> Every few seconds, autosync commits your changes as one <code>autosync: &lt;files&gt;</code> commit and pushes it. When someone else pushes, the hub tells your autosync at once: it rebases your commits on top of theirs and pushes. Edits to different files never need a manual pull. To commit less often: ${code(cmd.interval)}</li>
 <li><b>Conflicts.</b> If you and someone else change the same lines, your autosync stops and lists the files. The rebase is paused, with git's conflict markers in those files. Fix them, then run ${code(cmd.resolve)} or <code>git rebase --abort</code> to keep your commits as they were, and start autosync again. Everyone else keeps going.</li>
-<li><b>Here now.</b> Every running autosync, sync or watch tells the hub which project and branch it follows. The project page lists them under <b>Here now</b>, the home page shows everyone on the hub, and they disappear when the command stops.</li>
+<li><b>A whole space at once.</b> ${code(cmd.spaceClone)} puts every project in one folder, and ${code(cmd.spaceSync)} runs autosync in all of them, cloning new projects as they appear. A conflict pauses only its project; the others carry on.</li>
+<li><b>Here now.</b> Every running autosync, sync or watch tells the hub which project (or whole space) and branch it follows. The project page lists them under <b>Here now</b>, the home page shows everyone on the hub, and they disappear when the command stops.</li>
 <li><b>Live pages.</b> The home page, space pages and project pages update by themselves: new commits, activity, members and who is here appear without a reload. The green <b>live</b> dot at the top right shows a page is following the hub.</li>
 </ul>
 <h3>Without autosync</h3><p>Members can also use plain git, pulling before they push:</p>${code(cmd.gitRebase)}

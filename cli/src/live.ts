@@ -40,7 +40,7 @@ export class LiveHub {
   private config: LiveConfig;
   private conn: Conn | null = null;
   private clients = new Set<Client>();
-  private spaces = new Map<bigint, { fullName: string; owner: string }>();
+  private projectsById = new Map<bigint, { fullName: string; owner: string }>();
   private renders = new Map<string, Promise<string | null>>();
 
   constructor(config: LiveConfig) {
@@ -63,12 +63,12 @@ export class LiveHub {
     this.conn = conn;
     const db = conn.db;
     const live = (ctx: { event: { tag: string } }) => ctx.event.tag !== 'SubscribeApplied' && ctx.event.tag !== 'UnsubscribeApplied';
-    const project = (id: bigint) => this.spaces.get(id);
+    const project = (id: bigint) => this.projectsById.get(id);
     const forSpace = (id: bigint, ...more: string[]) => {
       const sp = project(id);
       this.touch(['hub', ...(sp ? [`project:${sp.fullName}`, `space:${sp.owner}`] : []), ...more]);
     };
-    const remember = (r: { id: bigint; fullName: string; owner: string }) => this.spaces.set(r.id, { fullName: r.fullName, owner: r.owner });
+    const remember = (r: { id: bigint; fullName: string; owner: string }) => this.projectsById.set(r.id, { fullName: r.fullName, owner: r.owner });
 
     db.project.onInsert((ctx, r) => {
       remember(r);
@@ -100,13 +100,19 @@ export class LiveHub {
     };
     db.projectMember.onInsert(member);
     db.projectMember.onDelete(member);
-    // Heartbeats only move seenAt; who is here changes on join, leave or mode.
-    db.presence.onInsert(row);
-    db.presence.onDelete(row);
+    // Heartbeats only move seenAt; who is here changes on join, leave or
+    // mode. Someone following a whole space shows on all of its projects.
+    const here = (r: { spaceId: bigint; space: string }) => {
+      if (r.spaceId !== 0n) return forSpace(r.spaceId);
+      const projects = [...this.projectsById.entries()].filter(([, p]) => p.owner === r.space).map(([, p]) => `project:${p.fullName}`);
+      this.touch(['hub', `space:${r.space}`, ...projects]);
+    };
+    db.presence.onInsert((ctx, r) => live(ctx) && here(r));
+    db.presence.onDelete((ctx, r) => live(ctx) && here(r));
     db.presence.onUpdate((_ctx, old, r) => {
-      if (old.spaceId !== r.spaceId || old.mode !== r.mode || old.branch !== r.branch) {
-        forSpace(old.spaceId);
-        forSpace(r.spaceId);
+      if (old.spaceId !== r.spaceId || old.space !== r.space || old.mode !== r.mode || old.branch !== r.branch) {
+        here(old);
+        here(r);
       }
     });
     const builder = (ctx: { event: { tag: string } }, r: { username: string }) => {

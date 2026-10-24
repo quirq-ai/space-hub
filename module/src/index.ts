@@ -214,12 +214,13 @@ const presence = table(
   { name: 'presence', public: true },
   {
     connectionId: t.connectionId().primaryKey(),
-    spaceId: t.u64().index('btree'),
+    spaceId: t.u64().index('btree'), // the project; 0 when following a whole space
     agent: t.string(),
     mode: t.string(), // watch | sync | autosync
     branch: t.string(), // what sync and autosync keep current ("" for watch)
     since: t.timestamp(),
     seenAt: t.timestamp(),
+    space: t.string().default(''), // the project's space, or the space followed whole
   }
 );
 
@@ -863,6 +864,7 @@ export const deleteTeam = spacetimedb.reducer({ space: t.string() }, (ctx, { spa
   if (projects || agents) throw new SenderError(`"${space}" still has ${projects} projects and ${agents} agents; delete or move them first`);
   for (const r of [...ctx.db.spaceRole.space.filter(space)]) ctx.db.spaceRole.id.delete(r.id);
   ctx.db.spaceLink.space.delete(space);
+  for (const p of [...ctx.db.presence.spaceId.filter(0n)]) if (p.space === space) ctx.db.presence.connectionId.delete(p.connectionId);
   ctx.db.hubSpace.name.delete(space);
   logActivity(ctx, { kind: 'team_deleted', space, subject: space });
 });
@@ -1039,11 +1041,25 @@ export const watchSpace = spacetimedb.reducer(
     if (!connectionId) throw new SenderError('presence needs a live connection');
     const current = ctx.db.presence.connectionId.find(connectionId);
     const same = current && current.spaceId === sp.id && current.mode === mode && current.branch === branch;
-    const row = { connectionId, spaceId: sp.id, agent: me.username, mode, branch, since: same ? current.since : ctx.timestamp, seenAt: ctx.timestamp };
+    const row = { connectionId, spaceId: sp.id, agent: me.username, mode, branch, since: same ? current.since : ctx.timestamp, seenAt: ctx.timestamp, space: sp.owner };
     if (current) ctx.db.presence.connectionId.update(row);
     else ctx.db.presence.insert(row);
   }
 );
+
+// This connection follows every project of `space` (space clone and sync).
+export const watchHub = spacetimedb.reducer({ space: t.string(), mode: t.string() }, (ctx, { space, mode }) => {
+  const me = requireActor(ctx);
+  requireHubSpace(ctx, space);
+  if (!PRESENCE_MODES.has(mode)) throw new SenderError(`invalid presence mode "${mode}"`);
+  const connectionId = ctx.connectionId;
+  if (!connectionId) throw new SenderError('presence needs a live connection');
+  const current = ctx.db.presence.connectionId.find(connectionId);
+  const same = current && current.spaceId === 0n && current.space === space && current.mode === mode;
+  const row = { connectionId, spaceId: 0n, agent: me, mode, branch: '', since: same ? current.since : ctx.timestamp, seenAt: ctx.timestamp, space };
+  if (current) ctx.db.presence.connectionId.update(row);
+  else ctx.db.presence.insert(row);
+});
 
 export const leaveSpace = spacetimedb.reducer(ctx => {
   if (ctx.connectionId) ctx.db.presence.connectionId.delete(ctx.connectionId);

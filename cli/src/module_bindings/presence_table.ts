@@ -18,4 +18,5 @@ export default __t.row({
   branch: __t.string(),
   since: __t.timestamp(),
   seenAt: __t.timestamp().name("seen_at"),
+  space: __t.string(),
 });

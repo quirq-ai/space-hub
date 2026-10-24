@@ -125,6 +125,16 @@ describe('presence', () => {
     expect([...h.db.presence.iter()].map(r => r.agent)).toEqual(['alice']);
   });
 
+  it('follows a whole space', () => {
+    const { h, call, alice, bob } = hub();
+    call(alice, mod.createTeam, { name: 'acme', description: '' });
+    expect(() => call(bob, mod.watchHub, { space: 'nowhere', mode: 'autosync' })).toThrow(/no space named/);
+    call(bob, mod.watchHub, { space: 'acme', mode: 'autosync' });
+    expect(h.db.presence.connectionId.find(bob.connectionId!)).toMatchObject({ spaceId: 0n, space: 'acme', agent: 'bob', mode: 'autosync' });
+    call(bob, mod.watchSpace, { space: SPACE, mode: 'sync', branch: 'main' });
+    expect(h.db.presence.connectionId.find(bob.connectionId!)).toMatchObject({ space: 'alice', branch: 'main' });
+  });
+
   it('needs an agent, a known space and a valid mode', () => {
     const { call, bob } = hub();
     expect(() => call(as('anonymous'), mod.watchSpace, { space: SPACE, mode: 'watch', branch: '' })).toThrow(/no builder name/);

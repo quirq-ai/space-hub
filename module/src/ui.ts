@@ -535,14 +535,23 @@ class Renderer {
     return [...this.db.projectMember.spaceId.filter(sp.id)].sort((a, b) => a.agent.localeCompare(b.agent));
   }
 
-  // Connections that follow a space (or the whole hub) and are still
-  // heartbeating; one line per agent, mode, branch and space.
-  hereNow(spaceId: bigint | null) {
-    const rows = spaceId === null ? [...this.db.presence.iter()] : [...this.db.presence.spaceId.filter(spaceId)];
+  // The space a presence row is about: its own column, or (rows from older
+  // clients) its project's space.
+  presenceSpace(p: Presence) {
+    return p.space || this.db.project.id.find(p.spaceId)?.owner || '';
+  }
+
+  // Connections that follow a project (with those following its whole
+  // space), a space, or the whole hub, and are still heartbeating; one line
+  // per agent, mode, branch and project.
+  hereNow(where: { project: Space } | { space: string } | null) {
+    let rows = [...this.db.presence.iter()];
+    if (where && 'project' in where) rows = rows.filter(p => p.spaceId === where.project.id || (p.spaceId === 0n && p.space === where.project.owner));
+    else if (where) rows = rows.filter(p => this.presenceSpace(p) === where.space);
     const groups = new Map<string, { row: Presence; count: number }>();
     for (const p of rows) {
       if (this.now - seconds(p.seenAt) > PRESENCE_STALE_SECONDS) continue;
-      const key = `${p.spaceId}:${p.agent}:${p.mode}:${p.branch}`;
+      const key = `${p.spaceId}:${p.space}:${p.agent}:${p.mode}:${p.branch}`;
       const g = groups.get(key);
       if (!g) groups.set(key, { row: p, count: 1 });
       else {
@@ -558,8 +567,9 @@ class Renderer {
       .slice(0, 30)
       .map(({ row: p, count }) => {
         const sp = withSpace ? this.db.project.id.find(p.spaceId) : undefined;
-        const branch = p.branch ? ` ${esc(p.branch)}` : '';
-        const where = sp ? ` <span class="muted">in</span> ${this.a(sp.fullName, esc(sp.fullName))}` : '';
+        const whole = p.spaceId === 0n;
+        const branch = p.branch ? ` ${esc(p.branch)}` : whole ? ' all projects' : '';
+        const where = sp ? ` <span class="muted">in</span> ${this.a(sp.fullName, esc(sp.fullName))}` : whole && withSpace ? ` <span class="muted">of</span> ${this.a(p.space, esc(p.space))}` : '';
         const times = count > 1 ? ` <span class="muted">×${count}</span>` : '';
         return `<tr><td>${this.a(p.agent, `<b>${esc(p.agent)}</b>`)} <span class="pill">${esc(p.mode)}</span><span class="muted">${branch}</span>${where}${times}</td><td class="r muted">${this.ago(seconds(p.since))}</td></tr>`;
       })
@@ -630,7 +640,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
       : '';
     const sync = row && row.status !== 'running' ? this.syncForm(sp, 'Sync from GitHub') : '';
     const count = commits >= COUNT_CAP ? `${COUNT_CAP.toLocaleString('en-US')}+` : commits.toLocaleString('en-US');
-    const here = this.hereNow(sp.id);
+    const here = this.hereNow({ project: sp });
     const members = this.members(sp).map(m => this.a(m.agent, esc(m.agent)));
     return `<aside><h2>Clone</h2><code class="clone">spacehub project clone ${esc(sp.fullName)}</code>
 <code class="clone">git clone -o quirq quirq://${esc(this.host)}/${esc(sp.fullName)}</code>
@@ -876,7 +886,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     const rows = this.projectRows(projects, false);
     const list = `<div class="box">${rows ? `<table>${rows}</table>` : '<div class="empty">No projects yet.</div>'}</div>`;
     const title = `<h1><b>${esc(row?.displayName || name)}</b> ${this.spacePill(name)}</h1>${row?.description ? `<p class="desc">${esc(row.description)}</p>` : ''}`;
-    const here = this.hereBox(this.hereNow(null).filter(g => this.db.project.id.find(g.row.spaceId)?.owner === name), true);
+    const here = this.hereBox(this.hereNow({ space: name }), true);
     if (kind === 'personal') {
       const since = user ? `<p class="desc">Builder · joined ${this.ago(seconds(user.createdAt))} · ${plural(projects.length, 'project')}</p>` : '';
       const teams = [...this.db.spaceRole.member.filter(name)]

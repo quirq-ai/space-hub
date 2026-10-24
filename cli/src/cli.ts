@@ -5,11 +5,14 @@
 // git-remote-quirq, on a remote always named quirq that points at a quirq URL
 // (quirq://hub.quirq.dev/<space>/<project>).
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
 import readline from 'node:readline/promises';
 import { configFile, githubLogin, loadConfig, removeToken, saveSettings, saveToken } from './config';
 import { connect, errorMessage, findHubSpace, findProject, findUser, listRefs, projectsIn, quietSdkLogs, snapshot, spaceRoles, tables, type Conn } from './conn';
-import { Autosync, AutosyncStop, conflictHelp, UNFINISHED, unfinishedWork } from './autosync';
+import { Autosync, AutosyncLoop, AutosyncStop, conflictHelp, UNFINISHED, unfinishedWork } from './autosync';
 import { git } from './git';
+import { cloneProject, findManifest, SpaceSync, writeManifest } from './spacesync';
 import { hubUrl, parseHubUrl, REMOTE } from './url';
 
 quietSdkLogs();
@@ -43,6 +46,12 @@ SPACES
   space member add <space> <name> [--owner]   Add a builder as a member (or owner)
   space member remove <space> <name>          (a member can remove itself)
   space member list <space>
+  space clone <space> [<dir>]              Clone every project of a space into one folder
+  space sync [--watch] [--auto] [--interval <seconds>]
+                                    In that folder: fast-forward every project and clone new ones;
+                                    --watch on every push; --auto runs autosync in every project
+                                    (a conflict pauses only its project). Inside one project's
+                                    clone, it syncs that project as before.
   space link <space> <github account>      Mirror a GitHub user's or organization's public repos
                                     as projects with the same names, kept in step by the hub
                                     (GitHub to hub; work done here is kept, never overwritten)
@@ -294,6 +303,20 @@ async function announce(space: string, mode: 'watch' | 'sync' | 'autosync', bran
   let warned = false;
   const beat = () =>
     conn.reducers.watchSpace({ space, mode, branch }).catch(err => {
+      if (!warned) note(`spacehub: could not show presence: ${errorMessage(err)}`);
+      warned = true;
+    });
+  await beat();
+  setInterval(beat, HEARTBEAT_MS);
+}
+
+// The same, for a connection that follows every project of a space.
+async function announceHub(space: string, mode: 'sync' | 'autosync') {
+  const { conn, identity } = await open();
+  if (!(await findUser(conn, identity))) return;
+  let warned = false;
+  const beat = () =>
+    conn.reducers.watchHub({ space, mode }).catch(err => {
       if (!warned) note(`spacehub: could not show presence: ${errorMessage(err)}`);
       warned = true;
     });
@@ -567,53 +590,12 @@ async function autosync(found: { remote: string; project: string }, branch: stri
   await announce(found.project, 'autosync', branch);
   note(`Autosync ${found.project} ${branch}: committing every ${seconds}s, rebasing onto every push (ctrl-c to stop)`);
 
-  let stop: Exit | null = null;
-  await new Promise<void>(resolve => {
-    // Steps never overlap: one runs, then the loop sleeps until the interval
-    // passes or a push to the branch wakes it. ctrl-c lets a running step end.
-    let timer: NodeJS.Timeout | undefined;
-    let running = false;
-    let pending = true;
-    let quit = false;
-    const schedule = (ms: number) => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        timer = undefined;
-        pending = true;
-        void loop();
-      }, ms);
-    };
-    const finish = () => {
-      quit = true;
-      if (timer) clearTimeout(timer);
-      if (!running) resolve();
-    };
-    const loop = async () => {
-      if (running || quit) return;
-      running = true;
-      while (pending && !quit) {
-        pending = false;
-        try {
-          await engine.step(remoteOid());
-        } catch (err) {
-          if (err instanceof AutosyncStop) {
-            stop = stopped(err);
-            quit = true;
-          } else note(`${clock()}  ${errorMessage(err)}; trying again`);
-        }
-      }
-      running = false;
-      if (quit) resolve();
-      else schedule(seconds * 1000);
-    };
-    wake = () => {
-      pending = true;
-      if (!running && !quit) schedule(0);
-    };
-    process.once('SIGINT', finish);
-    process.once('SIGTERM', finish);
-    void loop();
-  });
+  const loop = new AutosyncLoop(engine, seconds * 1000, remoteOid, err => note(`${clock()}  ${errorMessage(err)}; trying again`));
+  wake = () => loop.wake();
+  process.once('SIGINT', () => void loop.stop());
+  process.once('SIGTERM', () => void loop.stop());
+  const ended = await loop.start();
+  const stop = ended ? stopped(ended) : null;
   if (stop) throw stop;
   note('Autosync stopped');
 }
@@ -674,8 +656,10 @@ async function projectWho(args: string[]) {
   const sp = await requireProject(await resolveProject(args[0]));
   const { conn } = await open();
   const now = Date.now() * 1000;
-  const rows = await snapshot(conn, tables.presence.where(r => r.spaceId.eq(sp.id)), () =>
-    [...conn.db.presence.iter()].filter(r => r.spaceId === sp.id && now - Number(r.seenAt.microsSinceUnixEpoch) <= 180_000_000)
+  const rows = await snapshot(conn, tables.presence, () =>
+    [...conn.db.presence.iter()].filter(
+      r => (r.spaceId === sp.id || (r.spaceId === 0n && r.space === sp.owner)) && now - Number(r.seenAt.microsSinceUnixEpoch) <= 180_000_000
+    )
   );
   if (rows.length === 0) {
     out(`nobody is connected to ${sp.fullName} right now`);
@@ -683,7 +667,7 @@ async function projectWho(args: string[]) {
   }
   rows.sort((a, b) => a.agent.localeCompare(b.agent) || Number(a.since.microsSinceUnixEpoch - b.since.microsSinceUnixEpoch));
   const width = Math.max(...rows.map(r => r.agent.length));
-  for (const r of rows) out(`${r.agent.padEnd(width)}  ${r.mode.padEnd(8)}  ${(r.branch || '-').padEnd(12)}  since ${when(r.since)}`.trimEnd());
+  for (const r of rows) out(`${r.agent.padEnd(width)}  ${r.mode.padEnd(8)}  ${(r.spaceId === 0n ? `(all of ${r.space})` : r.branch || '-').padEnd(12)}  since ${when(r.since)}`.trimEnd());
 }
 
 // ---------------------------------------------------------------- spaces
@@ -846,11 +830,63 @@ async function spaceLink(args: string[]) {
   out(`(spacehub space view ${space} shows how it goes)`);
 }
 
-// Whole-space clone and sync come later; until then these act on projects.
+// space clone <space> [<dir>]: every project of the space, side by side.
+// Given a project (space/name, or a bare name of yours), clones that project.
 async function spaceClone(args: string[]) {
-  const target = await spaceOrProject(firstPositional(args) ?? die('usage: spacehub project clone <space>/<project> [<dir>]'));
+  const target = await spaceOrProject(firstPositional(args) ?? die('usage: spacehub space clone <space> [<dir>]'));
   if ('project' in target) return projectClone([target.project, ...args.slice(1)]);
-  die(`"${target.space}" is a space; clone one of its projects: spacehub project clone ${target.space}/<project>`);
+  const { conn, server } = await open();
+  const projects = await projectsIn(conn, target.space);
+  const dir = path.resolve(args[1] ?? target.space);
+  if (fs.existsSync(dir) && fs.readdirSync(dir).length > 0) die(`${dir} already exists and is not empty`);
+  fs.mkdirSync(dir, { recursive: true });
+  const manifest = { hub: server, space: target.space, projects: [] as string[] };
+  for (const p of projects) {
+    await cloneProject(server, target.space, p.name, path.join(dir, p.name), p.defaultBranch);
+    manifest.projects.push(p.name);
+    out(`cloned ${p.fullName}`);
+  }
+  writeManifest(dir, manifest);
+  out(`\n${target.space}: ${projects.length} projects in ${dir}`);
+  out(`  cd ${path.relative(process.cwd(), dir) || '.'} && spacehub space sync --watch --auto   # keep them all current, editing together`);
+}
+
+// space sync in a folder made by space clone. Inside one project's clone (or
+// given space/name), it syncs that project, as before.
+async function spaceSync(args: string[]) {
+  const named = firstPositional(args);
+  const inProject = !named && (await projectRemote(opt([...args], '--remote', '-r')).catch(() => null));
+  if (named?.includes('/')) die('a project syncs inside its clone: cd there and run spacehub project sync');
+  if (inProject) return projectSync(args);
+  const found = findManifest(process.cwd()) ?? die('not in a space folder (make one with: spacehub space clone <space>) nor in a project clone');
+  if (named && named.toLowerCase() !== found.manifest.space) die(`this folder holds ${found.manifest.space}, not ${named}`);
+  const auto = bool(args, '--auto');
+  const watch = bool(args, '--watch', '-w') || auto;
+  const interval = Number(opt(args, '--interval') ?? 3);
+  if (!Number.isFinite(interval) || interval < 0.2 || interval > 3600) die('--interval is a number of seconds, from 0.2 to 3600');
+  const agent = await username();
+  const { conn, server } = await open();
+  const space = found.manifest.space;
+  const sync = new SpaceSync({
+    conn,
+    dir: found.dir,
+    manifest: found.manifest,
+    server,
+    mode: auto ? 'auto' : watch ? 'watch' : 'once',
+    intervalMs: interval * 1000,
+    agent,
+    restart: 'spacehub space sync --watch --auto',
+    log: line => note(`${clock()}  ${line}`),
+  });
+  if (watch) {
+    await announceHub(space, auto ? 'autosync' : 'sync');
+    note(`${auto ? 'Autosync' : 'Watching'} every project of ${space} in ${found.dir} (ctrl-c to stop)`);
+    process.once('SIGINT', () => void sync.stop());
+    process.once('SIGTERM', () => void sync.stop());
+  }
+  const allPaused = await sync.run();
+  if (allPaused) throw new Exit(`every project of ${space} is paused; resolve them and start again`, 2);
+  if (!watch) out(`${space}: every project is up to date`);
 }
 
 async function spaceWho(args: string[]) {
@@ -858,9 +894,12 @@ async function spaceWho(args: string[]) {
   if ('project' in target) return projectWho([target.project]);
   const { conn } = await open();
   const projects = new Map((await projectsIn(conn, target.space)).map(p => [p.id, p.name]));
+  projects.set(0n, '(all projects)');
   const now = Date.now() * 1000;
   const rows = await snapshot(conn, tables.presence, () =>
-    [...conn.db.presence.iter()].filter(r => projects.has(r.spaceId) && now - Number(r.seenAt.microsSinceUnixEpoch) <= 180_000_000)
+    [...conn.db.presence.iter()].filter(
+      r => (r.spaceId === 0n ? r.space === target.space : projects.has(r.spaceId)) && now - Number(r.seenAt.microsSinceUnixEpoch) <= 180_000_000
+    )
   );
   if (rows.length === 0) {
     out(`nobody is connected to ${target.space} right now`);
@@ -923,11 +962,11 @@ async function main() {
       case 'clone': return spaceClone(args);
       case 'who': return spaceWho(args);
       case 'link': return spaceLink(args);
+      case 'sync': return spaceSync(args);
       // Run inside a project's clone, as before.
-      case 'sync': return projectSync(args);
       case 'watch': return projectWatch(args);
     }
-    die(`usage: spacehub space <create|list|view|edit|delete|member|link|clone|who>`);
+    die(`usage: spacehub space <create|list|view|edit|delete|member|link|clone|sync|who>`);
   }
 
   die(`unknown command "${group}"; see spacehub help`);
