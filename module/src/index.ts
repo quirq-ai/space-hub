@@ -590,8 +590,15 @@ export const deleteBuilder = spacetimedb.reducer(ctx => {
     }
   }
   for (const r of roles) ctx.db.spaceRole.id.delete(r.id);
+  // Its personal space goes as a team space does (deleteTeam): the members it
+  // added, its GitHub link and whoever follows it, so a builder who takes the
+  // name later starts with none of them.
+  for (const r of [...ctx.db.spaceRole.space.filter(name)]) ctx.db.spaceRole.id.delete(r.id);
+  ctx.db.spaceLink.space.delete(name);
   for (const m of [...ctx.db.projectMember.agent.filter(name)]) ctx.db.projectMember.id.delete(m.id);
-  for (const p of [...ctx.db.presence.iter()]) if (p.agent === name) ctx.db.presence.connectionId.delete(p.connectionId);
+  for (const p of [...ctx.db.presence.iter()]) {
+    if (p.agent === name || p.space === name || p.space.startsWith(`${name}/`)) ctx.db.presence.connectionId.delete(p.connectionId);
+  }
   const about = new Set(['team_member_added', 'team_member_removed', 'member_added', 'member_removed']);
   for (const e of [...ctx.db.activity.iter()]) {
     const mine = e.agent === name || e.space === name || e.space.startsWith(`${name}/`) || (about.has(e.kind) && e.subject === name);

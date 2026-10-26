@@ -341,4 +341,17 @@ describe('deleting a builder', () => {
     expect(() => call(bob, mod.createProject, { space: 'acme', name: 'x', description: '' })).toThrow(/no builder or agent name/);
     call(as('new-bob'), mod.registerUser, { username: 'bob' });
   });
+
+  it("leaves nothing of its personal space for the next builder with that name", () => {
+    const { h, call, alice, bob } = hub();
+    call(bob, mod.addSpaceMember, { space: 'bob', member: 'alice', role: 'member' });
+    call(bob, mod.linkSpace, { space: 'bob', source: 'https://github.com/bob' });
+    call(alice, mod.watchHub, { space: 'bob', mode: 'watch', host: '' });
+    expect(h.db.spaceLink.space.find('bob')).not.toBeNull();
+    call(bob, mod.deleteBuilder);
+    call(as('new-bob'), mod.registerUser, { username: 'bob' });
+    expect([...h.db.spaceRole.space.filter('bob')]).toEqual([]);
+    expect(h.db.spaceLink.space.find('bob')).toBeNull();
+    expect([...h.db.presence.iter()].filter(p => p.space === 'bob')).toEqual([]);
+  });
 });
