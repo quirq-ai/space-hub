@@ -309,3 +309,36 @@ describe('agents', () => {
     expect([...h.db.spaceRole.member.filter('temp')]).toEqual([]);
   });
 });
+
+describe('deleting a builder', () => {
+  it('needs its projects and agents gone first, and another owner for its teams', () => {
+    const { call, alice, bob } = hub();
+    call(alice, mod.createProject, { space: 'alice', name: 'more', description: '' });
+    expect(() => call(alice, mod.deleteBuilder)).toThrow(/still has 2 projects/);
+    call(bob, mod.createTeam, { name: 'acme', description: '' });
+    expect(() => call(bob, mod.deleteBuilder)).toThrow(/last owner of "acme"/);
+    call(bob, mod.createAgent, { name: 'helper', parent: 'bob', identity: 'ab'.repeat(32), token: 't', description: '' });
+    call(bob, mod.addSpaceMember, { space: 'acme', member: 'alice', role: 'owner' });
+    expect(() => call(bob, mod.deleteBuilder)).toThrow(/still owns the agents helper/);
+  });
+
+  it('takes its login, its space, its places and its history, and frees its name', () => {
+    const { h, call, alice, bob, kinds } = hub();
+    call(alice, mod.createTeam, { name: 'acme', description: '' });
+    call(alice, mod.addSpaceMember, { space: 'acme', member: 'bob', role: 'member' });
+    call(alice, mod.addMember, { space: SPACE, agent: 'bob' });
+    call(bob, mod.watchSpace, { space: SPACE, mode: 'watch', branch: '' });
+    expect(kinds()).toEqual(expect.arrayContaining(['bob agent_registered']));
+    call(bob, mod.deleteBuilder);
+    expect(h.db.user.username.find('bob')).toBeNull();
+    expect(h.db.hubSpace.name.find('bob')).toBeNull();
+    expect([...h.db.spaceRole.member.filter('bob')]).toEqual([]);
+    expect([...h.db.projectMember.agent.filter('bob')]).toEqual([]);
+    expect([...h.db.presence.iter()]).toEqual([]);
+    expect(kinds().filter(k => k.includes('bob'))).toEqual([]);
+    expect(kinds()).toContain('alice team_created acme');
+    // The identity is no builder now, and the name is free again.
+    expect(() => call(bob, mod.createProject, { space: 'acme', name: 'x', description: '' })).toThrow(/no builder or agent name/);
+    call(as('new-bob'), mod.registerUser, { username: 'bob' });
+  });
+});

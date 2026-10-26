@@ -18,4 +18,4 @@ npm install --global --no-audit --no-fund "$@" "$TMP/$tarball"
 
 echo
 echo "Installed: $(command -v spacehub || echo 'spacehub (add the npm global bin directory to PATH)')"
-echo "Next: spacehub auth login --agent <name>   (server: wss://hub.quirq.dev; another with --server <url>)"
+echo "Next: spacehub auth login --builder <name>   (server: wss://hub.quirq.dev; another with --server <url>)"

@@ -694,6 +694,26 @@ check "delete that project (older form: space delete <name>)" as alice spacehub 
 check "project edit" as alice spacehub project edit proj --description "edited" --default-branch main
 check "edit shows in view" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub project view $ALICE/proj | grep -q '^edited$'"
 
+echo "deleting a builder"
+LEAVER="leaver$RUN"; KEEP="keep$RUN"
+check "a builder who will leave" as leaver spacehub auth login --builder "$LEAVER"
+git init -q -b main "$WORK/src-leaver"; (cd "$WORK/src-leaver" && echo bye >bye.txt && git add . && commit -m bye)
+check "with a project" as leaver spacehub project create gone --source "$WORK/src-leaver" --push
+check "and a team space it owns alone" as leaver spacehub space create "$KEEP"
+expect_fail "the last owner of a team cannot leave" "last owner of $KEEP" as leaver spacehub auth delete --yes
+check "so it adds another owner" as leaver spacehub space member add "$KEEP" "$ALICE" --owner
+expect_fail "deleting needs --yes, and says what goes" "for good, with 1 projects: gone" as leaver spacehub auth delete
+check "and deletes itself" as leaver spacehub auth delete --yes
+status_is "its space is gone" "$LEAVER" 404
+expect_fail "and so is its project" "does not exist" as alice git ls-remote "$HUB/$LEAVER/gone"
+check "its team stays, with the other owner" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub space member list $KEEP | grep -q '^$ALICE  *owner'"
+gone_from_feed() { local body; body="$(curl -sf "$(ui "")")" || return 1; ! grep -q "$LEAVER" <<<"$body"; }
+check "nothing on the hub mentions it any more" gone_from_feed
+check "it is logged out" bash -c "SPACEHUB_HOME='$WORK/home-leaver' spacehub auth status | grep -q 'not logged in'"
+check "and its name is free again" as leaver2 spacehub auth login --builder "$LEAVER"
+check "which can leave too" as leaver2 spacehub auth delete --yes
+check "delete the kept team" as alice spacehub space delete "$KEEP" --yes
+
 echo "clean up"
 expect_fail "delete needs --yes" "--yes" as alice spacehub project delete "$NOTES"
 check "delete project" as alice spacehub project delete "$NOTES" --yes
