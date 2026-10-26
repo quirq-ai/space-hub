@@ -259,8 +259,8 @@ then their size shows as "measuring".
 | `SPACEHUB_GITHUB_SYNC_MINUTES` | `60` | How often spaces linked to GitHub sync on their own (`0`: only when asked) |
 | `SPACEHUB_GITHUB_MAX_REPOS` | `100` | Most repositories mirrored per linked space |
 | `SPACEHUB_GITHUB_TOKEN` | unset | A GitHub token for a higher API rate limit (read-only public access is enough) |
-| `SPACEHUB_ACCOUNTS` | `github` | Where builders come from: `github` (sign up with a GitHub account, see Sign up with GitHub) or `open` (anyone registers a name). Set on every start |
-| `SPACEHUB_XO_KEY` | unset | Turns on xo.quirq.dev's API and makes xo the only source of builders (see xo below); overrides `SPACEHUB_ACCOUNTS` |
+| `SPACEHUB_ACCOUNTS` | `github` | How people sign up: `github` (with a GitHub account, see Sign up with GitHub), `open` (anyone registers a name) or `xo` (nobody: only xo's API makes builders). Set on every start |
+| `SPACEHUB_XO_KEY` | unset | Turns on xo.quirq.dev's API, which makes builders for xo's users whatever `SPACEHUB_ACCOUNTS` says (see xo below) |
 | `/data` volume | | Databases, the server's signing keys, and the identity that owns the module. **Mount persistent storage here and back it up.** Without it, a restart forgets every project and invalidates every client token |
 
 The container starts as root only to take ownership of `/data`, because
@@ -603,12 +603,14 @@ the record's version, and `xo_link_agent`).
   git sees that token only when it pushes into the hub.
 - **GitHub sign-up** is the admin as well: the web service checks the GitHub
   token with GitHub, then makes the builder with `github_link_builder` (see
-  `cli/src/signin.ts`). It is off on a hub whose builders come from xo.
+  `cli/src/signin.ts`). It is off only with `SPACEHUB_ACCOUNTS=xo`.
 - **Turn it on** by setting `SPACEHUB_XO_KEY` (32 characters or more, the same
   value as xo.quirq.dev's `XO_HUB_KEY`). The web service then answers
   `/-/api/xo/v1/` (see `cli/src/xo.ts`) with that key only, acting as the
-  admin over SpacetimeDB's HTTP API inside the container, and builders come
-  from xo only: open sign-up (`register_user`) is refused.
+  admin over SpacetimeDB's HTTP API inside the container. People still sign
+  up with GitHub (or as `SPACEHUB_ACCOUNTS` says); `SPACEHUB_ACCOUNTS=xo`
+  leaves xo as the only source of builders. Names are shared: an xo username
+  and a GitHub login that are the same cannot both be builders.
 - **Names.** xo's record was designed when a hub space was one repository,
   so its "spaces" are hub projects today, and an xo project (a group of
   repositories) is closest to a hub space. The hub stores the record as
@@ -626,7 +628,7 @@ the record's version, and `xo_link_agent`).
   the history elsewhere if that matters. It skips commit hooks.
 - Anyone with a GitHub account can sign up (with `SPACEHUB_ACCOUNTS=open`,
   anyone who can reach the server registers any free name; with
-  `SPACEHUB_XO_KEY` set, only xo makes builders). Builders can create team
+  `SPACEHUB_ACCOUNTS=xo`, only xo makes builders). Builders can create team
   spaces and import public GitHub repositories (up to
   `SPACEHUB_IMPORT_MAX_MB` each). Keep that in mind before exposing a server
   publicly.

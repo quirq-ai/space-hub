@@ -127,6 +127,8 @@ describe('GitHub sign-up', () => {
     call(admin, mod.setAccounts, { source: 'github' });
     expect(() => call(as('bob'), mod.registerUser, { username: 'bob' })).toThrow(/sign up with GitHub/);
     call(admin, mod.githubLinkBuilder, { githubId: 7n, login: 'hubot', identity: 'cd'.repeat(32), token: 't' });
+    // xo's API still makes builders for its users next to GitHub sign-up.
+    call(admin, mod.xoLinkAgent, { subject: SUBJECT, username: 'xo-user', identity: '12'.repeat(32), token: 't' });
     call(admin, mod.setAccounts, { source: 'xo' });
     expect(() => call(admin, mod.githubLinkBuilder, { githubId: 8n, login: 'monalisa', identity: 'ef'.repeat(32), token: 't' })).toThrow(/made by xo/);
     expect(() => call(admin, mod.setAccounts, { source: 'gitlab' })).toThrow(/"open", "github"/);

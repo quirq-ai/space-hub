@@ -2,9 +2,10 @@
 #
 #   docker compose up -d --build                           plain HTTP on :80
 #   SPACEHUB_DOMAIN=hub.example.com docker compose up -d   automatic HTTPS
-#   SPACEHUB_XO_KEY=... (32+ characters) also turns on xo.quirq.dev's API (README, xo)
+#   SPACEHUB_XO_KEY=... (32+ characters) also turns on xo.quirq.dev's API (README, xo);
+#   SPACEHUB_ACCOUNTS=open|xo changes how people sign up (default github)
 #
-# Clients: spacehub auth login --server wss://hub.example.com --username <you>
+# Clients: spacehub auth login --server wss://hub.example.com   (with the GitHub account gh is logged in to)
 # Admin (SQL, logs) stays inside the container:
 #   docker compose exec spacehub spacetime --root-dir /data logs --server http://127.0.0.1:3001 spacehub
 services:
@@ -15,6 +16,7 @@ services:
     image: spacehub-server
     environment:
       SPACEHUB_DB: ${SPACEHUB_DB:-spacehub}
+      SPACEHUB_ACCOUNTS: ${SPACEHUB_ACCOUNTS:-github}
       SPACEHUB_XO_KEY: ${SPACEHUB_XO_KEY:-}  # empty: the xo API stays off
     volumes:
       - spacehub-data:/data
