@@ -171,7 +171,8 @@ function hex(bytes: Uint8Array) {
 function size(n: number) {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
 function seconds(ts: { microsSinceUnixEpoch: bigint }) {
@@ -649,7 +650,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
 <h2>About</h2><dl><dt>Space</dt><dd>${this.a(sp.owner, esc(sp.owner))} ${this.spacePill(sp.owner)}</dd><dt>Collaborators</dt><dd class="collaborators">${members.join(', ') || '<span class="muted">none</span>'}</dd><dt>Builder</dt><dd>${this.builderLink(this.builderOf(sp))}</dd><dt>Default</dt><dd>${esc(sp.defaultBranch)}</dd>
 <dt>Commits</dt><dd>${this.a(`${sp.fullName}/commits/${ref}`, count)}</dd>
 <dt>Branches</dt><dd>${this.a(`${sp.fullName}/refs`, String(refs.filter(r => r.name.startsWith('refs/heads/')).length))}</dd><dt>Tags</dt><dd>${this.a(`${sp.fullName}/refs`, String(refs.filter(r => r.name.startsWith('refs/tags/')).length))}</dd>
-<dt>Objects</dt><dd>${sp.objectCount}</dd><dt>Created</dt><dd>${this.ago(seconds(sp.createdAt))}</dd><dt>Pushed</dt><dd>${this.ago(seconds(sp.pushedAt))}</dd>${source}</dl>${sync}</aside>`;
+<dt>Size</dt><dd>${this.sizeOf(sp)} <span class="muted">in ${plural(Number(sp.objectCount), 'object')}</span></dd><dt>Created</dt><dd>${this.ago(seconds(sp.createdAt))}</dd><dt>Pushed</dt><dd>${this.ago(seconds(sp.pushedAt))}</dd>${source}</dl>${sync}</aside>`;
   }
 
   // Links inside Markdown: external links stay, repo paths become UI links,
@@ -824,6 +825,27 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     return `<div class="box">${rows ? `<table>${rows}</table>` : `<div class="empty">${page > 1 ? 'No more activity.' : 'No activity yet.'}</div>`}</div>${pager}`;
   }
 
+  // ------------------------------------------------------------ sizes
+
+  // What a project stores (its git objects, uncompressed), or "measuring"
+  // while the server is still counting a project from before sizes were kept.
+  sizeOf(sp: Space) {
+    const row = this.db.projectSize.projectId.find(sp.id);
+    return row ? size(Number(row.bytes)) : 'measuring';
+  }
+
+  // What some projects store together, noting any still being measured.
+  totalOf(projects: Space[]) {
+    let total = 0n;
+    let waiting = 0;
+    for (const sp of projects) {
+      const row = this.db.projectSize.projectId.find(sp.id);
+      if (row) total += row.bytes;
+      else waiting++;
+    }
+    return `${size(Number(total))}${waiting ? ` (${waiting} still measuring)` : ''}`;
+  }
+
   // ------------------------------------------------------------ pages
 
   projectRows(projects: Space[], fullNames: boolean) {
@@ -831,7 +853,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
       .sort((a, b) => seconds(b.pushedAt) - seconds(a.pushedAt))
       .map(
         s => `<tr><td>${this.a(s.fullName, `<b>${esc(fullNames ? s.fullName : s.name)}</b>`)}${s.description ? `<div class="muted">${esc(s.description)}</div>` : ''}${this.builtBy(s)}</td>
-<td class="r muted">Updated ${this.ago(seconds(s.pushedAt))}</td></tr>`
+<td class="r muted">Updated ${this.ago(seconds(s.pushedAt))} · ${this.sizeOf(s)}</td></tr>`
       )
       .join('');
   }
@@ -843,7 +865,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     const teams = [...this.db.hubSpace.kind.filter('team')].sort((a, b) => (counts.get(b.name) ?? 0) - (counts.get(a.name) ?? 0) || a.name.localeCompare(b.name));
     const teamRows = teams
       .slice(0, 20)
-      .map(t => `<tr><td>${this.a(t.name, esc(t.displayName || t.name))}</td><td class="r muted">${plural(counts.get(t.name) ?? 0, 'project')}</td></tr>`)
+      .map(t => `<tr><td>${this.a(t.name, esc(t.displayName || t.name))}</td><td class="r muted">${plural(counts.get(t.name) ?? 0, 'project')} · ${this.totalOf(projects.filter(p => p.owner === t.name))}</td></tr>`)
       .join('');
     const builders = this.builders();
     const builderRows = builders
@@ -862,7 +884,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     return this.page(
       'spacehub',
       `${guide}<div class="grid"><div><div class="bar" style="background:none;border:0;padding:0 0 8px"><h1 class="grow"><b>Projects</b> <span class="muted">${projects.length}</span></h1>${create}</div>
-<p class="desc">Git projects on this hub, most recently pushed first.</p>
+<p class="desc">Git projects on this hub, most recently pushed first. All spaces together store <b class="total">${this.totalOf(projects)}</b>.</p>
 <div class="box">${rows ? `<table>${rows}</table>` : '<div class="empty">No projects yet.</div>'}</div>
 <h2 style="margin:24px 0 8px">Activity</h2>${this.activityFeed([...this.db.activity.iter()], '')}</div>
 <aside><h2>Here now</h2>${this.hereBox(this.hereNow(null), true)}
@@ -909,7 +931,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     if (kind === 'agent' && row) return this.agentPage(row, list);
     const agents = this.agentsOf(name);
     if (kind === 'personal') {
-      const since = user ? `<p class="desc">Builder · joined ${this.ago(seconds(user.createdAt))} · ${plural(projects.length, 'project')}</p>` : '';
+      const since = user ? `<p class="desc">Builder · joined ${this.ago(seconds(user.createdAt))} · ${plural(projects.length, 'project')} · ${this.totalOf(projects)}</p>` : '';
       const teams = [...this.db.spaceRole.member.filter(name)]
         .map(r => `<tr><td>${this.a(r.space, `<b>${esc(r.space)}</b>`)} ${this.spacePill(r.space)}</td><td class="r muted">${esc(r.role)}</td></tr>`)
         .join('');
@@ -923,7 +945,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
       const main = `${list}${agents}${memberOf}`;
       return this.page(name, `${title}${since}${github ? `<div class="grid"><div>${main}</div><aside>${github}</aside></div>` : main}`);
     }
-    const created = row ? `<p class="desc">${kind === 'team' ? 'Team space' : 'Agent'} · created by ${this.a(row.createdBy, esc(row.createdBy))} ${this.ago(seconds(row.createdAt))} · ${plural(projects.length, 'project')}</p>` : '';
+    const created = row ? `<p class="desc">${kind === 'team' ? 'Team space' : 'Agent'} · created by ${this.a(row.createdBy, esc(row.createdBy))} ${this.ago(seconds(row.createdAt))} · ${plural(projects.length, 'project')} · ${this.totalOf(projects)}</p>` : '';
     const people = this.roles(name)
       .map(r => `<tr><td>${this.a(r.member, `<b>${esc(r.member)}</b>`)} ${this.spacePill(r.member)}</td><td class="r muted">${esc(r.role)}</td></tr>`)
       .join('');
@@ -966,7 +988,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
       .map(h => `<tr><td><b>${esc(h.host || 'somewhere')}</b><div class="muted">${[...h.spaces].sort().map(sp => this.a(sp, esc(sp))).join(', ')}</div></td><td class="r muted">${this.ago(h.since)}</td></tr>`)
       .join('');
     const title = `<h1><b>${esc(row.displayName || name)}</b> ${this.spacePill(name)}</h1>${row.description ? `<p class="desc">${esc(row.description)}</p>` : ''}`;
-    const desc = `<p class="desc">Agent · owned by ${this.a(row.parent, esc(row.parent))} · created by ${this.a(row.createdBy, esc(row.createdBy))} ${this.ago(seconds(row.createdAt))}</p>`;
+    const desc = `<p class="desc">Agent · owned by ${this.a(row.parent, esc(row.parent))} · created by ${this.a(row.createdBy, esc(row.createdBy))} ${this.ago(seconds(row.createdAt))} · ${this.totalOf([...this.db.project.owner.filter(name)])}</p>`;
     const aside = `<aside><h2>Running</h2><div class="box running">${runs ? `<table>${runs}</table>` : '<div class="empty">Not running.</div>'}</div>
 <h2>Launch</h2><code class="clone">spacehub agent run ${esc(name)}</code><p class="muted">Its owners print its token with <code>spacehub agent token ${esc(name)}</code>; XO Swarm runs it the same way.</p></aside>`;
     const connections = `<h2 style="margin:24px 0 8px">Connected to</h2><div class="box connected">${connected ? `<table>${connected}</table>` : '<div class="empty">Not connected to any space yet.</div>'}</div>`;

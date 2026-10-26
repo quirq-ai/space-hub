@@ -81,6 +81,8 @@ else
   # This CLI's identity published the module, so it is the hub's admin (as
   # in the server image), and the web service syncs GitHub links with its token.
   spacetime call --server "http://127.0.0.1:$PORT" "$SPACEHUB_DB" claim_admin >/dev/null 2>&1 || fail "claim admin"
+  expect_fail "a new hub has no projects to measure" "every project is measured" \
+    spacetime call --server "http://127.0.0.1:$PORT" "$SPACEHUB_DB" measure_next_project
   ADMIN_TOKEN="$(spacetime login show --token 2>/dev/null | grep -oE 'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+' | head -n 1)"
   ok "module published"
 fi
@@ -693,6 +695,15 @@ expect_fail "so no project was created" "does not exist" as alice git ls-remote 
 check "delete that project (older form: space delete <name>)" as alice spacehub space delete withorigin --yes
 check "project edit" as alice spacehub project edit proj --description "edited" --default-branch main
 check "edit shows in view" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub project view $ALICE/proj | grep -q '^edited$'"
+
+echo "sizes"
+P_BYTES="$(git -C "$P" cat-file --batch-all-objects --batch-check='%(objectsize)' | awk '{s += $1} END {print s}')"
+check "a project's size is the bytes of the objects pushed to it" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub project view $ALICE/proj | grep -q '^size      $P_BYTES B (3 objects)$'"
+check "project list shows sizes" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub project list $ALICE | grep -q '^$ALICE/proj  *$P_BYTES B '"
+check "space view shows a space's total" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub space view $ALICE | grep -q '^size      .* in [0-9]* projects$'"
+page_has "the project page shows its size" "$ALICE/proj" "<dt>Size</dt><dd>$P_BYTES B"
+page_has "project lists show sizes" "$ALICE" "· $P_BYTES B</td>"
+page_has "the home page shows what all spaces store" "" 'All spaces together store <b class="total">'
 
 echo "deleting a builder"
 LEAVER="leaver$RUN"; KEEP="keep$RUN"

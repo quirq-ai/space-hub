@@ -135,6 +135,13 @@ export class LiveHub {
     db.spaceLink.onInsert(link);
     db.spaceLink.onUpdate((ctx, _old, r) => link(ctx, r));
     db.spaceLink.onDelete(link);
+    // A project measured for the first time (or gone). Sizes that grow with a
+    // push show up with the push's own ref update.
+    const measured = (ctx: { event: { tag: string } }, r: { projectId: bigint }) => {
+      if (live(ctx)) forSpace(r.projectId);
+    };
+    db.projectSize.onInsert(measured);
+    db.projectSize.onDelete(measured);
     const synced = (ctx: { event: { tag: string } }, r: { projectId: bigint }) => {
       if (live(ctx)) forSpace(r.projectId);
     };
@@ -156,7 +163,7 @@ export class LiveHub {
           resolve();
         })
         .onError(ctx => reject(new Error(`subscription failed: ${(ctx as { event?: unknown }).event}`)))
-        .subscribe([tables.user, tables.hubSpace, tables.spaceRole, tables.spaceLink, tables.refSync, tables.project, tables.gitRef, tables.projectMember, tables.presence, tables.projectImport, tables.projectBuilder]);
+        .subscribe([tables.user, tables.hubSpace, tables.spaceRole, tables.spaceLink, tables.refSync, tables.projectSize, tables.project, tables.gitRef, tables.projectMember, tables.presence, tables.projectImport, tables.projectBuilder]);
     });
   }
 
