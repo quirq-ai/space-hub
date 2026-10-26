@@ -87,3 +87,57 @@ describe('xoLinkAgent and accounts', () => {
     call(as('bob'), mod.registerUser, { username: 'bob' });
   });
 });
+
+describe('GitHub sign-up', () => {
+  const OCTOCAT = 583231n;
+  function signedUp() {
+    const t = hub();
+    t.call(admin, mod.claimAdmin);
+    const octo = as('octocat-identity');
+    const hex = t.h.withReducerTx(octo, ctx => ctx.sender.toHexString());
+    t.call(admin, mod.githubLinkBuilder, { githubId: OCTOCAT, login: 'Octocat', identity: hex, token: 'octo-token' });
+    return { ...t, octo, hex };
+  }
+
+  it('makes one builder per GitHub account, named after its login, and keeps its token', () => {
+    const { h, call, hex } = signedUp();
+    expect(h.db.user.username.find('octocat')?.identity.toHexString()).toBe(hex);
+    expect(h.db.hubSpace.name.find('octocat')?.kind).toBe('personal');
+    const row = h.db.githubAccount.githubId.find(OCTOCAT)!;
+    expect([row.login, row.username, row.token]).toEqual(['Octocat', 'octocat', 'octo-token']);
+    expect(() => call(admin, mod.githubLinkBuilder, { githubId: OCTOCAT, login: 'octocat', identity: 'cd'.repeat(32), token: 't' })).toThrow(/already the builder "octocat"/);
+  });
+
+  it('needs the admin, a free name and a GitHub login', () => {
+    const { call } = signedUp();
+    const args = { githubId: 7n, login: 'hubot', identity: 'cd'.repeat(32), token: 't' };
+    expect(() => call(stranger, mod.githubLinkBuilder, args)).toThrow(/only the hub admin/);
+    expect(() => call(admin, mod.githubLinkBuilder, { ...args, login: 'OCTOCAT' })).toThrow(/is taken/);
+    call(as('alice'), mod.registerUser, { username: 'alice' });
+    call(as('alice'), mod.createTeam, { name: 'acme', description: '' });
+    expect(() => call(admin, mod.githubLinkBuilder, { ...args, login: 'acme' })).toThrow(/is taken/);
+    expect(() => call(admin, mod.githubLinkBuilder, { ...args, login: 'v1' })).toThrow(/reserved/);
+    expect(() => call(admin, mod.githubLinkBuilder, { ...args, login: "x' OR 1=1" })).toThrow(/invalid GitHub login/);
+    expect(() => call(admin, mod.githubLinkBuilder, { ...args, githubId: 0n })).toThrow(/invalid GitHub account id/);
+    call(admin, mod.githubLinkBuilder, args);
+  });
+
+  it('turns name registration off, and is itself off when xo makes builders', () => {
+    const { call } = signedUp();
+    call(admin, mod.setAccounts, { source: 'github' });
+    expect(() => call(as('bob'), mod.registerUser, { username: 'bob' })).toThrow(/sign up with GitHub/);
+    call(admin, mod.githubLinkBuilder, { githubId: 7n, login: 'hubot', identity: 'cd'.repeat(32), token: 't' });
+    call(admin, mod.setAccounts, { source: 'xo' });
+    expect(() => call(admin, mod.githubLinkBuilder, { githubId: 8n, login: 'monalisa', identity: 'ef'.repeat(32), token: 't' })).toThrow(/made by xo/);
+    expect(() => call(admin, mod.setAccounts, { source: 'gitlab' })).toThrow(/"open", "github"/);
+  });
+
+  it('a builder who leaves frees its GitHub account and name', () => {
+    const { h, call, octo } = signedUp();
+    call(octo, mod.deleteBuilder);
+    expect(h.db.githubAccount.githubId.find(OCTOCAT)).toBeNull();
+    expect(h.db.user.username.find('octocat')).toBeNull();
+    call(admin, mod.githubLinkBuilder, { githubId: OCTOCAT, login: 'octocat', identity: 'cd'.repeat(32), token: 'new' });
+    expect(h.db.githubAccount.githubId.find(OCTOCAT)?.token).toBe('new');
+  });
+});

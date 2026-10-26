@@ -76,9 +76,10 @@ if ! claim="$(spacetime --root-dir "$ROOT" call --server "http://$INTERNAL" "$DB
   exit 1
 fi
 
-# The web service acts as the admin for two things: syncing spaces linked to
-# GitHub, and (only with SPACEHUB_XO_KEY) xo.quirq.dev's API at /-/api/xo/v1/,
-# which also makes xo the only source of builders.
+# The web service acts as the admin for three things: syncing spaces linked to
+# GitHub, signing builders up with GitHub (/-/api/auth/github), and (only with
+# SPACEHUB_XO_KEY) xo.quirq.dev's API at /-/api/xo/v1/, which also makes xo the
+# only source of builders.
 # The CLI keeps the owner's token as spacetimedb_token in its cli.toml.
 SPACEHUB_ADMIN_TOKEN="$(sed -n 's/^[[:space:]]*spacetimedb_token[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
   "$ROOT/config/cli.toml" 2>/dev/null | head -n 1)"
@@ -91,13 +92,26 @@ if [ -n "$SPACEHUB_ADMIN_TOKEN" ]; then
 else
   echo "spacehub: the admin's token could not be read; spaces linked to GitHub will not sync" >&2
 fi
+# Where builders come from: xo (with SPACEHUB_XO_KEY), else SPACEHUB_ACCOUNTS:
+# "github" (the default: sign up with a GitHub account, checked by the web
+# service as the admin) or "open" (anyone registers a name).
 if [ -n "${SPACEHUB_XO_KEY:-}" ]; then
-  if [ -z "$SPACEHUB_ADMIN_TOKEN" ]; then
-    echo "spacehub: SPACEHUB_XO_KEY is set but the admin's token could not be read" >&2
-    exit 1
-  fi
-  spacetime --root-dir "$ROOT" call --server "http://$INTERNAL" "$DB" set_accounts '"xo"' >/dev/null
+  ACCOUNTS=xo
+else
+  ACCOUNTS="${SPACEHUB_ACCOUNTS:-github}"
 fi
+case "$ACCOUNTS" in
+  github | open | xo) ;;
+  *)
+    echo "spacehub: SPACEHUB_ACCOUNTS must be \"github\", \"open\" or \"xo\" (xo is also chosen by setting SPACEHUB_XO_KEY)" >&2
+    exit 1
+    ;;
+esac
+if [ "$ACCOUNTS" != open ] && [ -z "$SPACEHUB_ADMIN_TOKEN" ]; then
+  echo "spacehub: builders come from $ACCOUNTS, which needs the admin's token, and it could not be read" >&2
+  exit 1
+fi
+spacetime --root-dir "$ROOT" call --server "http://$INTERNAL" "$DB" set_accounts "\"$ACCOUNTS\"" >/dev/null
 
 # Ready: hand the public port to the allowlist proxy.
 kill -TERM "$proxy" 2>/dev/null || true

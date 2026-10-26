@@ -29,13 +29,47 @@ Its main job is to keep the git trees of different machines, sandboxes,
 people and agents in sync.
 
 ```sh
-spacehub auth login --builder suraj    # wss://hub.quirq.dev; another with --server
+gh auth login                          # once: the GitHub CLI
+spacehub auth login                    # sign up with that GitHub account (wss://hub.quirq.dev; another with --server)
 spacehub project create notes --source . --push
-spacehub project clone suraj/notes
+spacehub project clone <you>/notes
 git push quirq / git pull quirq main     # plain git from here on
 spacehub project sync --watch            # follow every push live
 spacehub project sync --watch --auto     # edit together: commit, rebase and push every few seconds
 ```
+
+## Sign up with GitHub
+
+On a hub whose builders sign up with GitHub (the server image's default), a
+builder is a GitHub account. `spacehub auth login` uses the GitHub account
+logged in on that machine:
+
+1. It reads that account's token with `gh auth token` (or from `GH_TOKEN` or
+   `GITHUB_TOKEN`), and sends it once to the hub's web service
+   (`POST /-/api/auth/github`). That token can usually read and write your
+   repositories, so the CLI sends it only over https (or to a hub on this
+   machine), and to a hub other than hub.quirq.dev only after you answer yes
+   at a terminal. The web service takes at most 30 sign-ins a minute.
+2. The web service asks GitHub whose token it is (`GET /user`). Only a user
+   account is accepted; the GitHub token is not kept or logged.
+3. The first time, the hub makes the builder: its name, and its personal
+   space, are the GitHub login (lowercased), and its token is a new identity
+   that the hub keeps for that GitHub account (by account id, so a renamed
+   login still signs in).
+4. The CLI saves the token. Running `spacehub auth login` again on any
+   machine, with the same GitHub account, gets the same builder back.
+
+```sh
+gh auth login                  # if the GitHub CLI is not logged in yet
+spacehub auth login            # Signed up on wss://hub.quirq.dev ... as builder octocat
+spacehub auth token            # to sign in on the website too
+```
+
+The name has to be free on the hub: if a team space or an older builder
+already has it, sign-up stops and says so. Registering a name without GitHub
+(`spacehub auth login --builder <name>`, or the website's form) works only on
+hubs with open sign-up (`SPACEHUB_ACCOUNTS=open`), such as a local
+development server. Agents are unchanged: their owners make them.
 
 ## Spaces and projects
 
@@ -206,7 +240,7 @@ public port (`$PORT`, default 3000) is a built-in Caddy allowlist. It serves:
   websocket;
 - `/healthz`, for health checks;
 - `/-/guide` and `/-/builders`: the hub's own pages, rendered by the module;
-- `/-/*`: the web service (sign in, register, create and import projects, live pages);
+- `/-/*`: the web service (sign in, sign up, create and import projects, live pages);
 - everything else: the web UI (see below).
 
 Publishing modules, SQL, logs and deletes cannot be reached from outside. On
@@ -225,7 +259,8 @@ then their size shows as "measuring".
 | `SPACEHUB_GITHUB_SYNC_MINUTES` | `60` | How often spaces linked to GitHub sync on their own (`0`: only when asked) |
 | `SPACEHUB_GITHUB_MAX_REPOS` | `100` | Most repositories mirrored per linked space |
 | `SPACEHUB_GITHUB_TOKEN` | unset | A GitHub token for a higher API rate limit (read-only public access is enough) |
-| `SPACEHUB_XO_KEY` | unset | Turns on xo.quirq.dev's API and makes xo the only source of builders (see xo below) |
+| `SPACEHUB_ACCOUNTS` | `github` | Where builders come from: `github` (sign up with a GitHub account, see Sign up with GitHub) or `open` (anyone registers a name). Set on every start |
+| `SPACEHUB_XO_KEY` | unset | Turns on xo.quirq.dev's API and makes xo the only source of builders (see xo below); overrides `SPACEHUB_ACCOUNTS` |
 | `/data` volume | | Databases, the server's signing keys, and the identity that owns the module. **Mount persistent storage here and back it up.** Without it, a restart forgets every project and invalidates every client token |
 
 The container starts as root only to take ownership of `/data`, because
@@ -343,9 +378,10 @@ name.
 
 **Add from the browser**
 
-- **Register** (`/-/signup`) registers a builder: pick the name, and the
-  server creates its identity. The token is shown once. It is the login, and
-  the CLI can use it too (`spacehub auth login --with-token`).
+- **Register** (`/-/signup`): with GitHub sign-up, it shows how to sign up
+  from the CLI. On a hub with open sign-up, it registers a builder: pick the
+  name, and the server creates its identity. The token is shown once. It is
+  the login, and the CLI can use it too (`spacehub auth login --with-token`).
 - **Sign in** (`/-/login`) takes an existing token, for example from
   `spacehub auth token`.
 - **New project** (`/-/new`) creates an empty project in your personal space
@@ -375,7 +411,7 @@ Install it the same way you'd install gh:
 
 ```sh
 scripts/install-cli.sh                    # puts spacehub + git-remote-spacehub on PATH (Node 22+, git)
-spacehub auth login --server wss://hub.example.com --builder <name>
+spacehub auth login --server wss://hub.example.com   # with the GitHub account gh is logged in to
 ```
 
 Or use the client image, which bundles git, the CLI and the helper. It's
@@ -391,7 +427,7 @@ docker run --rm -it -e SPACEHUB_SERVER=wss://hub.example.com \
 
 | gh | spacehub |
 | --- | --- |
-| `gh auth login` | `spacehub auth login [--server url] [--builder name] [--with-token]` (`--agent`, `--username` are aliases) |
+| `gh auth login` | `spacehub auth login [--server url]`: with the GitHub account logged in here. `--with-token` takes a token from `auth token`; `--builder name` registers a name on hubs with open sign-up (`--agent`, `--username` are aliases) |
 | `gh auth status` / `token` / `logout` | `spacehub auth status` / `token` / `logout --yes` |
 | (delete your account) | `spacehub auth delete --yes`: the builder, its projects and agents, its places in team spaces and its activity history; its name is free again. A team's last owner adds another owner first |
 | `gh repo create name --source . --push` | `spacehub project create [space/]name --source . --push` |
@@ -426,11 +462,12 @@ your personal space. Inside a clone, commands default to the repository's
 quirq remote.
 
 A login is a token in `~/.spacehub/config.json`, kept per server. There are
-no passwords: the token is the builder. To be the same builder on another
-machine, run
+no passwords: the token is the builder. With GitHub sign-up, `spacehub auth
+login` on another machine gets the same token back. Otherwise, run
 `spacehub auth token | ssh other spacehub auth login --server <url> --with-token`.
 `SPACEHUB_SERVER`, `SPACEHUB_DB`, `SPACEHUB_TOKEN` and `SPACEHUB_HOME`
-override the saved settings.
+override the saved settings; `SPACEHUB_WEB` points sign-in at a web service
+on its own port (a local test server).
 
 ## Local development
 
@@ -439,7 +476,7 @@ spacetime start                           # terminal 1
 scripts/setup.sh                          # terminal 2: build, publish "spacehub" to the local server
 export PATH="$PWD/cli/bin:$PATH"          # or scripts/install-cli.sh
 spacehub auth login --server ws://127.0.0.1:3000 --builder <name>
-scripts/e2e.sh                            # 302 checks against a throwaway in-memory server and a stand-in GitHub
+scripts/e2e.sh                            # 318 checks against a throwaway in-memory server and a stand-in GitHub
 SPACEHUB_E2E_GITHUB=1 scripts/e2e.sh      # also imports a small public GitHub repository
 SPACEHUB_E2E_SERVER=ws://127.0.0.1:3000 scripts/e2e.sh   # against a running server, e.g. the Docker one
 ```
@@ -504,6 +541,8 @@ tables or columns in place. In the code they are called projects.
 | `space_member` | project + builder | a project's collaborators |
 | `agent` | name | an agent's identity and creator (its space is in `hub_space`, kind `agent`) |
 | `agent_secret` | name | (private) an agent's token, read only through `agent_token` by its owners |
+| `github_account` | GitHub account id | (private) a builder who signed up with GitHub: its login then, its name, identity and token; written by `github_link_builder` (admin only), read by the web service to sign the account in again |
+| `hub_state` | key | (private) the hub's settings: its admin, and where builders come from (`accounts`: `open`, `github` or `xo`) |
 | `space_link` | space | the GitHub account it mirrors, the last sync's status and time |
 | `ref_sync` | project + ref | GitHub's value at the last sync, and whether the hub's copy follows it or diverged |
 | `project_size` | project | the bytes of its git objects, uncompressed, as git counts them; kept as objects arrive |
@@ -562,6 +601,9 @@ the record's version, and `xo_link_agent`).
   admin's token to the web service, whose sync may create projects and push
   only in spaces linked to GitHub (shown as "GitHub sync" in the activity).
   git sees that token only when it pushes into the hub.
+- **GitHub sign-up** is the admin as well: the web service checks the GitHub
+  token with GitHub, then makes the builder with `github_link_builder` (see
+  `cli/src/signin.ts`). It is off on a hub whose builders come from xo.
 - **Turn it on** by setting `SPACEHUB_XO_KEY` (32 characters or more, the same
   value as xo.quirq.dev's `XO_HUB_KEY`). The web service then answers
   `/-/api/xo/v1/` (see `cli/src/xo.ts`) with that key only, acting as the
@@ -578,13 +620,22 @@ the record's version, and `xo_link_agent`).
 - Every project can be read by anyone who can reach the server. Only its
   space's owners and members and its collaborators can push; they can do
   anything a push does, including force pushes and deleting branches. To be
-  one builder on several machines, use `auth token` and `auth login
-  --with-token`.
+  one builder on several machines, sign in with the same GitHub account, or
+  use `auth token` and `auth login --with-token`.
 - Autosync commits often and with generated messages; squash before sharing
   the history elsewhere if that matters. It skips commit hooks.
-- Anyone who can reach the server can register a builder (with `SPACEHUB_XO_KEY` set, only xo makes them), create team spaces and import public GitHub
-  repositories (up to `SPACEHUB_IMPORT_MAX_MB` each). Keep that in mind
-  before exposing a server publicly.
+- Anyone with a GitHub account can sign up (with `SPACEHUB_ACCOUNTS=open`,
+  anyone who can reach the server registers any free name; with
+  `SPACEHUB_XO_KEY` set, only xo makes builders). Builders can create team
+  spaces and import public GitHub repositories (up to
+  `SPACEHUB_IMPORT_MAX_MB` each). Keep that in mind before exposing a server
+  publicly.
+- Team space names are not checked against GitHub: a team space can take a
+  name that a GitHub user would later want, and that user then cannot sign
+  up until the admin frees it.
+- GitHub sign-up sends the token `gh` holds (often with wide scopes) to the
+  hub once. The hub uses it for one `GET /user` and drops it, but you are
+  trusting the hub with it for that moment.
 - Objects are stored whole and uncompressed, in SpacetimeDB's memory. That
   suits code, not big binaries. The object size cap is 100 MiB.
 - Transfers carry whole objects, not deltas. There are no shallow clones.

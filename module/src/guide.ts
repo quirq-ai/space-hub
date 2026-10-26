@@ -3,8 +3,9 @@
 // top of the home page. Keep it plain and short; the README has the rest.
 //
 // HUB is the remote name and URL scheme git uses (quirq, quirq://<host>/<space>/<project>).
-// TODO: the sign-in wording still says anyone can register; on a hub that
-// serves xo (SPACEHUB_XO_KEY), builders come from xo login instead.
+// The sign-up wording follows the hub's accounts setting: open (register a
+// name) or github (sign up with GitHub from the CLI).
+// TODO: on a hub that serves xo (SPACEHUB_XO_KEY), builders come from xo login instead.
 import { esc } from './style';
 
 const HUB = {
@@ -19,6 +20,7 @@ export interface GuideContext {
   server: string; // ws:// or wss:// address of this hub
   host: string;
   link: (path: string) => string; // a UI path, as the page links it
+  accounts: string; // "open", "github" or "xo" (hub_state)
 }
 
 const code = (text: string) => `<code class="clone">${esc(text)}</code>`;
@@ -27,7 +29,8 @@ function commands(ctx: GuideContext) {
   const c = HUB.cli;
   return {
     install: `git clone ${HUB.source} && ./space-hub/scripts/install-cli.sh`,
-    login: `${c} auth login --server ${ctx.server} --builder <name>`,
+    login: ctx.accounts === 'github' ? `${c} auth login --server ${ctx.server}` : `${c} auth login --server ${ctx.server} --builder <name>`,
+    gh: 'gh auth login',
     create: `${c} project create <name> --source . --push`,
     team: `${c} space create <team>`,
     teamMember: `${c} space member add <team> <builder>`,
@@ -62,14 +65,15 @@ const LEAD =
 // The short version for the home page.
 export function guideHome(ctx: GuideContext): string {
   const cmd = commands(ctx);
+  const github = ctx.accounts === 'github';
   return `<div class="box guide-box"><div class="guide-head"><p class="guide-lead">${esc(LEAD)}</p><a class="btn" href="${esc(ctx.link('-/guide'))}">Read the guide</a></div>
 <div class="guide">
 <div><h3>Who can use it</h3><ul>
 <li>Anyone can browse spaces and projects and clone them.</li>
-<li>To create projects or push, you need a builder login. Register at the top right, or with the CLI.</li></ul></div>
+<li>To create projects or push, you need a builder login. ${github ? 'Sign up with your GitHub account from the CLI: your builder name is your GitHub login.' : 'Register at the top right, or with the CLI.'}</li></ul></div>
 <div><h3>Get started</h3><ol>
 <li>Install the CLI (needs git and Node 22+):${code(cmd.install)}</li>
-<li>Log in as a builder:${code(cmd.login)}</li>
+${github ? `<li>Log in to GitHub, then sign up with that account:${code(cmd.gh)}${code(cmd.login)}</li>` : `<li>Log in as a builder:${code(cmd.login)}</li>`}
 <li>Share a repo (run inside it):${code(cmd.create)}</li></ol></div>
 <div><h3>Use cases</h3><ul>
 <li>Keep one repo the same on your laptop, cloud machines and AI agents.</li>
@@ -82,6 +86,7 @@ export function guideHome(ctx: GuideContext): string {
 // The full guide page.
 export function guidePage(ctx: GuideContext): string {
   const cmd = commands(ctx);
+  const github = ctx.accounts === 'github';
   const step = (text: string, command?: string) => `<li>${text}${command ? code(command) : ''}</li>`;
   return `<div class="guide-page">
 <h1><b>Guide</b></h1>
@@ -102,20 +107,28 @@ export function guidePage(ctx: GuideContext): string {
 
 <section id="who"><h2>Who can use it</h2><ul>
 <li><b>Anyone</b> who can open this page can browse every space and project, read the activity and clone any project.</li>
-<li><b>Builders</b> can also create projects and team spaces, push and import from GitHub. Register at the top right, or with ${code(cmd.login)}</li>
+${
+  github
+    ? `<li><b>Builders</b> can also create projects and team spaces, push and import from GitHub. Sign up with your GitHub account: log in to GitHub with ${code(cmd.gh)} then run ${code(cmd.login)} Your builder name, and your personal space, are your GitHub login.</li>`
+    : `<li><b>Builders</b> can also create projects and team spaces, push and import from GitHub. Register at the top right, or with ${code(cmd.login)}</li>`
+}
 <li>A space's owners and members push to its projects. To let someone push to one project only, add them as a collaborator: ${code(cmd.collaborator)}</li>
-<li>A login has no password: its token is the key. Save it when you register, or print it later with ${code(cmd.token)}</li>
+${
+  github
+    ? `<li>A login has no password: GitHub vouches for you. Run <code>spacehub auth login</code> on any machine to sign in again. To sign in on this site, print your token with ${code(cmd.token)} and paste it at <b>Sign in</b>.</li>`
+    : `<li>A login has no password: its token is the key. Save it when you register, or print it later with ${code(cmd.token)}</li>`
+}
 </ul></section>
 
 <section id="how"><h2>How to use it</h2>
 <h3>In the browser</h3><ol>
-${step('Register at the top right, and save the token you are shown.')}
+${github ? step('Sign up with the CLI (below), print your token with <code>spacehub auth token</code>, and paste it at <b>Sign in</b>.') : step('Register at the top right, and save the token you are shown.')}
 ${step('Click <b>New project</b>. Pick the space, then leave it empty or paste a GitHub URL to import that repository.')}
 ${step('Open a project to browse its files, commits and activity. Imported projects have <b>Sync from GitHub</b>.')}
 </ol>
 <h3>With the CLI</h3><ol>
 ${step('Install it (needs git and Node 22+):', cmd.install)}
-${step('Log in as a builder:', cmd.login)}
+${github ? `${step('Log in to GitHub, then sign up with that account (your builder name is your GitHub login):', cmd.gh)}${code(cmd.login)}` : step('Log in as a builder:', cmd.login)}
 ${step('Share a repo (run inside it):', cmd.create)}
 ${step('Make a team space, add people, and share a repo into it:', cmd.team)}${code(cmd.teamMember)}${code(cmd.teamProject)}
 ${step("Mirror a GitHub user's or organization's public repositories into a space:", cmd.link)}

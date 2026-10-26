@@ -2,7 +2,9 @@
 // SpacetimeDB inside the server image, behind the same proxy, at /-/*:
 //
 //   GET/POST /-/login            sign in with an identity token
-//   GET/POST /-/signup           register a builder (new identity + name)
+//   GET/POST /-/signup           register a builder (new identity + name), or how to
+//                                sign up with GitHub on a hub where builders do
+//   POST     /-/api/auth/github  sign up or in with a GitHub token (signin.ts), for the CLI
 //   POST     /-/logout           forget the session
 //   GET/POST /-/new              create a project, optionally imported from GitHub
 //   POST     /-/sync/<o>/<name>  pull a project's GitHub source again
@@ -20,6 +22,7 @@ import { githubLogin, normalizeServer } from './config';
 import { esc, navFor, PAGE_CSP, shell } from '../../module/src/style';
 import { Fail, GithubSync, githubApi, githubBuilder as builderOf, githubInfo as infoOf, mirrorProject } from './github';
 import { LiveHub } from './live';
+import { accountsSetting, handleSignIn, signInConfig } from './signin';
 import { handleXo, xoConfig } from './xo';
 
 quietSdkLogs();
@@ -37,6 +40,8 @@ const LIVE = new LiveHub({ server: SERVER, db: DB, http: INTERNAL_HTTP });
 const GITHUB = githubApi();
 const githubInfo = (owner: string, repo: string) => infoOf(GITHUB, owner, repo);
 const githubBuilder = (login: string) => builderOf(GITHUB, login);
+// GitHub sign-in makes builders as the hub admin.
+const SIGNIN = signInConfig(DB, INTERNAL_HTTP, GITHUB);
 // Spaces linked to GitHub sync as the hub admin, whose token the entrypoint
 // hands over.
 const ADMIN_TOKEN = process.env.SPACEHUB_ADMIN_TOKEN ?? '';
@@ -240,6 +245,40 @@ ${error ? `<div class="banner err">${esc(error)}</div>` : ''}
   );
 }
 
+// On a hub where builders sign up with GitHub, they do it from the CLI.
+function githubSignupPage(viewer: string | null, server: string, error = '') {
+  const step = (text: string, command: string) => `<li>${text}<code class="clone">${esc(command)}</code></li>`;
+  return page(
+    'Sign up · spacehub',
+    viewer,
+    `<h1><b>Sign up with GitHub</b></h1>
+<p class="desc">Builders on this hub sign up with their GitHub account, from the CLI. Your builder name, and your personal space, are your GitHub login. There is no password: run the same login again on any machine to get your builder back.</p>
+${error ? `<div class="banner err">${esc(error)}</div>` : ''}
+<ol>
+${step('Install the CLI (needs git and Node 22+):', 'git clone https://github.com/quirq-ai/space-hub && ./space-hub/scripts/install-cli.sh')}
+${step('Log in to GitHub with the GitHub CLI:', 'gh auth login')}
+${step('Sign up (the hub asks GitHub who you are):', `spacehub auth login --server ${server}`)}
+${step('To use this site too, print your token and paste it at <a href="/-/login">Sign in</a>:', 'spacehub auth token')}
+</ol>`
+  );
+}
+
+// Where builders come from: "open", "github" or "xo" (unknown without the admin: open).
+async function accountsMode() {
+  if (!SIGNIN) return 'open';
+  try {
+    return await accountsSetting(SIGNIN);
+  } catch {
+    return 'open';
+  }
+}
+
+// This hub's websocket address, as the browser reached it.
+function serverOf(req: http.IncomingMessage) {
+  const scheme = req.headers['x-forwarded-proto'] === 'https' ? 'wss' : 'ws';
+  return `${scheme}://${req.headers.host ?? 'localhost'}`;
+}
+
 function newPage(viewer: string, spaces: string[], error = '', values: Record<string, string> = {}) {
   const v = (k: string) => esc(values[k] ?? '');
   const chosen = values.space || viewer;
@@ -283,6 +322,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   const route = url.pathname;
   // Called by xo.quirq.dev with its key, not from the site's forms.
   if (await handleXo(XO, req, res)) return;
+  // Called by the CLI with a GitHub token, not from the site's forms.
+  if (await handleSignIn(SIGNIN, req, res)) return;
   if (LIVE.handle(req, res, url)) return;
   if (req.method === 'POST' && !sameOrigin(req)) return send(res, 403, page('Forbidden', null, '<h1>Forbidden</h1><p class="desc">This form must be sent from this site.</p>'));
 
@@ -305,6 +346,10 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
 
   if (route === '/-/signup') {
     const session = await sessionOf(req);
+    if ((await accountsMode()) === 'github') {
+      const error = req.method === 'POST' ? 'Builders on this hub sign up with GitHub, from the CLI.' : '';
+      return send(res, error ? 400 : 200, githubSignupPage(session?.username ?? null, serverOf(req), error));
+    }
     if (req.method === 'GET') return send(res, 200, signupPage(session?.username ?? null));
     const form = await readForm(req);
     const username = (form.get('username') ?? '').trim().toLowerCase();

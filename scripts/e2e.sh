@@ -67,6 +67,9 @@ else
   export SPACEHUB_SERVER="ws://127.0.0.1:$PORT"
   export SPACEHUB_DB="spacehub-e2e"
   echo "starting SpacetimeDB on :$PORT"
+  # A server left on the port (an earlier run that was killed) would take
+  # this run's requests: stop rather than test against it.
+  if curl -sf "http://127.0.0.1:$PORT/v1/ping" >/dev/null 2>&1; then fail "port $PORT is already in use (an old e2e server?); stop it or set PORT"; fi
   (cd "$ROOT/module" && npm install --silent --no-audit --no-fund >/dev/null 2>&1)
   spacetime start --in-memory --data-dir "$WORK/stdb" --listen-addr "127.0.0.1:$PORT" --non-interactive >"$WORK/server.log" 2>&1 &
   SERVER_PID=$!
@@ -320,10 +323,14 @@ import http.server, os, sys, urllib.parse
 root, port = sys.argv[1], int(sys.argv[2])
 class Api(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        f = os.path.join(root, 'api', urllib.parse.urlparse(self.path).path.strip('/') + '.json')
+        path = urllib.parse.urlparse(self.path).path.strip('/')
+        if path == 'user':  # whose token this is: $GH/api/tokens/<token>.json
+            token = self.headers.get('authorization', '').removeprefix('Bearer ')
+            path = 'tokens/' + ''.join(c for c in token if c.isalnum() or c == '-')
+        f = os.path.join(root, 'api', path + '.json')
         found = os.path.isfile(f)
         body = open(f, 'rb').read() if found else b'{"message": "Not Found"}'
-        self.send_response(200 if found else 404)
+        self.send_response(200 if found else 401 if path.startswith('tokens/') else 404)
         self.send_header('content-type', 'application/json')
         self.end_headers()
         self.wfile.write(body)
@@ -373,6 +380,43 @@ if [[ "${SPACEHUB_E2E_GITHUB:-}" == 1 ]]; then
   page_has "the GitHub owner is the builder" "-/builders/octocat" "$WEBUSER/Hello-World"
   page_has "with GitHub's display name" "$WEBUSER/Hello-World" "The Octocat"
   page_has "imports appear in the space's activity" "$WEBUSER/Hello-World/activity" "imported"
+fi
+
+echo "sign up with GitHub"
+if [[ -n "${SPACEHUB_E2E_SERVER:-}" || "${SPACEHUB_E2E_GITHUB:-}" == 1 ]]; then
+  # GitHub itself answers: only a refusal can be checked without an account.
+  same "a token GitHub does not know is refused" \
+    "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer not-a-token-$RUN" "$WEB/-/api/auth/github")" "401"
+else
+  # The stand-in GitHub knows two tokens: a user's and an organization's.
+  mkdir -p "$GH/api/tokens"
+  GHLOGIN="Gh-$RUN"; GHNAME="gh-$RUN"
+  echo "{\"login\": \"$GHLOGIN\", \"id\": $((16#$RUN + 1)), \"type\": \"User\"}" >"$GH/api/tokens/user-$RUN.json"
+  echo "{\"login\": \"org-$RUN\", \"id\": $((16#$RUN + 2)), \"type\": \"Organization\"}" >"$GH/api/tokens/org-$RUN.json"
+  ghlogin() { # ghlogin <home> <GitHub token> [args...]: auth login with that GitHub account
+    local who="$1" token="$2"; shift 2
+    SPACEHUB_HOME="$WORK/home-$who" SPACEHUB_WEB="$WEB" GH_TOKEN="$token" spacehub auth login "$@"
+  }
+  admin_call() { spacetime call --server "http://127.0.0.1:$PORT" "$SPACEHUB_DB" "$@" >/dev/null 2>&1; }
+  same "auth login signs up with the GitHub account, named after its login" \
+    "$(ghlogin gh1 "user-$RUN" 2>/dev/null)" "Signed up on $SPACEHUB_SERVER (database $SPACEHUB_DB) as builder $GHNAME, with your GitHub account"
+  check "with a personal space of that name" bash -c "SPACEHUB_HOME='$WORK/home-gh1' spacehub space view $GHNAME | grep -q builder"
+  check "the GitHub builder makes projects like any other" as gh1 spacehub project create "$GHNAME/first"
+  same "on another machine, the same account gets the same builder back" \
+    "$(ghlogin gh2 "user-$RUN" >/dev/null 2>&1; as gh2 spacehub auth token)" "$(as gh1 spacehub auth token)"
+  same "logging in again changes nothing" "$(ghlogin gh1 "user-$RUN" 2>/dev/null)" "Logged in to $SPACEHUB_SERVER (database $SPACEHUB_DB) as builder $GHNAME"
+  expect_fail "a token GitHub does not know is refused" "gh auth login" ghlogin gh3 "bad-$RUN"
+  expect_fail "an organization's token does not sign in" "not a GitHub user account" ghlogin gh3 "org-$RUN"
+  same "a refused sign-in saves no token" "$(as gh3 spacehub auth status 2>&1 | grep -c '^builder   not logged in')" "1"
+  admin_call set_accounts '"github"' || fail "switch to GitHub sign-up"
+  expect_fail "with GitHub sign-up on, names cannot be registered" "sign up with GitHub" as gh3 spacehub auth login --builder "plain$RUN"
+  page_has "the guide says how to sign up" "-/guide" "gh auth login"
+  same "the sign-up page points to the CLI" "$(curl -s "$WEB/-/signup" | grep -c 'Sign up with GitHub')" "1"
+  same "the sign-up form is refused" "$(form /-/signup "username=plain$RUN" | cut -d' ' -f1)" "400"
+  admin_call set_accounts '"open"' || fail "switch back to open sign-up"
+  check "a GitHub builder can leave" as gh1 spacehub auth delete --yes
+  same "and sign up again, as a new builder" "$(ghlogin gh2 "user-$RUN" 2>/dev/null | cut -d' ' -f1-2)" "Signed up"
+  check "which leaves too" as gh2 spacehub auth delete --yes
 fi
 
 echo "team spaces"
@@ -646,12 +690,13 @@ agent_here() { as alice spacehub space who "$AT" | grep -q "^$AG  *agent"; }
 check "it shows as running in the space" wait_for 15 agent_here
 page_has "and on its page, with its host" "$AG" "e2e-host"
 echo "found something" >"$AW/$AT/work/finding.txt"
-agent_pushed() { [[ "$(as alice git ls-remote "$HUB/$AT/work" refs/heads/main | cut -f1)" == "$(git -C "$AW/$AT/work" rev-parse HEAD)" ]] && [[ -n "$(as alice git ls-remote "$HUB/$AT/work" refs/heads/main)" ]] && git -C "$AW/$AT/work" log -1 --format=%s | grep -q finding; }
+# The commit is read first, so a check cannot pass between the commit and its push.
+agent_pushed() { local head; head="$(git -C "$AW/$AT/work" rev-parse HEAD)"; git -C "$AW/$AT/work" log -1 --format=%s "$head" | grep -q finding && [[ "$(as alice git ls-remote "$HUB/$AT/work" refs/heads/main | cut -f1)" == "$head" ]]; }
 check "what it writes is pushed" wait_for 30 agent_pushed
 same "as the agent" "$(git -C "$AW/$AT/work" log -1 --format=%an)" "$AG"
 page_has "credited to the agent in the activity" "$AT/work/activity" "<b>$AG</b>"
 echo "learned a thing" >>"$AW/$AG/home/MEMORY.md"
-memory_pushed() { as alice git ls-remote "$HUB/$AG/home" refs/heads/main | cut -f1 | grep -q "$(git -C "$AW/$AG/home" rev-parse HEAD)" && git -C "$AW/$AG/home" log -1 --format=%s | grep -q MEMORY; }
+memory_pushed() { local head; head="$(git -C "$AW/$AG/home" rev-parse HEAD)"; git -C "$AW/$AG/home" log -1 --format=%s "$head" | grep -q MEMORY && [[ "$(as alice git ls-remote "$HUB/$AG/home" refs/heads/main | cut -f1)" == "$head" ]]; }
 check "its memory goes back to its home" wait_for 30 memory_pushed
 (cd "$WORK/src-work" && as alice git pull -q --ff-only quirq main 2>/dev/null && echo "from alice" >>notes.txt && commit -am "alice adds a note" && as alice git push -q quirq main 2>/dev/null)
 alice_arrived() { grep -q "from alice" "$AW/$AT/work/notes.txt"; }

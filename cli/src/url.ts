@@ -28,6 +28,22 @@ function local(host: string) {
   return /^(localhost|127(?:\.\d{1,3}){3}|\[::1\])(?::\d{1,5})?$/.test(host);
 }
 
+// Where GitHub sign-in may send the GitHub token of this machine (gh's usually
+// can read and write your repositories): "send" for the default hub over
+// https and for a hub on this machine (a test server), "ask" for any other
+// host over https, so the person says yes at a terminal first. Anything else,
+// plain http to another machine above all, is refused with the reason.
+export const DEFAULT_HUB_HOST = 'hub.quirq.dev';
+export function githubTokenTarget(url: string): 'send' | 'ask' {
+  const u = new URL(url);
+  if (local(u.host)) return 'send';
+  if (u.protocol !== 'https:') {
+    throw new Error(`GitHub sign-in sends your GitHub token, so it goes only over https, and ${u.origin} is not`);
+  }
+  if (u.username || u.password) throw new Error('a sign-in address with a login in it is refused');
+  return u.host === DEFAULT_HUB_HOST ? 'send' : 'ask';
+}
+
 // The websocket address for a host: plain ws:// only on this machine.
 export function serverOfHost(host: string): string {
   return `${local(host) ? 'ws' : 'wss'}://${host}`;

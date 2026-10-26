@@ -292,7 +292,8 @@ const refSync = table(
 
 // Flags for one-off jobs, e.g. rebuilding the activity feed's history, and
 // the hub's settings: who its admin is ("admin") and where accounts come from
-// ("accounts": "xo" once xo makes them).
+// ("accounts": "github" for sign-up with GitHub, "xo" once xo makes them;
+// no row is open sign-up).
 const hubState = table({ name: 'hub_state' }, { key: t.string().primaryKey(), value: t.string() });
 
 // What xo.quirq.dev keeps for each xo user (Clerk only says who they are):
@@ -324,6 +325,22 @@ const xoAgent = table(
   }
 );
 
+// Builders who signed up with GitHub: the GitHub account (by its id, which
+// stays when the login is renamed), and the hub token the web service hands
+// back whenever that account signs in again, on any machine. Private: only
+// the admin (the server's own web service) reads or writes it.
+const githubAccount = table(
+  { name: 'github_account' },
+  {
+    githubId: t.u64().primaryKey(),
+    login: t.string(), // the GitHub login at sign-up
+    username: t.string().unique(),
+    identity: t.identity().unique(),
+    token: t.string(),
+    createdAt: t.timestamp(),
+  }
+);
+
 const spacetimedb = schema({
   user,
   project,
@@ -345,6 +362,7 @@ const spacetimedb = schema({
   hubState,
   xoRecord,
   xoAgent,
+  githubAccount,
 });
 export default spacetimedb;
 
@@ -562,9 +580,17 @@ function addBuilder(ctx: Ctx, identity: Identity, username: string) {
   logActivity(ctx, { kind: 'agent_registered', agent: username });
 }
 
+// Where builders come from: "open" (anyone registers a name), "github" (sign
+// up with a GitHub account, through the web service) or "xo".
+function accounts(ctx: Ctx) {
+  return ctx.db.hubState.key.find('accounts')?.value ?? 'open';
+}
+
 export const registerUser = spacetimedb.reducer({ username: t.string() }, (ctx, { username }) => {
-  if (ctx.db.hubState.key.find('accounts')?.value === 'xo') {
-    throw new SenderError('builders on this hub are made by xo: run xo login');
+  const source = accounts(ctx);
+  if (source === 'xo') throw new SenderError('builders on this hub are made by xo: run xo login');
+  if (source === 'github') {
+    throw new SenderError('builders on this hub sign up with GitHub: log in with gh auth login, then run spacehub auth login');
   }
   const existing = ctx.db.user.identity.find(ctx.sender);
   if (existing) throw new SenderError(`this identity is already the builder "${existing.username}"`);
@@ -606,6 +632,7 @@ export const deleteBuilder = spacetimedb.reducer(ctx => {
   }
   const xo = [...ctx.db.xoAgent.iter()].find(a => a.username === name);
   if (xo) ctx.db.xoAgent.subject.delete(xo.subject);
+  ctx.db.githubAccount.username.delete(name);
   ctx.db.hubSpace.name.delete(name);
   ctx.db.user.identity.delete(ctx.sender);
 });
@@ -655,10 +682,11 @@ function requireAdmin(ctx: Ctx) {
   }
 }
 
-// "xo": only xo makes agents (sign-up is off); "open": anyone can register.
+// "open": anyone can register a name; "github": builders sign up with a
+// GitHub account and get its login as their name; "xo": only xo makes them.
 export const setAccounts = spacetimedb.reducer({ source: t.string() }, (ctx, { source }) => {
   requireAdmin(ctx);
-  if (source !== 'xo' && source !== 'open') throw new SenderError('accounts come from "xo" or are "open"');
+  if (source !== 'xo' && source !== 'open' && source !== 'github') throw new SenderError('accounts are "open", "github" or come from "xo"');
   const row = ctx.db.hubState.key.find('accounts');
   if (row) ctx.db.hubState.key.update({ ...row, value: source });
   else ctx.db.hubState.insert({ key: 'accounts', value: source });
@@ -707,6 +735,29 @@ export const xoLinkAgent = spacetimedb.reducer(
     if (ctx.db.user.identity.find(identity)) throw new SenderError('that identity is already a builder');
     addBuilder(ctx, identity, username);
     ctx.db.xoAgent.insert({ subject, username, identity, token, createdAt: ctx.timestamp });
+  }
+);
+
+// Make `identity` (a new identity whose token the admin holds) the builder for
+// the GitHub account `githubId`, named after its login. The web service calls
+// this once it has checked the account with GitHub; on a hub whose builders
+// come from xo, GitHub sign-up is off.
+export const githubLinkBuilder = spacetimedb.reducer(
+  { githubId: t.u64(), login: t.string(), identity: t.string(), token: t.string() },
+  (ctx, { githubId, login, identity: hex, token }) => {
+    requireAdmin(ctx);
+    if (accounts(ctx) === 'xo') throw new SenderError('builders on this hub are made by xo: run xo login');
+    if (githubId === 0n) throw new SenderError('invalid GitHub account id');
+    if (!GITHUB_LOGIN.test(login)) throw new SenderError(`invalid GitHub login "${login}"`);
+    const known = ctx.db.githubAccount.githubId.find(githubId);
+    if (known) throw new SenderError(`that GitHub account is already the builder "${known.username}"`);
+    if (!/^(0x)?[0-9a-fA-F]{64}$/.test(hex)) throw new SenderError('identity must be 64 hex digits');
+    if (!token || token.length > 4096) throw new SenderError('invalid token');
+    const identity = Identity.fromString(hex.replace(/^0x/, '').toLowerCase());
+    if (ctx.db.user.identity.find(identity) || ctx.db.agent.identity.find(identity)) throw new SenderError('that identity is already a builder or an agent');
+    const username = login.toLowerCase();
+    addBuilder(ctx, identity, username);
+    ctx.db.githubAccount.insert({ githubId, login, username, identity, token, createdAt: ctx.timestamp });
   }
 );
 
