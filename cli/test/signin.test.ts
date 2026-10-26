@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { handleSignIn, SIGNIN_ROUTE, type SignInConfig } from '../src/signin.ts';
+import { handleSignIn, resetSignInLimit, SIGNIN_LIMIT, SIGNIN_ROUTE, type SignInConfig } from '../src/signin.ts';
 
 const USERS: Record<string, unknown> = {
   'gh-octo': { login: 'Octocat', id: 583231, type: 'User' },
@@ -58,6 +58,7 @@ function fakeDb(taken: string[] = []) {
 }
 
 async function setup(opts: { taken?: string[]; cfg?: boolean } = {}) {
+  resetSignInLimit();
   const github = fakeGithub();
   const db = fakeDb(opts.taken);
   const cfg: SignInConfig = {
@@ -126,6 +127,18 @@ test('without the admin there is no sign-in', async () => {
   const { signIn, close } = await setup({ cfg: false });
   try {
     assert.equal((await signIn('gh-octo')).status, 503);
+  } finally {
+    close();
+  }
+});
+
+test('sign-ins are limited per minute, so the route cannot be used in bulk', async () => {
+  const { signIn, close } = await setup();
+  try {
+    for (let i = 0; i < SIGNIN_LIMIT; i++) assert.notEqual((await signIn('bad-token')).status, 429);
+    const over = await signIn('gh-octo');
+    assert.equal(over.status, 429);
+    assert.match(String(over.body.error), /too many sign-ins/);
   } finally {
     close();
   }

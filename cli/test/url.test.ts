@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { hubUrl, parseHubUrl, serverOfHost } from '../src/url.ts';
+import { githubTokenTarget, hubUrl, parseHubUrl, serverOfHost } from '../src/url.ts';
 import { loadConfig, saveToken } from '../src/config.ts';
 
 test('quirq URLs name their hub; short and old ones mean the logged-in hub', () => {
@@ -41,4 +41,15 @@ test('SPACEHUB_TOKEN goes only to the configured hub', () => {
     delete process.env.SPACEHUB_HOME;
     fs.rmSync(home, { recursive: true, force: true });
   }
+});
+
+test('the GitHub token goes only over https, and to another hub only after a yes', () => {
+  assert.equal(githubTokenTarget('https://hub.quirq.dev/-/api/auth/github'), 'send');
+  for (const here of ['http://127.0.0.1:3002/-/api/auth/github', 'http://localhost:3000/x', 'http://[::1]:3000/x'])
+    assert.equal(githubTokenTarget(here), 'send', here);
+  assert.equal(githubTokenTarget('https://hub.example.com/-/api/auth/github'), 'ask');
+  assert.equal(githubTokenTarget('https://hub.quirq.dev.evil.com/x'), 'ask');
+  for (const bad of ['http://hub.quirq.dev/x', 'http://hub.example.com/x', 'http://localhost.evil.com/x', 'http://127.0.0.1.evil.com/x', 'ftp://hub.quirq.dev/x'])
+    assert.throws(() => githubTokenTarget(bad), /only over https/, bad);
+  assert.throws(() => githubTokenTarget('https://u:p@hub.quirq.dev/x'), /login in it/);
 });

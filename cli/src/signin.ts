@@ -88,6 +88,19 @@ export async function signIn(cfg: SignInConfig, githubToken: string) {
   return { builder: user.login.toLowerCase(), token: made.token, created: true };
 }
 
+// At most SIGNIN_LIMIT sign-ins a minute across all callers, so the route
+// cannot be used to make GitHub API calls (or builders) in bulk. Counted per
+// process; the hub runs one web service.
+export const SIGNIN_LIMIT = 30;
+let window = { start: 0, count: 0 };
+function overLimit(now = Date.now()) {
+  if (now - window.start >= 60_000) window = { start: now, count: 0 };
+  return ++window.count > SIGNIN_LIMIT;
+}
+export function resetSignInLimit() {
+  window = { start: 0, count: 0 };
+}
+
 // Answers the request and returns true when it is the sign-in route.
 export async function handleSignIn(cfg: SignInConfig | null, req: http.IncomingMessage, res: http.ServerResponse): Promise<boolean> {
   const route = new URL(req.url ?? '/', 'http://local').pathname;
@@ -95,6 +108,7 @@ export async function handleSignIn(cfg: SignInConfig | null, req: http.IncomingM
   try {
     if (!cfg) throw new Reply(503, 'GitHub sign-in is not set up on this server (it needs the hub admin\'s token)');
     if (req.method !== 'POST') throw new Reply(405, 'method not allowed');
+    if (overLimit()) throw new Reply(429, 'too many sign-ins on this hub right now; try again in a minute');
     const m = /^Bearer (\S+)$/.exec(req.headers.authorization ?? '');
     if (!m) throw new Reply(401, 'send a GitHub token as "Authorization: Bearer <token>"');
     json(res, 200, await signIn(cfg, m[1]));

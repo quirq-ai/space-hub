@@ -46,7 +46,10 @@ logged in on that machine:
 
 1. It reads that account's token with `gh auth token` (or from `GH_TOKEN` or
    `GITHUB_TOKEN`), and sends it once to the hub's web service
-   (`POST /-/api/auth/github`).
+   (`POST /-/api/auth/github`). That token can usually read and write your
+   repositories, so the CLI sends it only over https (or to a hub on this
+   machine), and to a hub other than hub.quirq.dev only after you answer yes
+   at a terminal. The web service takes at most 30 sign-ins a minute.
 2. The web service asks GitHub whose token it is (`GET /user`). Only a user
    account is accepted; the GitHub token is not kept or logged.
 3. The first time, the hub makes the builder: its name, and its personal

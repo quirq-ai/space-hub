@@ -103,7 +103,7 @@ fi
 case "$ACCOUNTS" in
   github | open | xo) ;;
   *)
-    echo "spacehub: SPACEHUB_ACCOUNTS must be \"github\" or \"open\"" >&2
+    echo "spacehub: SPACEHUB_ACCOUNTS must be \"github\", \"open\" or \"xo\" (xo is also chosen by setting SPACEHUB_XO_KEY)" >&2
     exit 1
     ;;
 esac

@@ -16,7 +16,7 @@ import { agentTemplate } from './agenttemplate';
 import { Autosync, AutosyncLoop, AutosyncStop, conflictHelp, UNFINISHED, unfinishedWork } from './autosync';
 import { git } from './git';
 import { cloneProject, findManifest, SpaceSync, writeManifest } from './spacesync';
-import { hubUrl, parseHubUrl, REMOTE } from './url';
+import { DEFAULT_HUB_HOST, githubTokenTarget, hubUrl, parseHubUrl, REMOTE } from './url';
 
 quietSdkLogs();
 
@@ -455,9 +455,23 @@ async function githubSignIn() {
     session?.conn.disconnect();
     session = null;
   }
-  const github = localGithubToken();
   const url = `${webUrl(cfg.server)}/-/api/auth/github`;
-  process.stderr.write(`Checking your GitHub account with ${new URL(url).host} (the GitHub token is used once, not kept)\n`);
+  let target: 'send' | 'ask';
+  try {
+    target = githubTokenTarget(url);
+  } catch (err) {
+    die((err as Error).message);
+  }
+  const host = new URL(url).host;
+  if (target === 'ask') {
+    // gh's token can usually read and write your repositories: only a hub you
+    // trust gets it, and only after you say so.
+    if (!process.stdin.isTTY) die(`${host} is not ${DEFAULT_HUB_HOST}: run spacehub auth login at a terminal to confirm sending it your GitHub token`);
+    const answer = await ask(`${host} is not ${DEFAULT_HUB_HOST}. Signing in sends it your GitHub token, which can act as you on GitHub. Send it? [y/N] `);
+    if (!/^y(es)?$/i.test(answer)) die('nothing was sent');
+  }
+  const github = localGithubToken();
+  process.stderr.write(`Checking your GitHub account with ${host} (the GitHub token is used once, not kept)\n`);
   let res: Response;
   try {
     res = await fetch(url, { method: 'POST', headers: { authorization: `Bearer ${github}` }, signal: AbortSignal.timeout(60_000) });
