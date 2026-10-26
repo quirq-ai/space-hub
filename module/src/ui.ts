@@ -877,8 +877,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
       .slice(0, 20)
       .map(a => `<tr><td>${this.a(a.name, esc(a.name))} <span class="muted">of ${esc(a.parent)}</span></td><td class="r muted">${this.running(a.name).length ? 'running' : ''}</td></tr>`)
       .join('');
-    const scheme = this.secure ? 'wss' : 'ws';
-    const guide = guideHome({ server: `${scheme}://${this.host}`, host: this.host, link: p => this.link(p) });
+    const guide = guideHome(this.guideContext());
     const create = this.viewer ? `<a class="btn primary" href="/-/new">New project</a>` : '';
     const rows = this.projectRows(projects, true);
     return this.page(
@@ -1330,11 +1329,16 @@ ${bodyText ? `<pre>${esc(bodyText)}</pre>` : ''}
     );
   }
 
+  private guideContext() {
+    const scheme = this.secure ? 'wss' : 'ws';
+    const accounts = this.db.hubState.key.find('accounts')?.value ?? 'open';
+    return { server: `${scheme}://${this.host}`, host: this.host, link: (p: string) => this.link(p), accounts };
+  }
+
   // The hub's own pages, at /-/<page>.
   hubPage(segs: string[]): UiResponse | null {
     if (segs[0] === 'guide' && segs.length === 1) {
-      const scheme = this.secure ? 'wss' : 'ws';
-      return this.page('Guide · spacehub', guidePage({ server: `${scheme}://${this.host}`, host: this.host, link: p => this.link(p) }));
+      return this.page('Guide · spacehub', guidePage(this.guideContext()));
     }
     if (segs[0] === 'builders' && segs.length <= 2) return segs[1] ? this.builderPage(segs[1]) : this.buildersPage();
     return null;

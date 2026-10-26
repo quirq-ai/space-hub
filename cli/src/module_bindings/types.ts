@@ -62,6 +62,16 @@ export const GitRef = __t.object("GitRef", {
 });
 export type GitRef = __Infer<typeof GitRef>;
 
+export const GithubAccount = __t.object("GithubAccount", {
+  githubId: __t.u64(),
+  login: __t.string(),
+  username: __t.string(),
+  identity: __t.identity(),
+  token: __t.string(),
+  createdAt: __t.timestamp(),
+});
+export type GithubAccount = __Infer<typeof GithubAccount>;
+
 export const HubSpace = __t.object("HubSpace", {
   name: __t.string(),
   kind: __t.string(),

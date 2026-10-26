@@ -4,7 +4,7 @@
 // manages the git projects inside them. Moving code is plain git through
 // git-remote-quirq, on a remote always named quirq that points at a quirq URL
 // (quirq://hub.quirq.dev/<space>/<project>).
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline/promises';
@@ -34,8 +34,12 @@ USAGE
   spacehub <command> <subcommand> [flags]
 
 AUTH
-  auth login      Log in to a server as a builder, registering the name on first login
-                    [--server <url>] [--db <name>] [--builder <name>] [--with-token]
+  auth login      Sign up or log in with the GitHub account logged in on this machine
+                    (gh auth login, or GH_TOKEN): your builder name is its GitHub login,
+                    and logging in again on any machine gets the same builder back
+                    [--server <url>] [--db <name>]
+                  --with-token   log in with a token from "auth token" instead (read from stdin)
+                  --builder <name>   register a name without GitHub, on hubs with open sign-up
                     (--agent and --username are aliases of --builder)
   auth status     Show the server, builder and identity in use
   auth token      Print the identity token (log in elsewhere with --with-token)
@@ -227,7 +231,7 @@ async function open() {
 async function username(): Promise<string> {
   const { conn, identity } = await open();
   const user = await findUser(conn, identity);
-  if (!user) die('not logged in; run: spacehub auth login --builder <name>');
+  if (!user) die('not logged in; run: spacehub auth login');
   return user.username;
 }
 
@@ -394,6 +398,7 @@ async function authLogin(args: string[]) {
     if (!token) die('--with-token reads a token from stdin, and none arrived');
     saveToken(loadConfig().server, token);
   }
+  if (!withToken && !wanted) return githubSignIn();
   const { conn, identity, server: at, database: db } = await open();
   let user = await findUser(conn, identity);
   if (user && wanted && wanted !== user.username) {
@@ -412,17 +417,76 @@ async function authLogin(args: string[]) {
   out(`Logged in to ${at} (database ${db}) as builder ${user?.username ?? wanted}`);
 }
 
+// The token of the GitHub account logged in on this machine: GH_TOKEN or
+// GITHUB_TOKEN (as gh reads them), else gh's own login.
+function localGithubToken(): string {
+  const set = (process.env.GH_TOKEN || process.env.GITHUB_TOKEN || '').trim();
+  if (set) return set;
+  const help = 'run "gh auth login" (or set GH_TOKEN), then try again';
+  let token = '';
+  try {
+    token = execFileSync('gh', ['auth', 'token', '--hostname', 'github.com'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      die(`sign-up uses the GitHub account logged in on this machine, through the GitHub CLI: install it (https://cli.github.com), ${help}`);
+    }
+    die(`no GitHub account is logged in on this machine: ${help}`);
+  }
+  if (!token) die(`no GitHub account is logged in on this machine: ${help}`);
+  return token;
+}
+
+// Where the hub's web service answers: the server's address over http(s), or
+// SPACEHUB_WEB when it runs on a port of its own (a local test server).
+function webUrl(server: string) {
+  return (process.env.SPACEHUB_WEB ?? server.replace(/^ws/, 'http')).replace(/\/+$/, '');
+}
+
+// Sign up or log in with GitHub: the hub asks GitHub whose token this is and
+// answers with that account's builder and token, making the builder the
+// first time. The saved token is kept when it already is a builder.
+async function githubSignIn() {
+  const cfg = loadConfig();
+  if (cfg.token) {
+    const { conn, identity, server: at, database: db } = await open();
+    const user = await findUser(conn, identity);
+    if (user) return out(`Logged in to ${at} (database ${db}) as builder ${user.username}`);
+    if (process.env.SPACEHUB_TOKEN) die(`SPACEHUB_TOKEN is not a builder on ${at}`);
+    session?.conn.disconnect();
+    session = null;
+  }
+  const github = localGithubToken();
+  const url = `${webUrl(cfg.server)}/-/api/auth/github`;
+  process.stderr.write(`Checking your GitHub account with ${new URL(url).host} (the GitHub token is used once, not kept)\n`);
+  let res: Response;
+  try {
+    res = await fetch(url, { method: 'POST', headers: { authorization: `Bearer ${github}` }, signal: AbortSignal.timeout(60_000) });
+  } catch {
+    die(`could not reach ${url}`);
+  }
+  const body = (await res.json().catch(() => null)) as { builder?: string; token?: string; created?: boolean; error?: string } | null;
+  if (!body || res.status === 404 || res.status === 405) {
+    die(`${cfg.server} has no GitHub sign-in (HTTP ${res.status}); on a hub with open sign-up, use --builder <name>`);
+  }
+  if (!res.ok || !body.token) die(body.error ?? `GitHub sign-in failed (HTTP ${res.status})`);
+  saveToken(cfg.server, body.token);
+  const { conn, identity, server: at, database: db } = await open();
+  const user = await findUser(conn, identity);
+  if (!user) die(`the hub signed you in as ${body.builder}, but database ${db} on ${at} has no such builder`);
+  out(`${body.created ? 'Signed up on' : 'Logged in to'} ${at} (database ${db}) as builder ${user.username}, with your GitHub account`);
+}
+
 async function authStatus() {
   const cfg = loadConfig();
   out(`server    ${cfg.server}`);
   out(`database  ${cfg.database}`);
   if (!cfg.token) {
-    out('builder   not logged in (spacehub auth login --builder <name>)');
+    out('builder   not logged in (spacehub auth login)');
     return;
   }
   const { conn, identity } = await open();
   const user = await findUser(conn, identity);
-  out(`builder   ${user ? user.username : 'identity has no builder name yet (spacehub auth login --builder <name>)'}`);
+  out(`builder   ${user ? user.username : 'identity has no builder name yet (spacehub auth login)'}`);
   out(`identity  ${identity.toHexString()}`);
   out(`token     ${process.env.SPACEHUB_TOKEN ? 'from SPACEHUB_TOKEN' : `saved in ${configFile()}`}`);
 }
@@ -436,8 +500,8 @@ function authLogout(args: string[]) {
   if (!cfg.token) die(`not logged in to ${cfg.server}`);
   if (!bool(args, '--yes', '-y')) {
     die(
-      `the token is the only key to this builder; back it up with "spacehub auth token" first,\n` +
-        `then run "spacehub auth logout --yes"`
+      `if you signed up with GitHub, "spacehub auth login" gets this builder back later; otherwise the\n` +
+        `token is its only key: back it up with "spacehub auth token" first. Then run "spacehub auth logout --yes"`
     );
   }
   removeToken(cfg.server);

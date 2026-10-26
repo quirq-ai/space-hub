@@ -11,22 +11,18 @@
 //
 // Every request carries `Authorization: Bearer $SPACEHUB_XO_KEY`; without that
 // variable the routes do not exist. The service reads and writes the private
-// xo tables as the hub admin (the identity that owns the database, whose token
-// the entrypoint hands it), over SpacetimeDB's HTTP API on the internal port.
+// xo tables as the hub admin (admin.ts).
 import http from 'node:http';
 import crypto from 'node:crypto';
+import { type AdminHttp, call, json, newIdentity, readJson, Reply, select } from './admin.ts';
 
 const PREFIX = '/-/api/xo/v1/';
-const MAX_BODY = 512 * 1024;
 // Clerk user ids (user_2abc...); the same rule as the module's, so an id can
 // go into a SQL literal as it is.
 const SUBJECT = /^[A-Za-z0-9_]{1,64}$/;
 
-export interface XoConfig {
+export interface XoConfig extends AdminHttp {
   key: string; // shared with xo.quirq.dev
-  adminToken: string; // the database owner's token
-  http: string; // SpacetimeDB's HTTP API inside the container
-  db: string;
 }
 
 export function xoConfig(db: string): XoConfig | null {
@@ -38,76 +34,12 @@ export function xoConfig(db: string): XoConfig | null {
   return { key, adminToken, http: (process.env.SPACEHUB_INTERNAL_HTTP ?? 'http://127.0.0.1:3001').replace(/\/+$/, ''), db };
 }
 
-class Reply extends Error {
-  status: number;
-  constructor(status: number, message: string) {
-    super(message);
-    this.status = status;
-  }
-}
-
-function json(res: http.ServerResponse, status: number, body: unknown) {
-  res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-  res.end(JSON.stringify(body));
-}
-
 function authorized(req: http.IncomingMessage, key: string) {
   const m = /^Bearer (.+)$/.exec(req.headers.authorization ?? '');
   if (!m) return false;
   const a = crypto.createHash('sha256').update(m[1]).digest();
   const b = crypto.createHash('sha256').update(key).digest();
   return crypto.timingSafeEqual(a, b);
-}
-
-async function readJson(req: http.IncomingMessage): Promise<Record<string, unknown>> {
-  let size = 0;
-  const parts: Buffer[] = [];
-  for await (const chunk of req) {
-    size += chunk.length;
-    if (size > MAX_BODY) throw new Reply(413, `body is larger than ${MAX_BODY} bytes`);
-    parts.push(chunk);
-  }
-  let body: unknown;
-  try {
-    body = JSON.parse(Buffer.concat(parts).toString('utf8'));
-  } catch {
-    throw new Reply(400, 'body must be JSON');
-  }
-  if (body === null || typeof body !== 'object' || Array.isArray(body)) throw new Reply(400, 'body must be a JSON object');
-  return body as Record<string, unknown>;
-}
-
-// ---------------------------------------------------------------- SpacetimeDB over HTTP
-
-async function stdb(cfg: XoConfig, path: string, body: string, contentType: string): Promise<string> {
-  let resp: Response;
-  try {
-    resp = await fetch(`${cfg.http}${path}`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${cfg.adminToken}`, 'content-type': contentType },
-      body,
-      signal: AbortSignal.timeout(15_000),
-    });
-  } catch {
-    throw new Reply(502, 'the hub database did not answer');
-  }
-  const text = await resp.text();
-  if (!resp.ok) throw new Reply(resp.status === 401 || resp.status === 403 ? 502 : 530, text.slice(0, 300) || `database answered ${resp.status}`);
-  return text;
-}
-
-// Rows of a one-statement SELECT, as objects keyed by column name.
-async function select(cfg: XoConfig, query: string): Promise<Record<string, unknown>[]> {
-  const out = JSON.parse(await stdb(cfg, `/v1/database/${encodeURIComponent(cfg.db)}/sql`, query, 'text/plain'));
-  const first = Array.isArray(out) ? out[0] : null;
-  const names: string[] = (first?.schema?.elements ?? []).map((e: { name?: unknown }) =>
-    typeof e.name === 'string' ? e.name : ((e.name as { some?: string } | undefined)?.some ?? '')
-  );
-  return (first?.rows ?? []).map((row: unknown[]) => Object.fromEntries(names.map((n, i) => [n, row[i]])));
-}
-
-function call(cfg: XoConfig, reducer: string, args: unknown[]) {
-  return stdb(cfg, `/v1/database/${encodeURIComponent(cfg.db)}/call/${reducer}`, JSON.stringify(args), 'application/json');
 }
 
 // ---------------------------------------------------------------- routes
@@ -141,8 +73,7 @@ async function ensureAgent(cfg: XoConfig, subject: string, body: Record<string, 
   if (found) return found;
   const username = body.username;
   if (typeof username !== 'string' || !username) throw new Reply(400, '"username" is required');
-  const made = JSON.parse(await stdb(cfg, '/v1/identity', '', 'application/json'));
-  if (typeof made?.identity !== 'string' || typeof made?.token !== 'string') throw new Reply(502, 'the hub did not make an identity');
+  const made = await newIdentity(cfg);
   try {
     await call(cfg, 'xo_link_agent', [subject, username, made.identity, made.token]);
   } catch (err) {
@@ -152,7 +83,7 @@ async function ensureAgent(cfg: XoConfig, subject: string, body: Record<string, 
     if (err instanceof Reply && /is taken|is reserved|agent name/.test(err.message)) throw new Reply(409, err.message);
     throw err;
   }
-  return { agent: username, token: made.token as string };
+  return { agent: username, token: made.token };
 }
 
 // Answers the request and returns true when it is an xo API route.

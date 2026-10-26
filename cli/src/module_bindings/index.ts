@@ -51,6 +51,7 @@ import DisconnectAgentReducer from "./disconnect_agent_reducer";
 import EditHubSpaceReducer from "./edit_hub_space_reducer";
 import EditSpaceReducer from "./edit_space_reducer";
 import FinishObjectReducer from "./finish_object_reducer";
+import GithubLinkBuilderReducer from "./github_link_builder_reducer";
 import LeaveSpaceReducer from "./leave_space_reducer";
 import LinkSpaceReducer from "./link_space_reducer";
 import MeasureNextProjectReducer from "./measure_next_project_reducer";
@@ -372,6 +373,7 @@ const reducersSchema = __reducers(
   __reducerSchema("edit_hub_space", EditHubSpaceReducer),
   __reducerSchema("edit_space", EditSpaceReducer),
   __reducerSchema("finish_object", FinishObjectReducer),
+  __reducerSchema("github_link_builder", GithubLinkBuilderReducer),
   __reducerSchema("leave_space", LeaveSpaceReducer),
   __reducerSchema("link_space", LinkSpaceReducer),
   __reducerSchema("measure_next_project", MeasureNextProjectReducer),
