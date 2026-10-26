@@ -573,6 +573,43 @@ export const registerUser = spacetimedb.reducer({ username: t.string() }, (ctx, 
   addBuilder(ctx, ctx.sender, username);
 });
 
+// A builder leaves the hub: its login, its personal space, its places in
+// other spaces, and every record of it in the activity feed. Its projects
+// and agents go first (spacehub auth delete deletes them), and it cannot be
+// the last owner of a team space. Its name is free again afterwards.
+export const deleteBuilder = spacetimedb.reducer(ctx => {
+  const name = requireUser(ctx).username;
+  const projects = [...ctx.db.project.owner.filter(name)].length;
+  if (projects) throw new SenderError(`${name} still has ${projects} projects; delete them first`);
+  const agents = [...ctx.db.hubSpace.kind.filter('agent')].filter(a => a.parent === name).map(a => a.name);
+  if (agents.length) throw new SenderError(`${name} still owns the agents ${agents.join(', ')}; delete them first`);
+  const roles = [...ctx.db.spaceRole.member.filter(name)];
+  for (const r of roles) {
+    if (r.role === 'owner' && [...ctx.db.spaceRole.space.filter(r.space)].filter(o => o.role === 'owner').length === 1) {
+      throw new SenderError(`${name} is the last owner of "${r.space}"; add another owner first`);
+    }
+  }
+  for (const r of roles) ctx.db.spaceRole.id.delete(r.id);
+  // Its personal space goes as a team space does (deleteTeam): the members it
+  // added, its GitHub link and whoever follows it, so a builder who takes the
+  // name later starts with none of them.
+  for (const r of [...ctx.db.spaceRole.space.filter(name)]) ctx.db.spaceRole.id.delete(r.id);
+  ctx.db.spaceLink.space.delete(name);
+  for (const m of [...ctx.db.projectMember.agent.filter(name)]) ctx.db.projectMember.id.delete(m.id);
+  for (const p of [...ctx.db.presence.iter()]) {
+    if (p.agent === name || p.space === name || p.space.startsWith(`${name}/`)) ctx.db.presence.connectionId.delete(p.connectionId);
+  }
+  const about = new Set(['team_member_added', 'team_member_removed', 'member_added', 'member_removed']);
+  for (const e of [...ctx.db.activity.iter()]) {
+    const mine = e.agent === name || e.space === name || e.space.startsWith(`${name}/`) || (about.has(e.kind) && e.subject === name);
+    if (mine) ctx.db.activity.id.delete(e.id);
+  }
+  const xo = [...ctx.db.xoAgent.iter()].find(a => a.username === name);
+  if (xo) ctx.db.xoAgent.subject.delete(xo.subject);
+  ctx.db.hubSpace.name.delete(name);
+  ctx.db.user.identity.delete(ctx.sender);
+});
+
 // Give every builder from before spaces existed its personal space (and any
 // project whose space has no row yet). Runs on every server start; later
 // calls find nothing to do.

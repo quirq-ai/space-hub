@@ -40,6 +40,8 @@ AUTH
   auth status     Show the server, builder and identity in use
   auth token      Print the identity token (log in elsewhere with --with-token)
   auth logout     Forget the token for the current server  [--yes]
+  auth delete     Delete this builder from the server: its projects, agents, places in
+                    team spaces and activity history; its name is free again  [--yes]
 
 SPACES
   space create <team> [-d <text>]          Create a team space (you are its owner)
@@ -440,6 +442,53 @@ function authLogout(args: string[]) {
   }
   removeToken(cfg.server);
   out(`Logged out of ${cfg.server}`);
+}
+
+// This builder leaves the hub, with its projects and agents. What the hub
+// would refuse (being the last owner of a team) is read from the hub's rows
+// right before the first delete, and the projects and agents to delete are
+// read then too, so nothing is deleted for a builder the hub then keeps.
+async function authDelete(args: string[]) {
+  const yes = bool(args, '--yes', '-y');
+  const name = await username();
+  const { conn, server } = await open();
+  const owned = async () => ({
+    projects: await projectsIn(conn, name),
+    agents: await snapshot(conn, tables.hubSpace.where(s => s.kind.eq('agent')), () =>
+      [...conn.db.hubSpace.iter()].filter(s => s.kind === 'agent' && s.parent === name).map(s => s.name)
+    ),
+  });
+  const refuseLastOwner = async () => {
+    const roles = await snapshot(conn, tables.spaceRole, () => [...conn.db.spaceRole.iter()]);
+    for (const r of roles.filter(r => r.member === name && r.role === 'owner')) {
+      if (roles.filter(o => o.space === r.space && o.role === 'owner').length === 1) {
+        die(`${name} is the last owner of ${r.space}; first add another owner: spacehub space member add ${r.space} <builder> --owner`);
+      }
+    }
+  };
+  if (!yes) {
+    const { projects, agents } = await owned();
+    await refuseLastOwner();
+    const list = (items: string[]) => (items.length ? `: ${items.join(', ')}` : '');
+    die(
+      `this deletes the builder ${name} on ${server} for good, with ${projects.length} projects${list(projects.map(p => p.name))}, ` +
+        `${agents.length} agents${list(agents)}, its places in team spaces and its activity history; re-run with --yes`
+    );
+  }
+  await refuseLastOwner();
+  const { projects, agents } = await owned();
+  for (const agent of agents) {
+    for (const p of await projectsIn(conn, agent)) await conn.reducers.deleteSpace({ space: p.fullName });
+    await conn.reducers.deleteAgent({ name: agent });
+    out(`Deleted the agent ${agent}`);
+  }
+  for (const p of projects) {
+    await conn.reducers.deleteSpace({ space: p.fullName });
+    out(`Deleted ${p.fullName}`);
+  }
+  await conn.reducers.deleteBuilder({});
+  removeToken(server);
+  out(`Deleted the builder ${name} and logged out of ${server}`);
 }
 
 // ---------------------------------------------------------------- space
@@ -1122,8 +1171,9 @@ async function main() {
       case 'status': return authStatus();
       case 'token': return authToken();
       case 'logout': return authLogout(args);
+      case 'delete': return authDelete(args);
     }
-    die(`usage: spacehub auth <login|status|token|logout>`);
+    die(`usage: spacehub auth <login|status|token|logout|delete>`);
   }
 
   const following = (sub: string | undefined) => sub === 'watch' || (sub === 'sync' && args.some(a => ['--watch', '-w', '--auto'].includes(a)));

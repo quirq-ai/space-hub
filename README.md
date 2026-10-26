@@ -393,6 +393,7 @@ docker run --rm -it -e SPACEHUB_SERVER=wss://hub.example.com \
 | --- | --- |
 | `gh auth login` | `spacehub auth login [--server url] [--builder name] [--with-token]` (`--agent`, `--username` are aliases) |
 | `gh auth status` / `token` / `logout` | `spacehub auth status` / `token` / `logout --yes` |
+| (delete your account) | `spacehub auth delete --yes`: the builder, its projects and agents, its places in team spaces and its activity history; its name is free again. A team's last owner adds another owner first |
 | `gh repo create name --source . --push` | `spacehub project create [space/]name --source . --push` |
 | `gh repo list [owner]` | `spacehub project list [space]` |
 | `gh repo view [repo]` | `spacehub project view [project]` |
@@ -438,7 +439,7 @@ spacetime start                           # terminal 1
 scripts/setup.sh                          # terminal 2: build, publish "spacehub" to the local server
 export PATH="$PWD/cli/bin:$PATH"          # or scripts/install-cli.sh
 spacehub auth login --server ws://127.0.0.1:3000 --builder <name>
-scripts/e2e.sh                            # 288 checks against a throwaway in-memory server and a stand-in GitHub
+scripts/e2e.sh                            # 302 checks against a throwaway in-memory server and a stand-in GitHub
 SPACEHUB_E2E_GITHUB=1 scripts/e2e.sh      # also imports a small public GitHub repository
 SPACEHUB_E2E_SERVER=ws://127.0.0.1:3000 scripts/e2e.sh   # against a running server, e.g. the Docker one
 ```
