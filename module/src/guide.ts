@@ -5,7 +5,7 @@
 // HUB is the remote name and URL scheme git uses (quirq, quirq://<host>/<space>/<project>).
 // The sign-up wording follows the hub's accounts setting: open (register a
 // name) or github (sign up with GitHub from the CLI).
-// TODO: on a hub that serves xo (SPACEHUB_XO_KEY), builders come from xo login instead.
+// TODO: on a hub whose accounts are xo (SPACEHUB_ACCOUNTS=xo), builders come from xo login instead.
 import { esc } from './style';
 
 const HUB = {

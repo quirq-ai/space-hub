@@ -78,8 +78,8 @@ fi
 
 # The web service acts as the admin for three things: syncing spaces linked to
 # GitHub, signing builders up with GitHub (/-/api/auth/github), and (only with
-# SPACEHUB_XO_KEY) xo.quirq.dev's API at /-/api/xo/v1/, which also makes xo the
-# only source of builders.
+# SPACEHUB_XO_KEY) xo.quirq.dev's API at /-/api/xo/v1/, which makes builders
+# for xo's users.
 # The CLI keeps the owner's token as spacetimedb_token in its cli.toml.
 SPACEHUB_ADMIN_TOKEN="$(sed -n 's/^[[:space:]]*spacetimedb_token[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
   "$ROOT/config/cli.toml" 2>/dev/null | head -n 1)"
@@ -92,23 +92,24 @@ if [ -n "$SPACEHUB_ADMIN_TOKEN" ]; then
 else
   echo "spacehub: the admin's token could not be read; spaces linked to GitHub will not sync" >&2
 fi
-# Where builders come from: xo (with SPACEHUB_XO_KEY), else SPACEHUB_ACCOUNTS:
-# "github" (the default: sign up with a GitHub account, checked by the web
-# service as the admin) or "open" (anyone registers a name).
-if [ -n "${SPACEHUB_XO_KEY:-}" ]; then
-  ACCOUNTS=xo
-else
-  ACCOUNTS="${SPACEHUB_ACCOUNTS:-github}"
-fi
+# How people sign up, from SPACEHUB_ACCOUNTS: "github" (the default: with a
+# GitHub account, checked by the web service as the admin), "open" (anyone
+# registers a name) or "xo" (nobody: only xo's API makes builders). xo's API
+# (SPACEHUB_XO_KEY) makes builders for xo's users in every mode.
+ACCOUNTS="${SPACEHUB_ACCOUNTS:-github}"
 case "$ACCOUNTS" in
   github | open | xo) ;;
   *)
-    echo "spacehub: SPACEHUB_ACCOUNTS must be \"github\", \"open\" or \"xo\" (xo is also chosen by setting SPACEHUB_XO_KEY)" >&2
+    echo "spacehub: SPACEHUB_ACCOUNTS must be \"github\", \"open\" or \"xo\"" >&2
     exit 1
     ;;
 esac
-if [ "$ACCOUNTS" != open ] && [ -z "$SPACEHUB_ADMIN_TOKEN" ]; then
-  echo "spacehub: builders come from $ACCOUNTS, which needs the admin's token, and it could not be read" >&2
+if [ "$ACCOUNTS" = github ] && [ -z "$SPACEHUB_ADMIN_TOKEN" ]; then
+  echo "spacehub: GitHub sign-up needs the admin's token, and it could not be read" >&2
+  exit 1
+fi
+if [ -n "${SPACEHUB_XO_KEY:-}" ] && [ -z "$SPACEHUB_ADMIN_TOKEN" ]; then
+  echo "spacehub: SPACEHUB_XO_KEY is set but the admin's token could not be read" >&2
   exit 1
 fi
 spacetime --root-dir "$ROOT" call --server "http://$INTERNAL" "$DB" set_accounts "\"$ACCOUNTS\"" >/dev/null

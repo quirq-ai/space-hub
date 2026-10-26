@@ -741,7 +741,7 @@ export const xoLinkAgent = spacetimedb.reducer(
 // Make `identity` (a new identity whose token the admin holds) the builder for
 // the GitHub account `githubId`, named after its login. The web service calls
 // this once it has checked the account with GitHub; on a hub whose builders
-// come from xo, GitHub sign-up is off.
+// come only from xo (accounts "xo"), GitHub sign-up is off.
 export const githubLinkBuilder = spacetimedb.reducer(
   { githubId: t.u64(), login: t.string(), identity: t.string(), token: t.string() },
   (ctx, { githubId, login, identity: hex, token }) => {
