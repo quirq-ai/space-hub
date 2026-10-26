@@ -14,6 +14,7 @@
 //   object_chunk  bodies of objects larger than one chunk, split in order
 //   space_member  (code: projectMember) collaborators on one project
 //   presence      which connected clients follow which project right now
+//   project_size  how many bytes of git objects each project stores
 //   agent         an agent: a space of its own, with its own identity
 //   agent_secret  (private) an agent's token, for its owners to launch it with
 //   space_link    the GitHub user or organization a space mirrors
@@ -227,6 +228,18 @@ const presence = table(
   }
 );
 
+// How much a project stores: the bytes of its git objects as git counts them
+// (uncompressed), kept as objects arrive. A project has a row once counted:
+// new projects from the start, older ones when measureNextProject reaches
+// them (the server measures them in the background after it starts).
+const projectSize = table(
+  { name: 'project_size', public: true },
+  {
+    projectId: t.u64().primaryKey(),
+    bytes: t.u64(),
+  }
+);
+
 // An agent is a space (hub_space kind "agent") with an identity of its own:
 // it pushes as itself to its own projects and to the spaces it is connected
 // to (as a member there). Its owners are its parent space's owners. XO Swarm
@@ -326,6 +339,7 @@ const spacetimedb = schema({
   spaceRole,
   spaceLink,
   refSync,
+  projectSize,
   agent,
   agentSecret,
   hubState,
@@ -509,6 +523,12 @@ function isAncestor(ctx: Ctx, spaceId: bigint, ancestor: string, tip: string): b
   return false;
 }
 
+// Count `bytes` more for a project that is already counted.
+function grow(ctx: Ctx, projectId: bigint, bytes: bigint) {
+  const row = ctx.db.projectSize.projectId.find(projectId);
+  if (row && bytes > 0n) ctx.db.projectSize.projectId.update({ ...row, bytes: row.bytes + bytes });
+}
+
 function insertObject(ctx: Ctx, sp: { id: bigint; objectCount: bigint; objectPos: bigint }, oid: string, kind: string, size: number, chunks: number, data: Uint8Array) {
   sp.objectCount += 1n;
   sp.objectPos += BigInt(data.length + ROW_OVERHEAD);
@@ -564,6 +584,18 @@ export const migrateSpaces = spacetimedb.reducer(ctx => {
   };
   for (const u of ctx.db.user.iter()) personal(u.username, u.createdAt);
   for (const p of ctx.db.project.iter()) personal(p.owner, p.createdAt);
+});
+
+// Count one project from before sizes were kept: add up its objects. One
+// project per call, so no single call holds the database long; the server
+// calls it in the background until it says every project is counted.
+export const measureNextProject = spacetimedb.reducer(ctx => {
+  requireAdmin(ctx);
+  const sp = [...ctx.db.project.iter()].find(p => !ctx.db.projectSize.projectId.find(p.id));
+  if (!sp) throw new SenderError('every project is measured');
+  let bytes = 0n;
+  for (const obj of ctx.db.gitObject.bySpacePos.filter(sp.id)) bytes += obj.size;
+  ctx.db.projectSize.insert({ projectId: sp.id, bytes });
 });
 
 // ---------------------------------------------------------------- admin and xo
@@ -663,6 +695,7 @@ function createProjectIn(ctx: Ctx, space: string, name: string, description: str
     createdAt: ctx.timestamp,
     pushedAt: ctx.timestamp,
   });
+  ctx.db.projectSize.insert({ projectId: created.id, bytes: 0n });
   logActivity(ctx, { kind: 'space_created', spaceId: created.id, space: fullName, agent: me });
 }
 
@@ -686,6 +719,7 @@ export const deleteSpace = spacetimedb.reducer({ space: t.string() }, (ctx, { sp
   for (const m of [...ctx.db.projectMember.spaceId.filter(sp.id)]) ctx.db.projectMember.id.delete(m.id);
   for (const p of [...ctx.db.presence.spaceId.filter(sp.id)]) ctx.db.presence.connectionId.delete(p.connectionId);
   for (const r of [...ctx.db.refSync.projectId.filter(sp.id)]) ctx.db.refSync.key.delete(r.key);
+  ctx.db.projectSize.projectId.delete(sp.id);
   ctx.db.projectImport.spaceId.delete(sp.id);
   ctx.db.projectBuilder.spaceId.delete(sp.id);
   ctx.db.project.id.delete(sp.id);
@@ -741,6 +775,7 @@ export const putObjects = spacetimedb.reducer(
   { space: t.string(), objects: t.array(ObjectIn) },
   (ctx, { space: fullName, objects }) => {
     const sp = requireWritable(ctx, fullName);
+    let added = 0n;
     for (const { oid, kind, data } of objects) {
       if (!OID.test(oid)) throw new SenderError(`invalid object id "${oid}"`);
       if (!KINDS.has(kind)) throw new SenderError(`invalid object kind "${kind}"`);
@@ -749,8 +784,10 @@ export const putObjects = spacetimedb.reducer(
       const actual = new Sha1().update(objectHeader(kind, data.length)).update(data).hex();
       if (actual !== oid) throw new SenderError(`object ${oid} hashes to ${actual}`);
       insertObject(ctx, sp, oid, kind, data.length, 0, data);
+      added += BigInt(data.length);
     }
     ctx.db.project.id.update(sp);
+    grow(ctx, sp.id, added);
   }
 );
 
@@ -793,6 +830,7 @@ export const finishObject = spacetimedb.reducer(
     if (actual !== oid) throw new SenderError(`object ${oid} hashes to ${actual}`);
     insertObject(ctx, sp, oid, kind, total, chunks, new Uint8Array(0));
     ctx.db.project.id.update(sp);
+    grow(ctx, sp.id, BigInt(total));
   }
 );
 

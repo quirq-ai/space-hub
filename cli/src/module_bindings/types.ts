@@ -109,6 +109,12 @@ export const Presence = __t.object("Presence", {
 });
 export type Presence = __Infer<typeof Presence>;
 
+export const ProjectSize = __t.object("ProjectSize", {
+  projectId: __t.u64(),
+  bytes: __t.u64(),
+});
+export type ProjectSize = __Infer<typeof ProjectSize>;
+
 export const RefSync = __t.object("RefSync", {
   key: __t.string(),
   projectId: __t.u64(),
