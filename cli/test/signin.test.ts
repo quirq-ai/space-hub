@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { handleSignIn, resetSignInLimit, SIGNIN_LIMIT, SIGNIN_ROUTE, type SignInConfig } from '../src/signin.ts';
+import { APP_ROUTE, handleSignIn, oauthApp, resetSignInLimit, SIGNIN_LIMIT, SIGNIN_ROUTE, type SignInConfig } from '../src/signin.ts';
 
 const USERS: Record<string, unknown> = {
   'gh-octo': { login: 'Octocat', id: 583231, type: 'User' },
@@ -15,9 +15,28 @@ function listen(server: http.Server) {
   return new Promise<string>(r => server.listen(0, '127.0.0.1', () => r(`http://127.0.0.1:${(server.address() as AddressInfo).port}`)));
 }
 
-// GitHub: GET /user answers for the tokens above, 401 for any other.
+// Tokens the hub's OAuth App made (the device flow); GitHub answers for these
+// only when asked as that app.
+const APP_TOKENS: Record<string, unknown> = {
+  'app-octo': { login: 'Octocat', id: 583231, type: 'User' },
+  'app-org': { login: 'acme', id: 9, type: 'Organization' },
+};
+const APP = { clientId: 'Iv1.hubapp', clientSecret: 'hub-secret' };
+
+// GitHub: GET /user answers for the tokens above, 401 for any other;
+// POST /applications/<id>/token answers for APP_TOKENS when asked as APP.
 function fakeGithub() {
-  return http.createServer((req, res) => {
+  return http.createServer(async (req, res) => {
+    let body = '';
+    for await (const c of req) body += c;
+    if (req.url === `/applications/${APP.clientId}/token`) {
+      const basic = `Basic ${Buffer.from(`${APP.clientId}:${APP.clientSecret}`).toString('base64')}`;
+      if (req.method !== 'POST' || req.headers.authorization !== basic) return res.writeHead(401).end('{"message": "Bad credentials"}');
+      const user = APP_TOKENS[JSON.parse(body).access_token];
+      if (!user) return res.writeHead(404).end('{"message": "Not Found"}');
+      res.setHeader('content-type', 'application/json');
+      return res.end(JSON.stringify({ user }));
+    }
     const token = /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1] ?? '';
     const user = req.url === '/user' ? USERS[token] : undefined;
     if (!user) return res.writeHead(401).end('{"message": "Bad credentials"}');
@@ -57,7 +76,7 @@ function fakeDb(taken: string[] = []) {
   return { server, accounts, builders, seen, identities: () => identities };
 }
 
-async function setup(opts: { taken?: string[]; cfg?: boolean } = {}) {
+async function setup(opts: { taken?: string[]; cfg?: boolean; app?: SignInConfig['app'] } = {}) {
   resetSignInLimit();
   const github = fakeGithub();
   const db = fakeDb(opts.taken);
@@ -66,6 +85,7 @@ async function setup(opts: { taken?: string[]; cfg?: boolean } = {}) {
     db: 'spacehub',
     http: await listen(db.server),
     github: { base: await listen(github), token: '', standIn: true },
+    ...(opts.app ? { app: opts.app } : {}),
   };
   const web = http.createServer(async (req, res) => {
     if (!(await handleSignIn(opts.cfg === false ? null : cfg, req, res))) res.writeHead(418).end();
@@ -75,8 +95,12 @@ async function setup(opts: { taken?: string[]; cfg?: boolean } = {}) {
     const res = await fetch(`${base}${SIGNIN_ROUTE}`, { method, headers: token === null ? {} : { authorization: `Bearer ${token}` } });
     return { status: res.status, body: (await res.json()) as Record<string, unknown> };
   };
+  const app = async (method = 'GET') => {
+    const res = await fetch(`${base}${APP_ROUTE}`, { method });
+    return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+  };
   const close = () => [github, db.server, web].forEach(s => s.close());
-  return { db, signIn, close };
+  return { db, signIn, app, close };
 }
 
 test('the first sign-in makes the builder; later ones get the same token back', async () => {
@@ -142,4 +166,47 @@ test('sign-ins are limited per minute, so the route cannot be used in bulk', asy
   } finally {
     close();
   }
+});
+
+test('a hub with an OAuth App names its client id and takes only tokens made for it', async () => {
+  const { db, signIn, app, close } = await setup({ app: APP });
+  try {
+    assert.deepEqual(await app(), { status: 200, body: { client_id: APP.clientId } });
+    assert.equal((await app('POST')).status, 405);
+    assert.deepEqual(await signIn('app-octo'), { status: 200, body: { builder: 'octocat', token: 'hub-1', created: true } });
+    // A gh token, or another app's, is not one this hub's app made.
+    const gh = await signIn('gh-octo');
+    assert.equal(gh.status, 401);
+    assert.match(String(gh.body.error), /made for this hub's sign-in/);
+    assert.equal((await signIn('app-org')).status, 403);
+    assert.equal(db.identities(), 1);
+    assert.ok(db.seen.every(line => !line.includes('app-octo') && !line.includes(APP.clientSecret)));
+  } finally {
+    close();
+  }
+});
+
+test('a wrong client secret is the hub\'s fault, not the person\'s', async () => {
+  const { signIn, close } = await setup({ app: { ...APP, clientSecret: 'wrong' } });
+  try {
+    const res = await signIn('app-octo');
+    assert.equal(res.status, 502);
+    assert.match(String(res.body.error), /OAuth App/);
+  } finally {
+    close();
+  }
+});
+
+test('a hub without an OAuth App says so, and the client id and secret go together', async () => {
+  const { app, close } = await setup();
+  try {
+    assert.equal((await app()).status, 404);
+  } finally {
+    close();
+  }
+  assert.equal(oauthApp({}), undefined);
+  assert.deepEqual(oauthApp({ SPACEHUB_GITHUB_CLIENT_ID: ' Iv1.x ', SPACEHUB_GITHUB_CLIENT_SECRET: 's' }), { clientId: 'Iv1.x', clientSecret: 's' });
+  assert.throws(() => oauthApp({ SPACEHUB_GITHUB_CLIENT_ID: 'Iv1.x' }), /go together/);
+  assert.throws(() => oauthApp({ SPACEHUB_GITHUB_CLIENT_SECRET: 's' }), /go together/);
+  assert.throws(() => oauthApp({ SPACEHUB_GITHUB_CLIENT_ID: 'a/b', SPACEHUB_GITHUB_CLIENT_SECRET: 's' }), /go together/);
 });

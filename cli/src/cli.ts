@@ -17,6 +17,7 @@ import { Autosync, AutosyncLoop, AutosyncStop, conflictHelp, UNFINISHED, unfinis
 import { git } from './git';
 import { cloneProject, findManifest, SpaceSync, writeManifest } from './spacesync';
 import { DEFAULT_HUB_HOST, githubTokenTarget, hubUrl, parseHubUrl, REMOTE } from './url';
+import { deviceCode, deviceToken, githubWeb } from './device';
 
 quietSdkLogs();
 
@@ -442,6 +443,21 @@ function webUrl(server: string) {
   return (process.env.SPACEHUB_WEB ?? server.replace(/^ws/, 'http')).replace(/\/+$/, '');
 }
 
+// The client id of the hub's GitHub OAuth App, or null when it has none (an
+// older hub, or one without an app: sign-in then sends gh's token).
+async function hubOAuthApp(web: string): Promise<string | null> {
+  let res: Response;
+  try {
+    res = await fetch(`${web}/-/api/auth/github/app`, { redirect: 'error', signal: AbortSignal.timeout(30_000) });
+  } catch {
+    die(`could not reach ${web}`);
+  }
+  if (res.status !== 200) return null;
+  const body = (await res.json().catch(() => null)) as { client_id?: unknown } | null;
+  const id = body?.client_id;
+  return typeof id === 'string' && /^[A-Za-z0-9._-]{1,100}$/.test(id) ? id : null;
+}
+
 // Sign up or log in with GitHub: the hub asks GitHub whose token this is and
 // answers with that account's builder and token, making the builder the
 // first time. The saved token is kept when it already is a builder.
@@ -455,7 +471,8 @@ async function githubSignIn() {
     session?.conn.disconnect();
     session = null;
   }
-  const url = `${webUrl(cfg.server)}/-/api/auth/github`;
+  const web = webUrl(cfg.server);
+  const url = `${web}/-/api/auth/github`;
   let target: 'send' | 'ask';
   try {
     target = githubTokenTarget(url);
@@ -463,18 +480,33 @@ async function githubSignIn() {
     die((err as Error).message);
   }
   const host = new URL(url).host;
-  if (target === 'ask') {
-    // gh's token can usually read and write your repositories: only a hub you
-    // trust gets it, and only after you say so.
-    if (!process.stdin.isTTY) die(`${host} is not ${DEFAULT_HUB_HOST}: run spacehub auth login at a terminal to confirm sending it your GitHub token`);
-    const answer = await ask(`${host} is not ${DEFAULT_HUB_HOST}. Signing in sends it your GitHub token, which can act as you on GitHub. Send it? [y/N] `);
-    if (!/^y(es)?$/i.test(answer)) die('nothing was sent');
+  let github: string;
+  const clientId = await hubOAuthApp(web);
+  if (clientId) {
+    // The hub has a GitHub OAuth App: GitHub's device flow gives a token with
+    // no scopes, made for that app, which the hub can only ask whose it is.
+    try {
+      const code = await deviceCode(githubWeb(), clientId);
+      note(`To sign in to ${host} with GitHub, open ${code.verification_uri} and enter the code ${code.user_code}`);
+      note('(the hub gets your GitHub login and nothing else: no access to your repositories)');
+      github = await deviceToken(githubWeb(), clientId, code);
+    } catch (err) {
+      die((err as Error).message);
+    }
+  } else {
+    if (target === 'ask') {
+      // gh's token can usually read and write your repositories: only a hub you
+      // trust gets it, and only after you say so.
+      if (!process.stdin.isTTY) die(`${host} is not ${DEFAULT_HUB_HOST}: run spacehub auth login at a terminal to confirm sending it your GitHub token`);
+      const answer = await ask(`${host} is not ${DEFAULT_HUB_HOST}. Signing in sends it your GitHub token, which can act as you on GitHub. Send it? [y/N] `);
+      if (!/^y(es)?$/i.test(answer)) die('nothing was sent');
+    }
+    github = localGithubToken();
   }
-  const github = localGithubToken();
   process.stderr.write(`Checking your GitHub account with ${host} (the GitHub token is used once, not kept)\n`);
   let res: Response;
   try {
-    res = await fetch(url, { method: 'POST', headers: { authorization: `Bearer ${github}` }, signal: AbortSignal.timeout(60_000) });
+    res = await fetch(url, { method: 'POST', headers: { authorization: `Bearer ${github}` }, redirect: 'error', signal: AbortSignal.timeout(60_000) });
   } catch {
     die(`could not reach ${url}`);
   }
