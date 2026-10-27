@@ -43,6 +43,16 @@ COPY cli/src ./src
 COPY module/src/style.ts /src/module/src/style.ts
 RUN npm run build
 
+# The hub's app (open-chat's interface), served by the web service at /.
+FROM --platform=$BUILDPLATFORM node:${NODE_VERSION}-bookworm-slim AS app
+WORKDIR /src/app
+COPY app/package.json app/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY app/tsconfig.json app/build.mjs ./
+COPY app/src ./src
+COPY app/public ./public
+RUN npm run build
+
 # ------------------------------------------------------------------ client
 FROM node:${NODE_VERSION}-alpine AS client
 RUN apk add --no-cache git openssh-client ca-certificates
@@ -73,6 +83,7 @@ COPY --from=spacetime /opt/spacetime /opt/spacetime
 COPY --from=caddy /usr/bin/caddy /usr/local/bin/caddy
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 COPY --from=cli /src/cli/dist /opt/spacehub/cli/dist
+COPY --from=app /src/app/dist /opt/spacehub/app
 COPY cli/bin /opt/spacehub/cli/bin
 RUN ln -s /opt/spacetime/spacetimedb-cli /usr/local/bin/spacetime \
  && ln -s /opt/spacehub/cli/bin/spacehub /usr/local/bin/spacehub \
@@ -88,6 +99,7 @@ COPY --chmod=755 docker/server-entrypoint.sh /usr/local/bin/spacehub-server
 # owns the spacehub database. Mount persistent storage there, or every
 # restart forgets all spaces and logs every client out.
 ENV SPACEHUB_DB=spacehub \
+    SPACEHUB_APP_DIR=/opt/spacehub/app \
     SPACETIME_ROOT=/data \
     SPACETIME_INTERNAL_PORT=3001 \
     SPACEHUB_WEB_PORT=3002 \

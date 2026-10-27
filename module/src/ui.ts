@@ -1115,7 +1115,13 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     if (target.type !== 'blob') throw new NotFound(`"${rest.join('/')}" is not a file`);
     const obj = readObject(this.db, sp.id, target.oid);
     if (!obj) throw new NotFound(`blob ${target.oid} is missing`);
-    const image = IMAGE_TYPES[extOf(rest[rest.length - 1])];
+    const ext = extOf(rest[rest.length - 1]);
+    const image = IMAGE_TYPES[ext];
+    // A real PDF opens in the browser's viewer (the app frames it); a viewer
+    // will not run inside a sandbox, so it gets no scripts or fetches instead.
+    if (ext === 'pdf' && decoder.decode(obj.data.subarray(0, 5)) === '%PDF-') {
+      return { status: 200, headers: { 'content-type': 'application/pdf', 'content-security-policy': "default-src 'none'; frame-ancestors 'self'" }, body: obj.data };
+    }
     // Never text/html: a pushed file must not run as a page on this origin.
     const type = image ?? (isBinary(obj.data) ? 'application/octet-stream' : 'text/plain; charset=utf-8');
     return { status: 200, headers: { 'content-type': type, 'content-security-policy': "default-src 'none'; sandbox" }, body: obj.data };

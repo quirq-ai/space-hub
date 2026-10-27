@@ -38,6 +38,22 @@ export const AgentSecret = __t.object("AgentSecret", {
 });
 export type AgentSecret = __Infer<typeof AgentSecret>;
 
+export const ChatLinkIn = __t.object("ChatLinkIn", {
+  label: __t.string(),
+  path: __t.string(),
+});
+export type ChatLinkIn = __Infer<typeof ChatLinkIn>;
+
+export const ChatTurnIn = __t.object("ChatTurnIn", {
+  id: __t.string(),
+  role: __t.string(),
+  content: __t.string(),
+  get links() {
+    return __t.array(ChatLinkIn);
+  },
+});
+export type ChatTurnIn = __Infer<typeof ChatTurnIn>;
+
 export const GitObject = __t.object("GitObject", {
   id: __t.u64(),
   key: __t.string(),

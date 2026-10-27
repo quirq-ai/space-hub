@@ -348,8 +348,33 @@ instead: `scripts/setup.sh maincloud`. Pick a unique name with `SPACEHUB_DB`.
 
 ## Web UI
 
-The server's URL is also a GitHub-style site. The module renders every page
-straight from the tables, as plain HTML that works without JavaScript.
+The server's URL opens **the app**: open-chat's interface over the whole hub.
+`/` shows every space, `/<space>` its projects, and `/<space>/<project>` the
+project's default branch as a workspace. Folders become places in the dock;
+JSON conversations, collections, JSONL feeds, Markdown, images, PDFs and
+`.url` files open with open-chat's renderers; everything updates live.
+
+- **Chat.** A conversation file (`{"type": "conversation", ...}`) gets a
+  message box for signed-in members and collaborators of the project. Each
+  message is appended to `<conversation>.log.jsonl` beside it and committed to
+  the default branch as you, by the `append_chat` reducer, in one transaction
+  (so two writers never race). That is the format open-chat's own hub backend
+  writes. Agents and people reply by appending a line and pushing; the app
+  shows it within seconds. Signed out, everything is readable.
+- **Code.** The app's **Code**, **Commits**, **Branches** and **Activity** tabs
+  open the module's GitHub-style pages below (tree, blob, raw, commits, diffs,
+  refs). `?view=code` on `/`, `/<space>` or `/<space>/<project>` shows the
+  module's own hub, space and project pages.
+- **How it is served.** The proxy sends those three paths to the web service
+  (`cli/src/app.ts`), which serves the page and the built app (`app/`, at
+  `/-/app/`). The app reads `/-/api/view`, which the web service forwards to
+  the module's `/api` route (`module/src/workspace.ts`): open-chat's snapshot
+  format, read straight from the tables. `POST /-/api/chat` calls
+  `append_chat` with the session's own token. The browser never connects to
+  SpacetimeDB.
+
+The module renders the code pages straight from the tables, as plain HTML
+that works without JavaScript.
 
 **Sizes.** Every project shows what it stores: the bytes of its git objects,
 uncompressed, as git counts them. For a project never force-pushed,
@@ -373,9 +398,10 @@ rendered.
 
 | Path | Shows |
 | --- | --- |
-| `/` | All projects, most recently pushed first, each with its size, and what all spaces store together; below them the hub's **Activity** feed (`?page=2` for older); plus who is here now, orgs (with their sizes) and builders |
-| `/<space>` | A builder's personal space (its projects, and the spaces and projects it belongs to) or an org (its projects, owners and members, who is here), with what the space stores |
-| `/<space>/<project>` | Files at the default branch, each with its last commit; the README rendered as Markdown; clone commands, **Here now**, its space and collaborators, its size, commit, branch and tag counts |
+| `/`, `/<space>`, `/<space>/<project>` | The app (above); with `?view=code`, the module's pages in the rows below |
+| `/?view=code` | All projects, most recently pushed first, each with its size, and what all spaces store together; below them the hub's **Activity** feed (`?page=2` for older); plus who is here now, orgs (with their sizes) and builders |
+| `/<space>?view=code` | A builder's personal space (its projects, and the spaces and projects it belongs to) or an org (its projects, owners and members, who is here), with what the space stores |
+| `/<space>/<project>?view=code` | Files at the default branch, each with its last commit; the README rendered as Markdown; clone commands, **Here now**, its space and collaborators, its size, commit, branch and tag counts |
 | `/<space>/<project>/tree/<ref>/<path>` | A folder at a branch, tag or commit, with a branch/tag picker |
 | `/<space>/<project>/blob/<ref>/<path>` | A file. Code has linkable line numbers (`#L12`); Markdown is rendered (`?plain=1` shows the source); images are shown |
 | `/<space>/<project>/raw/<ref>/<path>` | The file's bytes |
@@ -528,7 +554,7 @@ spacetime start                           # terminal 1
 scripts/setup.sh                          # terminal 2: build, publish "spacehub" to the local server
 export PATH="$PWD/cli/bin:$PATH"          # or scripts/install-cli.sh
 spacehub auth login --server ws://127.0.0.1:3000 --builder <name>
-scripts/e2e.sh                            # 318 checks against a throwaway in-memory server and a stand-in GitHub
+scripts/e2e.sh                            # 338 checks against a throwaway in-memory server and a stand-in GitHub
 SPACEHUB_E2E_GITHUB=1 scripts/e2e.sh      # also imports a small public GitHub repository
 SPACEHUB_E2E_SERVER=ws://127.0.0.1:3000 scripts/e2e.sh   # against a running server, e.g. the Docker one
 ```
@@ -539,11 +565,20 @@ test` runs the reducers in SpacetimeDB's in-process harness, and `cd cli &&
 npm test` runs the xo API against a stand-in database, and autosync and the
 GitHub sync's rules against plain git repositories.
 
+The app lives in `app/`: `cd app && npm install && npm run build` writes
+`app/dist`, which the web service serves at `/-/app/` (in the image,
+`SPACEHUB_APP_DIR=/opt/spacehub/app`). Without the proxy, open the web
+service's own port (`SPACEHUB_WEB_PORT`, 3002) to use it; `cd app && npm run
+typecheck` checks it. Its look comes from open-chat, which ported it from
+CopilotKit/OpenMuse (MIT, notice in `app/OPENMUSE-LICENSE`).
+
 ## Layout
 
 ```
 module/src/index.ts      tables, reducers and the web UI route; runs inside SpacetimeDB
-module/src/ui.ts         the web UI pages
+module/src/ui.ts         the web UI's code pages (tree, blob, commits, diffs, refs, ...)
+module/src/workspace.ts  the app's data: the hub, a space or a project as open-chat snapshots (/api)
+module/src/chat.ts       chat turns from the app, committed to a conversation's .log.jsonl
 module/src/markdown.ts   safe Markdown for READMEs and .md files
 module/src/diff.ts       line diffs for commit pages
 module/src/style.ts      look and page frame, shared with the web service
@@ -556,6 +591,7 @@ cli/src/url.ts           quirq:// URLs
 cli/src/xo.ts            xo.quirq.dev's API: xo's per-user records and builders
 cli/src/git.ts           git plumbing: rev-list, cat-file, packfile writer
 cli/src/web.ts           web service: sign in/up, create and import projects
+cli/src/app.ts           the app's page, files and API (/-/api/view, /-/api/chat)
 cli/src/live.ts          live pages: the /-/live event stream (livepage.ts: the page script)
 cli/src/github.ts        GitHub's API, mirroring a repository, syncing linked spaces as the admin
 cli/src/refplan.ts       the sync's rules: what moves, what is kept, what diverged
@@ -564,6 +600,7 @@ cli/src/spacesync.ts     a whole space in one folder: space clone and space sync
 cli/src/agentrun.ts      spacehub agent run: an agent's home and connected spaces, autosynced
 cli/src/agenttemplate.ts the starter definition of an agent's home project
 cli/src/module_bindings  generated, do not edit
+app/                     the app: open-chat's interface over the hub (React, built with esbuild)
 Dockerfile               targets: server (default), client
 docker-compose.yml       server + Caddy TLS front
 docker/                  server entrypoint, built-in allowlist (server.Caddyfile), compose Caddyfile

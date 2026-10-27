@@ -10,6 +10,8 @@
 //   POST     /-/sync/<o>/<name>  pull a project's GitHub source again
 //   POST     /-/link/<space>     link a space to a GitHub account (or sync it, or unlink)
 //   GET      /-/live, /-/live.js live pages: a page's new rendering on every change (live.ts)
+//   GET      /, /<space>, /<space>/<project>, /-/app/*, /-/api/view, /-/api/me,
+//   POST     /-/api/chat         the hub's app: open-chat's interface over the hub (app.ts)
 //   *        /-/api/xo/v1/...    xo.quirq.dev's store and agents (xo.ts), only
 //                                with SPACEHUB_XO_KEY set
 //
@@ -24,6 +26,7 @@ import { Fail, GithubSync, githubApi, githubBuilder as builderOf, githubInfo as 
 import { LiveHub } from './live';
 import { accountsSetting, handleSignIn, signInConfig } from './signin';
 import { handleXo, xoConfig } from './xo';
+import { appDir, handleApp } from './app';
 
 quietSdkLogs();
 
@@ -38,6 +41,7 @@ const XO = xoConfig(DB);
 const INTERNAL_HTTP = (process.env.SPACEHUB_INTERNAL_HTTP ?? SERVER.replace(/^ws/, 'http')).replace(/\/+$/, '');
 const LIVE = new LiveHub({ server: SERVER, db: DB, http: INTERNAL_HTTP });
 const GITHUB = githubApi();
+const APP_DIR = appDir();
 const githubInfo = (owner: string, repo: string) => infoOf(GITHUB, owner, repo);
 const githubBuilder = (login: string) => builderOf(GITHUB, login);
 // GitHub sign-in makes builders as the hub admin.
@@ -326,6 +330,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   if (await handleSignIn(SIGNIN, req, res)) return;
   if (LIVE.handle(req, res, url)) return;
   if (req.method === 'POST' && !sameOrigin(req)) return send(res, 403, page('Forbidden', null, '<h1>Forbidden</h1><p class="desc">This form must be sent from this site.</p>'));
+  if (await handleApp({ dir: APP_DIR, internalHttp: INTERNAL_HTTP, db: DB, withConn, sessionOf }, req, res, url)) return;
 
   if (route === '/-/login') {
     const session = await sessionOf(req);

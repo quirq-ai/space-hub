@@ -35,6 +35,8 @@ import { Identity, Timestamp } from 'spacetimedb';
 import { Sha1, objectHeader } from './sha1';
 import { CHUNK_SIZE, PRESENCE_STALE_SECONDS, commitParents, inSpace, memberKey, objectKey, ownsSpace, readObject, refKey, roleKey } from './store';
 import { renderUi } from './ui';
+import { parseQuery, renderApi } from './workspace';
+import { appendTurns } from './chat';
 
 const MAX_OBJECT_SIZE = 100 * 1024 * 1024;
 // Fetch windows are cut on `pos`, a running total of row weights per project.
@@ -950,6 +952,52 @@ export const updateRef = spacetimedb.reducer(
   }
 );
 
+// ---------------------------------------------------------------- chat
+
+const ChatLinkIn = t.object('ChatLinkIn', { label: t.string(), path: t.string() });
+const ChatTurnIn = t.object('ChatTurnIn', { id: t.string(), role: t.string(), content: t.string(), links: t.array(ChatLinkIn) });
+
+// Save chat turns from the app: append them to the conversation's
+// `.log.jsonl` on the default branch as one commit by the caller (chat.ts
+// builds the objects). Being a reducer, it never races another push.
+export const appendChat = spacetimedb.reducer(
+  { project: t.string(), conversation: t.string(), turns: t.array(ChatTurnIn) },
+  (ctx, { project: fullName, conversation, turns }) => {
+    const sp = requireWritable(ctx, fullName);
+    const me = requireActor(ctx);
+    const name = `refs/heads/${sp.defaultBranch}`;
+    const current = ctx.db.gitRef.key.find(refKey(sp.id, name));
+    let built: ReturnType<typeof appendTurns>;
+    try {
+      built = appendTurns({
+        head: current?.oid ?? '',
+        conversation,
+        turns,
+        author: me,
+        now: Number(ctx.timestamp.microsSinceUnixEpoch / 1_000_000n),
+        read: oid => readObject(ctx.db, sp.id, oid),
+      });
+    } catch (err) {
+      throw new SenderError(err instanceof Error ? err.message : String(err));
+    }
+    let added = 0n;
+    for (const object of built.objects) {
+      if (ctx.db.gitObject.key.find(objectKey(sp.id, object.oid))) continue;
+      const chunks = object.data.length > CHUNK_SIZE ? Math.ceil(object.data.length / CHUNK_SIZE) : 0;
+      for (let idx = 0; idx < chunks; idx++) {
+        const data = object.data.slice(idx * CHUNK_SIZE, (idx + 1) * CHUNK_SIZE);
+        ctx.db.objectChunk.insert({ id: 0n, key: `${sp.id}:${object.oid}:${idx}`, projectId: sp.id, oid: object.oid, idx, data });
+      }
+      insertObject(ctx, sp, object.oid, object.kind, object.data.length, chunks, chunks ? new Uint8Array(0) : object.data);
+      added += BigInt(object.data.length);
+    }
+    ctx.db.gitRef.id.update({ ...current!, oid: built.commit, updatedAt: ctx.timestamp, updatedBy: ctx.sender });
+    ctx.db.project.id.update({ ...sp, pushedAt: ctx.timestamp });
+    grow(ctx, sp.id, added);
+    logActivity(ctx, { projectId: sp.id, path: sp.fullName, kind: 'ref_updated', subject: name, oid: built.commit, count: 1, text: built.subject });
+  }
+);
+
 // ---------------------------------------------------------------- spaces
 
 // A builder or an agent: someone who can belong to a space.
@@ -1341,4 +1389,17 @@ export const ui = spacetimedb.httpHandler((ctx, req) => {
   return new SyncResponse(res.body, { status: res.status, headers: res.headers });
 });
 
-export const routes = spacetimedb.httpRouter(new Router().get('/ui', ui));
+// The app's data: the hub, a space or a project's files as JSON (workspace.ts).
+// The display cookie names the viewer only to say whether saving is possible;
+// the reducers check every write.
+export const api = spacetimedb.httpHandler((ctx, req) => {
+  const q = req.uri.indexOf('?');
+  const query = parseQuery(q >= 0 ? req.uri.slice(q + 1) : '');
+  const viewer = /(?:^|;\s*)spacehub_user=([^;]*)/.exec(req.headers.get('cookie') ?? '')?.[1];
+  const res = ctx.withTx(tx =>
+    renderApi(tx.db, { query, viewer: viewer ? decodeURIComponent(viewer) : null, now: Number(ctx.timestamp.microsSinceUnixEpoch / 1_000_000n) })
+  );
+  return new SyncResponse(res.body, { status: res.status, headers: res.headers });
+});
+
+export const routes = spacetimedb.httpRouter(new Router().get('/ui', ui).get('/api', api));

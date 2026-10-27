@@ -1,0 +1,459 @@
+// The workspace API: the hub as one tree of folders and files, as JSON, for
+// the app the web service serves at /, /<space> and /<space>/<project>.
+// It speaks open-chat's snapshot format, so the app renders conversations,
+// collections, feeds, documents and previews exactly as open-chat does.
+//
+//   GET /v1/database/<db>/route/api?space=&project=&path=
+//
+//   no space                 the hub: every space as a folder
+//   space                    a space: its projects as folders
+//   space + project (+path)  the project's default branch: folders and files,
+//                            with `path` (relative to the project) opened
+//
+// Reads come straight from the tables, so nothing is cached and every answer
+// is current. Writes go through the append_chat reducer (chat.ts).
+import { PRESENCE_STALE_SECONDS, inSpace, objectKey, readObject, refKey, type Db } from './store';
+import { Sha1 } from './sha1';
+
+export const MAX_TEXT_BYTES = 2 * 1024 * 1024;
+export const MAX_PREVIEW_BYTES = 20 * 1024 * 1024;
+export const MAX_DIRECTORY_ENTRIES = 2000;
+const ACTIVITY_SHOWN = 30;
+
+const OMITTED_NAMES = new Set(['node_modules']);
+const TEXT_EXTENSIONS = new Set([
+  'txt', 'text', 'csv', 'tsv', 'log', 'js', 'jsx', 'ts', 'tsx', 'mjs', 'cjs',
+  'jsonc', 'css', 'scss', 'sass', 'less', 'html', 'htm', 'xml', 'svg', 'yaml',
+  'yml', 'toml', 'ini', 'conf', 'config', 'sql', 'py', 'rb', 'rs', 'go', 'java',
+  'kt', 'kts', 'swift', 'sh', 'bash', 'zsh', 'fish', 'ps1', 'bat', 'c', 'cpp',
+  'cc', 'h', 'hpp', 'cs', 'vue', 'svelte', 'astro', 'prisma', 'graphql', 'gql',
+  'proto', 'diff', 'patch', 'r', 'rmd', 'tex', 'dockerfile', 'lock',
+]);
+const TEXT_NAMES = new Set(['dockerfile', 'makefile', 'license', 'readme', 'changelog']);
+const IMAGES = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp']);
+
+const decoder = new TextDecoder('utf-8');
+const encoder = new TextEncoder();
+
+export interface Entry {
+  name: string;
+  /** Slash-separated, relative to the level's root (the hub, a space or a project). */
+  path: string;
+  kind: 'directory' | 'file';
+  extension: string;
+  size: number;
+  modifiedAt: string;
+  /** A short line shown instead of "Folder" for spaces and projects. */
+  detail?: string;
+}
+
+export interface FileView extends Entry {
+  kind: 'file';
+  format: 'url' | 'jsonl' | 'json' | 'markdown' | 'text' | 'image' | 'pdf' | 'unsupported';
+  content?: string;
+  data?: unknown;
+  error?: string;
+}
+
+export interface Snapshot {
+  rootName: string;
+  rootId: string;
+  roots: Entry[];
+  directory: { path: string; name: string; entries: Entry[] };
+  file?: FileView;
+  revision: string;
+}
+
+export interface Person {
+  name: string;
+  kind: string;
+}
+
+export interface Here {
+  agent: string;
+  mode: string;
+  project: string;
+}
+
+export interface ActivityItem {
+  at: string;
+  agent: string;
+  kind: string;
+  path: string;
+  subject: string;
+  text: string;
+  count: number;
+}
+
+export type Meta =
+  | { level: 'hub'; spaces: number; projects: number; bytes: number; activity: ActivityItem[]; here: Here[] }
+  | { level: 'space'; name: string; kind: string; description: string; parent: string; owners: string[]; members: string[]; projects: number; bytes: number; github: string; here: Here[]; activity: ActivityItem[] }
+  | {
+      level: 'project';
+      fullName: string;
+      space: string;
+      name: string;
+      description: string;
+      defaultBranch: string;
+      bytes: number;
+      head: { oid: string; subject: string; author: string; time: string } | null;
+      canWrite: boolean;
+      here: Here[];
+      activity: ActivityItem[];
+    };
+
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
+const notFound = () => new ApiError('The requested file or folder was not found.', 404);
+
+export function isVisibleName(name: string) {
+  return !name.startsWith('.') && !OMITTED_NAMES.has(name) && !name.includes('\\') && !name.includes(':');
+}
+
+/** Same rules as open-chat: a rejected path stays rejected, never normalized. */
+export function relativePath(requested: string): string {
+  if (requested.includes('\0') || requested.includes('\\') || requested.includes(':') || requested.startsWith('/')) {
+    throw new ApiError('Use a relative path inside the project.', 400);
+  }
+  const parts = requested.split('/').filter(Boolean);
+  if (parts.some(part => part === '.' || part === '..')) throw new ApiError('Path traversal is not allowed.', 400);
+  if (parts.some(part => !isVisibleName(part))) throw new ApiError('Hidden files and dependency folders are not available.', 403);
+  return parts.join('/');
+}
+
+// ---------------------------------------------------------------- git
+
+export interface TreeEntry {
+  mode: string;
+  name: string;
+  oid: string;
+}
+
+export function hex(bytes: Uint8Array) {
+  let out = '';
+  for (const b of bytes) out += b.toString(16).padStart(2, '0');
+  return out;
+}
+
+export function parseTree(data: Uint8Array): TreeEntry[] {
+  const entries: TreeEntry[] = [];
+  let i = 0;
+  while (i < data.length) {
+    const sp = data.indexOf(0x20, i);
+    const nul = data.indexOf(0, sp + 1);
+    if (sp < 0 || nul < 0 || nul + 21 > data.length) throw new ApiError('A folder on the hub is damaged.', 500);
+    entries.push({ mode: decoder.decode(data.subarray(i, sp)), name: decoder.decode(data.subarray(sp + 1, nul)), oid: hex(data.subarray(nul + 1, nul + 21)) });
+    i = nul + 21;
+  }
+  return entries;
+}
+
+export const isDirectoryMode = (mode: string) => mode === '40000' || mode === '040000';
+/** Regular and executable files; symlinks and submodules are not files here. */
+export const isFileMode = (mode: string) => mode === '100644' || mode === '100755';
+
+export interface CommitInfo {
+  tree: string;
+  author: string;
+  /** Committer time, seconds since the epoch. */
+  time: number;
+  subject: string;
+}
+
+export function parseCommit(data: Uint8Array): CommitInfo {
+  const text = decoder.decode(data);
+  const split = text.indexOf('\n\n');
+  const info: CommitInfo = { tree: '', author: '', time: 0, subject: split >= 0 ? text.slice(split + 2).split('\n')[0].slice(0, 200) : '' };
+  for (const line of (split >= 0 ? text.slice(0, split) : text).split('\n')) {
+    if (line.startsWith('tree ')) info.tree = line.slice(5);
+    else if (line.startsWith('author ')) info.author = /^author (.*) <[^>]*> \d+ [+-]\d{4}$/.exec(line)?.[1] ?? '';
+    else if (line.startsWith('committer ')) info.time = Number(/ (\d+) [+-]\d{4}$/.exec(line)?.[1] ?? 0);
+  }
+  return info;
+}
+
+type Project = NonNullable<ReturnType<Db['project']['fullName']['find']>>;
+
+export function headOf(db: Db, project: Project): string {
+  return db.gitRef.key.find(refKey(project.id, `refs/heads/${project.defaultBranch}`))?.oid ?? '';
+}
+
+function objectOf(db: Db, project: Project, oid: string, kind: string) {
+  const object = readObject(db, project.id, oid);
+  if (!object || object.kind !== kind) throw new ApiError(`The hub is missing a ${kind} of ${project.fullName}.`, 500);
+  return object.data;
+}
+
+export function treeOf(db: Db, project: Project, oid: string): TreeEntry[] {
+  return oid ? parseTree(objectOf(db, project, oid, 'tree')) : [];
+}
+
+/** Walk a project's default branch to `inner`: a folder (its entries) or a regular file. */
+export function locate(db: Db, project: Project, root: string, inner: string): { kind: 'directory'; tree: TreeEntry[] } | { kind: 'file'; oid: string; mode: string } {
+  let tree = treeOf(db, project, root);
+  const parts = inner.split('/').filter(Boolean);
+  for (let i = 0; i < parts.length; i++) {
+    const entry = tree.find(candidate => candidate.name === parts[i]);
+    if (!entry) throw notFound();
+    if (isDirectoryMode(entry.mode)) {
+      tree = treeOf(db, project, entry.oid);
+      continue;
+    }
+    if (!isFileMode(entry.mode) || i < parts.length - 1) throw notFound();
+    return { kind: 'file', oid: entry.oid, mode: entry.mode };
+  }
+  return { kind: 'directory', tree };
+}
+
+// ---------------------------------------------------------------- files
+
+function extensionOf(name: string) {
+  const dot = name.lastIndexOf('.');
+  return dot > 0 ? name.slice(dot + 1).toLowerCase() : '';
+}
+
+function entryOf(path: string, kind: Entry['kind'], size: number, modifiedAt: string, detail?: string): Entry {
+  const name = path.split('/').pop() ?? path;
+  return { name, path, kind, extension: kind === 'directory' ? '' : extensionOf(name), size: kind === 'directory' ? 0 : size, modifiedAt, ...(detail ? { detail } : {}) };
+}
+
+export function compareEntries(left: Entry, right: Entry) {
+  if (left.kind !== right.kind) return left.kind === 'directory' ? -1 : 1;
+  return left.name.localeCompare(right.name, 'en', { numeric: true, sensitivity: 'base' }) || left.name.localeCompare(right.name, 'en');
+}
+
+export function fileFormat(entry: Entry): FileView['format'] {
+  if (['jsonl', 'ndjson'].includes(entry.extension)) return 'jsonl';
+  if (entry.extension === 'url') return 'url';
+  if (entry.extension === 'json') return 'json';
+  if (['md', 'markdown', 'mdx'].includes(entry.extension)) return 'markdown';
+  if (IMAGES.has(entry.extension)) return 'image';
+  if (entry.extension === 'pdf') return 'pdf';
+  if (TEXT_EXTENSIONS.has(entry.extension) || TEXT_NAMES.has(entry.name.toLowerCase())) return 'text';
+  return 'unsupported';
+}
+
+/** Valid UTF-8 survives a decode and re-encode unchanged. */
+function utf8(bytes: Uint8Array): string | null {
+  const text = decoder.decode(bytes);
+  if (text.includes('\0')) return null;
+  const again = encoder.encode(text);
+  if (again.length !== bytes.length) return null;
+  for (let i = 0; i < again.length; i++) if (again[i] !== bytes[i]) return null;
+  return text;
+}
+
+function fileView(entry: Entry, read: () => Uint8Array): FileView {
+  const format = fileFormat(entry);
+  const view: FileView = { ...entry, kind: 'file', format };
+  if (format === 'unsupported') return { ...view, error: 'This file type has no preview. Its name and details are still shown.' };
+  if (format === 'image' || format === 'pdf') return entry.size > MAX_PREVIEW_BYTES ? { ...view, error: 'This file is larger than the 20 MB preview limit.' } : view;
+  if (entry.size > MAX_TEXT_BYTES) return { ...view, error: 'This file is larger than the 2 MB text preview limit.' };
+  const content = utf8(read());
+  if (content === null) return { ...view, format: 'unsupported', error: 'This file contains binary data or text that is not UTF-8.' };
+  if (format === 'json') {
+    try {
+      return { ...view, content, data: JSON.parse(content) as unknown };
+    } catch {
+      return { ...view, content, error: 'This JSON is not valid yet. The original file contents are shown below.' };
+    }
+  }
+  return { ...view, content };
+}
+
+// ---------------------------------------------------------------- levels
+
+function iso(ts: { microsSinceUnixEpoch: bigint }) {
+  return new Date(Number(ts.microsSinceUnixEpoch / 1000n)).toISOString();
+}
+
+function plural(n: number, word: string) {
+  return `${n} ${word}${n === 1 ? '' : 's'}`;
+}
+
+function bytesOf(db: Db, projectId: bigint) {
+  return Number(db.projectSize.projectId.find(projectId)?.bytes ?? 0n);
+}
+
+function here(db: Db, now: number, keep: (row: { space: string; projectId: bigint }) => boolean): Here[] {
+  const rows = [...db.presence.iter()].filter(row => now - Number(row.seenAt.microsSinceUnixEpoch / 1_000_000n) <= PRESENCE_STALE_SECONDS && keep(row));
+  const seen = new Set<string>();
+  const out: Here[] = [];
+  for (const row of rows) {
+    const project = row.projectId === 0n ? '' : db.project.id.find(row.projectId)?.fullName ?? '';
+    const key = `${row.agent}\0${row.mode}\0${project}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ agent: row.agent, mode: row.mode, project });
+  }
+  return out.sort((a, b) => a.agent.localeCompare(b.agent));
+}
+
+function activity(db: Db, keep: (row: { path: string; projectId: bigint }) => boolean): ActivityItem[] {
+  const rows = [...db.activity.iter()].filter(keep).sort((a, b) => (a.id < b.id ? 1 : -1)).slice(0, ACTIVITY_SHOWN);
+  return rows.map(row => ({ at: iso(row.at), agent: row.agent, kind: row.kind, path: row.path, subject: row.subject, text: row.text, count: row.count }));
+}
+
+function finish(snapshot: Omit<Snapshot, 'revision'>, meta: Meta) {
+  // Content and metadata both participate, so any change refreshes the app.
+  const revision = new Sha1().update(encoder.encode(JSON.stringify([snapshot, meta]))).hex();
+  return { snapshot: { ...snapshot, revision }, meta };
+}
+
+function rootId(key: string) {
+  return new Sha1().update(encoder.encode(`hub\0${key}`)).hex();
+}
+
+function hubLevel(db: Db, now: number) {
+  const projects = [...db.project.iter()];
+  const counts = new Map<string, number>();
+  for (const project of projects) counts.set(project.owner, (counts.get(project.owner) ?? 0) + 1);
+  const latest = new Map<string, string>();
+  for (const project of projects) {
+    const at = iso(project.pushedAt);
+    if ((latest.get(project.owner) ?? '') < at) latest.set(project.owner, at);
+  }
+  const spaces = [...db.space.iter()].filter(space => isVisibleName(space.name));
+  const entries = spaces
+    .map(space => entryOf(space.name, 'directory', 0, latest.get(space.name) ?? iso(space.createdAt), `${space.kind === 'personal' ? 'builder' : space.kind} · ${plural(counts.get(space.name) ?? 0, 'project')}`))
+    .sort(compareEntries);
+  const bytes = projects.reduce((sum, project) => sum + bytesOf(db, project.id), 0);
+  return finish(
+    { rootName: 'spacehub', rootId: rootId(''), roots: [], directory: { path: '', name: 'spacehub', entries } },
+    { level: 'hub', spaces: spaces.length, projects: projects.length, bytes, activity: activity(db, () => true), here: here(db, now, () => true) }
+  );
+}
+
+function spaceLevel(db: Db, name: string, now: number) {
+  const space = db.space.name.find(name);
+  if (!space) throw new ApiError(`There is no space named ${name}.`, 404);
+  const projects = [...db.project.owner.filter(name)];
+  const entries = projects
+    .filter(project => isVisibleName(project.name))
+    .map(project => entryOf(project.name, 'directory', 0, iso(project.pushedAt), project.description || `${headOf(db, project) ? 'branch ' + project.defaultBranch : 'empty'}`))
+    .sort(compareEntries);
+  const roles = [...db.spaceRole.space.filter(name)];
+  const owners = space.kind === 'personal' ? [name] : roles.filter(role => role.role === 'owner').map(role => role.member).sort();
+  const members = roles.filter(role => role.role !== 'owner').map(role => role.member).sort();
+  const ids = new Set(projects.map(project => project.id));
+  return finish(
+    { rootName: name, rootId: rootId(name), roots: [], directory: { path: '', name, entries } },
+    {
+      level: 'space',
+      name,
+      kind: space.kind,
+      description: space.description,
+      parent: space.parent,
+      owners,
+      members,
+      projects: projects.length,
+      bytes: projects.reduce((sum, project) => sum + bytesOf(db, project.id), 0),
+      github: db.spaceLink.space.find(name)?.source ?? '',
+      here: here(db, now, row => (row.projectId === 0n ? row.space === name : ids.has(row.projectId))),
+      activity: activity(db, row => row.path === name || row.path.startsWith(`${name}/`) || ids.has(row.projectId)),
+    }
+  );
+}
+
+function projectLevel(db: Db, project: Project, requested: string, viewer: string | null, now: number) {
+  const relative = relativePath(requested);
+  const head = headOf(db, project);
+  const commit = head ? parseCommit(objectOf(db, project, head, 'commit')) : null;
+  const time = commit?.time ? new Date(commit.time * 1000).toISOString() : iso(project.pushedAt);
+  const at = locate(db, project, commit?.tree ?? '', relative);
+  const isFile = at.kind === 'file';
+  const parent = relative.includes('/') ? relative.slice(0, relative.lastIndexOf('/')) : '';
+  const directoryPath = isFile ? parent : relative;
+  const list = (tree: { mode: string; name: string; oid: string }[], base: string) => {
+    const visible = tree.filter(entry => isVisibleName(entry.name) && (isDirectoryMode(entry.mode) || isFileMode(entry.mode)));
+    if (visible.length > MAX_DIRECTORY_ENTRIES) throw new ApiError(`This folder contains more than ${MAX_DIRECTORY_ENTRIES} entries.`, 413);
+    return visible
+      .map(entry => isDirectoryMode(entry.mode)
+        ? entryOf(base ? `${base}/${entry.name}` : entry.name, 'directory', 0, time)
+        : entryOf(base ? `${base}/${entry.name}` : entry.name, 'file', Number(db.gitObject.key.find(objectKey(project.id, entry.oid))?.size ?? 0n), time))
+      .sort(compareEntries);
+  };
+  const rootEntries = list(treeOf(db, project, commit?.tree ?? ''), '');
+  const directory = directoryPath === '' ? rootEntries : (() => {
+    const dir = locate(db, project, commit?.tree ?? '', directoryPath);
+    if (dir.kind !== 'directory') throw notFound();
+    return list(dir.tree, directoryPath);
+  })();
+  let file: FileView | undefined;
+  if (at.kind === 'file') {
+    const size = Number(db.gitObject.key.find(objectKey(project.id, at.oid))?.size ?? 0n);
+    file = fileView(entryOf(relative, 'file', size, time), () => objectOf(db, project, at.oid, 'blob'));
+  }
+  const canWrite = !!viewer && (inSpace(db, project.owner, viewer) || !!db.projectMember.key.find(`${project.id}:${viewer}`));
+  return finish(
+    {
+      rootName: project.name,
+      rootId: rootId(project.fullName),
+      roots: rootEntries.filter(entry => entry.kind === 'directory'),
+      directory: { path: directoryPath, name: directoryPath ? directoryPath.split('/').pop()! : project.name, entries: directory },
+      ...(file ? { file } : {}),
+    },
+    {
+      level: 'project',
+      fullName: project.fullName,
+      space: project.owner,
+      name: project.name,
+      description: project.description,
+      defaultBranch: project.defaultBranch,
+      bytes: bytesOf(db, project.id),
+      head: commit ? { oid: head, subject: commit.subject, author: commit.author, time } : null,
+      canWrite,
+      here: here(db, now, row => row.projectId === project.id),
+      activity: activity(db, row => row.projectId === project.id),
+    }
+  );
+}
+
+export function parseQuery(qs: string) {
+  const query = new Map<string, string>();
+  const decode = (value: string) => {
+    try {
+      return decodeURIComponent(value.replace(/\+/g, ' '));
+    } catch {
+      return value;
+    }
+  };
+  for (const pair of qs.split('#')[0].split('&')) {
+    if (!pair) continue;
+    const eq = pair.indexOf('=');
+    query.set(decode(eq < 0 ? pair : pair.slice(0, eq)), eq < 0 ? '' : decode(pair.slice(eq + 1)));
+  }
+  return query;
+}
+
+export interface ApiRequest {
+  query: Map<string, string>;
+  /** The signed-in builder's name, from the display cookie; only used to show what is possible. */
+  viewer: string | null;
+  now: number;
+}
+
+export function workspace(db: Db, req: ApiRequest) {
+  const space = (req.query.get('space') ?? '').toLowerCase();
+  const project = req.query.get('project') ?? '';
+  if (!space) return hubLevel(db, req.now);
+  if (!project) return spaceLevel(db, space, req.now);
+  const row = db.project.fullName.find(`${space}/${project}`);
+  if (!row) throw new ApiError(`There is no project ${space}/${project}.`, 404);
+  return projectLevel(db, row, req.query.get('path') ?? '', req.viewer, req.now);
+}
+
+export function renderApi(db: Db, req: ApiRequest): { status: number; headers: Record<string, string>; body: string } {
+  const headers: Record<string, string> = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' };
+  try {
+    const result = workspace(db, req);
+    return { status: 200, headers: { ...headers, etag: `"${result.snapshot.revision}"` }, body: JSON.stringify(result) };
+  } catch (error) {
+    const status = error instanceof ApiError ? error.status : 500;
+    return { status, headers, body: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) };
+  }
+}

@@ -8,6 +8,7 @@ import { type Infer as __Infer } from "spacetimedb";
 // Import all reducer arg schemas
 import AddProjectMemberReducer from "../add_project_member_reducer";
 import AddSpaceMemberReducer from "../add_space_member_reducer";
+import AppendChatReducer from "../append_chat_reducer";
 import ClaimAdminReducer from "../claim_admin_reducer";
 import ConnectAgentReducer from "../connect_agent_reducer";
 import CreateAgentReducer from "../create_agent_reducer";
@@ -45,6 +46,7 @@ import XoPutRecordReducer from "../xo_put_record_reducer";
 
 export type AddProjectMemberParams = __Infer<typeof AddProjectMemberReducer>;
 export type AddSpaceMemberParams = __Infer<typeof AddSpaceMemberReducer>;
+export type AppendChatParams = __Infer<typeof AppendChatReducer>;
 export type ClaimAdminParams = __Infer<typeof ClaimAdminReducer>;
 export type ConnectAgentParams = __Infer<typeof ConnectAgentReducer>;
 export type CreateAgentParams = __Infer<typeof CreateAgentReducer>;

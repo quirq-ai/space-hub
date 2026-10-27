@@ -57,6 +57,7 @@ as() { # as <user> <cmd...>: run with that user's spacehub identity
 
 echo "building the client"
 (cd "$ROOT/cli" && npm install --silent --no-audit --no-fund >/dev/null 2>&1 && npm run build --silent >/dev/null 2>&1)
+(cd "$ROOT/app" && npm install --silent --no-audit --no-fund >/dev/null 2>&1 && npm run build --silent >/dev/null 2>&1)
 export PATH="$ROOT/cli/bin:$PATH"
 
 if [[ -n "${SPACEHUB_E2E_SERVER:-}" ]]; then
@@ -93,6 +94,8 @@ ui() { # ui <path>[?query] -> URL
   [[ "$1" == *\?* ]] && query="${1#*\?}"
   if [[ -n "${SPACEHUB_E2E_SERVER:-}" ]]; then
     local base="${SPACEHUB_SERVER/#ws/http}"
+    # The hub, space and project paths are the app; ?view=code is the module's page.
+    [[ "$page" != */*/* && "$page" != -/* ]] && query="view=code${query:+&$query}"
     printf '%s/%s%s' "$base" "$page" "${query:+?$query}"
   else
     printf 'http://127.0.0.1:%s/v1/database/%s/route/ui?p=%s%s' "$PORT" "$SPACEHUB_DB" "$(python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1]))' "$page")" "${query:+&$query}"
@@ -377,6 +380,40 @@ if [[ "${SPACEHUB_E2E_GITHUB:-}" == 1 ]]; then
   page_has "with GitHub's display name" "$WEBUSER/Hello-World" "The Octocat"
   page_has "imports appear in the space's activity" "$WEBUSER/Hello-World/activity" "imported"
 fi
+
+echo "the app"
+A="$WORK/app-src"; git init -q -b main "$A"; mkdir -p "$A/Chat"
+printf '%s\n' '{"type":"conversation","title":"Team chat","messages":[{"role":"assistant","content":"Hi from the hub."}]}' >"$A/Chat/index.json"
+(cd "$A" && git add . && commit -m chat)
+check "a project to chat in" as alice spacehub project create chatroom --source "$A" --push
+check "the web builder collaborates on it" as alice spacehub project member add "$ALICE/chatroom" "$WEBUSER"
+same "the hub's home is the app" "$(curl -s "$WEB/" | grep -c '/-/app/app.js')" "1"
+same "so is a project" "$(curl -s "$WEB/$ALICE/chatroom" | grep -c '/-/app/app.js')" "1"
+same "the app's script is served" "$(curl -s -o /dev/null -w '%{http_code} %{content_type}' "$WEB/-/app/app.js")" "200 text/javascript; charset=utf-8"
+app_has() { # app_has <label> <query> <text>: the app's data for that place contains the text
+  local body; body="$(curl -sf -b "$JAR" "$WEB/-/api/view?$2")" || fail "$1 (HTTP error)"
+  grep -qF -- "$3" <<<"$body" && ok "$1" || fail "$1 (no $3)"
+}
+app_has "the hub lists the space" "" "\"name\":\"$ALICE\""
+app_has "the space lists the project" "space=$ALICE" "\"name\":\"chatroom\""
+app_has "a conversation opens as data" "space=$ALICE&project=chatroom&path=Chat%2Findex.json" '"title":"Team chat"'
+app_has "the signed-in collaborator may save" "space=$ALICE&project=chatroom" '"canWrite":true'
+CHAT="{\"space\":\"$ALICE\",\"project\":\"chatroom\",\"conversation\":\"Chat/index.json\",\"turns\":[{\"id\":\"e2e-1\",\"role\":\"user\",\"content\":\"hello from the app\"}]}"
+post_chat() { curl -s -o "$WORK/chat.json" -w '%{http_code}' "$@" -H 'Content-Type: application/json' -X POST "$WEB/-/api/chat"; }
+same "a chat turn is saved as the signed-in builder" "$(post_chat -b "$JAR" -H "Origin: $WEB" --data "$CHAT")" "200"
+same "not from another site" "$(post_chat -b "$JAR" --data "$CHAT")" "403"
+same "not signed out" "$(post_chat -H "Origin: $WEB" --data "$CHAT")" "401"
+same "only into a conversation that exists" "$(post_chat -b "$JAR" -H "Origin: $WEB" --data "${CHAT/Chat\/index.json/Chat\/none.json}")" "400"
+app_has "the app reads it back" "space=$ALICE&project=chatroom&path=Chat%2Findex.log.jsonl" 'hello from the app'
+A2="$WORK/app-clone"
+check "git sees the saved turn" as alice git clone -q -o quirq "$HUB/$ALICE/chatroom" "$A2"
+check "in the conversation's log" grep -q '"author":"'"$WEBUSER"'","content":"hello from the app"' "$A2/Chat/index.log.jsonl"
+same "committed by the web builder" "$(git -C "$A2" log -1 --format=%an)" "$WEBUSER"
+check "a valid history" git -C "$A2" fsck --strict --no-dangling
+(cd "$A2" && echo '{"id":"r1","role":"assistant","author":"scout","content":"reply pushed with git"}' >>Chat/index.log.jsonl && commit -am reply)
+check "a reply pushed with git" as alice git -C "$A2" push -q quirq main
+app_has "shows in the app" "space=$ALICE&project=chatroom&path=Chat%2Findex.log.jsonl" 'reply pushed with git'
+page_has "the code view is still a page" "$ALICE/chatroom/tree/main/Chat" "index.log.jsonl"
 
 echo "sign up with GitHub"
 if [[ -n "${SPACEHUB_E2E_SERVER:-}" || "${SPACEHUB_E2E_GITHUB:-}" == 1 ]]; then

@@ -36,6 +36,7 @@ import {
 // Import all reducer arg schemas
 import AddProjectMemberReducer from "./add_project_member_reducer";
 import AddSpaceMemberReducer from "./add_space_member_reducer";
+import AppendChatReducer from "./append_chat_reducer";
 import ClaimAdminReducer from "./claim_admin_reducer";
 import ConnectAgentReducer from "./connect_agent_reducer";
 import CreateAgentReducer from "./create_agent_reducer";
@@ -354,6 +355,7 @@ const tablesSchema = __schema({
 const reducersSchema = __reducers(
   __reducerSchema("add_project_member", AddProjectMemberReducer),
   __reducerSchema("add_space_member", AddSpaceMemberReducer),
+  __reducerSchema("append_chat", AppendChatReducer),
   __reducerSchema("claim_admin", ClaimAdminReducer),
   __reducerSchema("connect_agent", ConnectAgentReducer),
   __reducerSchema("create_agent", CreateAgentReducer),
