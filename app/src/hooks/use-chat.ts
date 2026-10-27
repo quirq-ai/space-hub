@@ -1,29 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DEMO_STORAGE_PREFIX, MAX_MESSAGE_LENGTH, parseDemoReplies, sampleReply } from "@/lib/demo-chat";
 import { chatLogPath, parseChatLog, type ChatTurn } from "@/lib/chat-log";
-import type { Place } from "@/api";
-import { useView } from "./use-view";
-
-const shortTime = (iso?: string) => {
-  const date = iso ? new Date(iso) : undefined;
-  return date && !Number.isNaN(date.getTime()) ? date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : undefined;
-};
+import { viewUrl, type Place, type View } from "@/api";
+import { useLive } from "./use-live";
 
 /**
  * A conversation's new turns live in `<conversation>.log.jsonl` beside it and
  * are saved to the hub as the signed-in builder. `blocked` says why saving
  * cannot work (signed out, not a member). Drafts stay in this browser tab.
  */
-export function useChat(place: Place, conversationPath: string | undefined, repliesPath: string | undefined, blocked: string | undefined, logExists: boolean, onSaved: () => void) {
+export function useChat(place: Place, conversationPath: string | undefined, repliesPath: string | undefined, blocked: string | undefined, logExists: boolean, onSaved: () => void, me?: string) {
   const storageKey = DEMO_STORAGE_PREFIX + "hub:" + place.space + "/" + place.project + ":" + conversationPath;
-  const replies = useView(place, repliesPath);
-  const config = parseDemoReplies(replies.view?.snapshot.file?.data);
-  const configError = repliesPath ? replies.error || (replies.view && !config ? "The sample reply file is not valid. Check its demo-replies structure." : "") : "";
+  const replies = useLive<View>(repliesPath ? viewUrl(place, repliesPath) : undefined);
+  const config = parseDemoReplies(replies.data?.snapshot.file?.data);
+  const configError = repliesPath ? replies.error || (replies.data && !config ? "The sample reply file is not valid. Check its demo-replies structure." : "") : "";
   // Read the log only once the folder lists it, so a new conversation polls nothing that is missing.
-  const log = useView(place, conversationPath && logExists ? chatLogPath(conversationPath) : undefined);
-  const logContent = log.view?.snapshot.file?.content;
+  const log = useLive<View>(conversationPath && logExists ? viewUrl(place, chatLogPath(conversationPath)) : undefined);
+  const logContent = log.data?.snapshot.file?.content;
   const logTurns = useMemo(() => parseChatLog(logContent ?? ""), [logContent]);
-  const logError = log.error && !log.missing ? log.error : "";
+  const logError = log.error && log.status !== 404 ? log.error : "";
   const [outbox, setOutbox] = useState<ChatTurn[]>([]);
   const [sendError, setSendError] = useState("");
   const [draftState, setDraftState] = useState<{ path: string | undefined; draft: string }>({ path: undefined, draft: "" });
@@ -59,9 +54,10 @@ export function useChat(place: Place, conversationPath: string | undefined, repl
 
   const sessionReady = conversationPath !== undefined && draftState.path === conversationPath;
   const error = configError || logError || (blocked ?? "");
-  const ready = sessionReady && !error && (!logExists || !!log.view || log.missing);
-  const messages: ChatTurn[] = sessionReady
-    ? [...logTurns, ...outbox.filter(turn => !logTurns.some(saved => saved.id === turn.id))].map(turn => ({ ...turn, time: shortTime(turn.time) }))
+  const ready = sessionReady && !error && (!logExists || !!log.data || log.status === 404);
+  // Turns not yet seen in the log are still being saved.
+  const messages: (ChatTurn & { saving?: boolean })[] = sessionReady
+    ? [...logTurns, ...outbox.filter(turn => !logTurns.some(saved => saved.id === turn.id)).map(turn => ({ ...turn, saving: true }))]
     : [];
   const draft = sessionReady ? draftState.draft : "";
   function setDraft(value: string) { if (sessionReady) setDraftState(current => ({ ...current, draft: value.slice(0, MAX_MESSAGE_LENGTH) })); }
@@ -90,7 +86,7 @@ export function useChat(place: Place, conversationPath: string | undefined, repl
     sending.current = true;
     setPending(!!config);
     setDraftState(current => ({ ...current, draft: "" }));
-    if (!(await save({ id: crypto.randomUUID(), role: "user", content: text }))) {
+    if (!(await save({ id: crypto.randomUUID(), role: "user", content: text, author: me }))) {
       setDraftState(current => current.path === path ? { ...current, draft: current.draft || text } : current);
       stop();
       return;
@@ -99,7 +95,7 @@ export function useChat(place: Place, conversationPath: string | undefined, repl
     if (!config) { sending.current = false; return; }
     const response = sampleReply(text, config);
     timer.current = setTimeout(() => {
-      void save({ id: crypto.randomUUID(), role: "assistant", content: response.content.slice(0, MAX_MESSAGE_LENGTH), links: response.links }).finally(() => { sending.current = false; setPending(false); });
+      void save({ id: crypto.randomUUID(), role: "assistant", content: response.content.slice(0, MAX_MESSAGE_LENGTH), links: response.links, author: "quirqy" }).finally(() => { sending.current = false; setPending(false); });
     }, 650);
   }
   return { ready, messages, draft, setDraft, send: (prompt?: string) => void send(prompt), stop, reset: () => {}, pending, error, sendError, refresh, suggestions: config?.suggestions || [], hub: { savedTo: `${place.space}/${place.project}` }, sampleReplies: !!config };

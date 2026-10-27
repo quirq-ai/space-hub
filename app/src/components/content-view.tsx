@@ -26,7 +26,7 @@ function localLink(href: string, filePath: string): string | undefined {
   return parts.join("/");
 }
 
-function Markdown({ content, filePath, navigate }: { content: string; filePath: string; navigate: Navigate }) {
+export function Markdown({ content, filePath, navigate }: { content: string; filePath: string; navigate: Navigate }) {
   return <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml components={{
     a: ({ href = "", children }) => {
       if (/^(https?:\/\/|mailto:)/i.test(href)) return <a href={href} target="_blank" rel="noreferrer noopener">{children}<ArrowUpRight size={12} /></a>;

@@ -414,6 +414,12 @@ check "a valid history" git -C "$A2" fsck --strict --no-dangling
 check "a reply pushed with git" as alice git -C "$A2" push -q quirq main
 app_has "shows in the app" "space=$ALICE&project=chatroom&path=Chat%2Findex.log.jsonl" 'reply pushed with git'
 page_has "the code view is still a page" "$ALICE/chatroom/tree/main/Chat" "index.log.jsonl"
+app_has "the app lists branches" "space=$ALICE&project=chatroom&view=refs" '"name":"main"'
+app_has "and folders at a branch, dotfiles included" "space=$ALICE&project=chatroom&view=tree&path=Chat" '"name":"index.log.jsonl"'
+app_has "and history" "space=$ALICE&project=chatroom&view=commits" '"subject":"reply"'
+app_has "and every file, for search" "space=$ALICE&project=chatroom&view=files" '"Chat/index.log.jsonl"'
+app_has "a profile shows what its builder works on" "space=$WEBUSER" "\"collaborates\":[\"$ALICE/chatroom\"]"
+same "everyone has an avatar" "$(curl -s -o /dev/null -w '%{http_code} %{content_type}' "$WEB/-/avatar/$ALICE")" "200 image/svg+xml"
 
 echo "sign up with GitHub"
 if [[ -n "${SPACEHUB_E2E_SERVER:-}" || "${SPACEHUB_E2E_GITHUB:-}" == 1 ]]; then

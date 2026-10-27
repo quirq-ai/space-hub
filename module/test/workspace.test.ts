@@ -6,7 +6,7 @@ import { createModuleTestHarness, TestAuth } from 'spacetimedb/server/test-utils
 import spacetimedb, * as mod from '../src/index';
 import { CHUNK_SIZE, objectKey, readObject, type Db } from '../src/store';
 import { hashObject, serializeTree } from '../src/chat';
-import { parseQuery, parseTree, workspace, type Meta, type Snapshot } from '../src/workspace';
+import { avatarOf, codeView, parseQuery, parseTree, workspace, type Meta, type Snapshot } from '../src/workspace';
 
 let nextConnection = 1n;
 function as(subject: string) {
@@ -204,5 +204,61 @@ describe('append_chat', () => {
     expect(append(alice, 'Chat/index.json', [turn('x', 'y'.repeat(4001))])).toThrow(/4000/);
     expect(append(alice, 'Chat/index.json', [])).toThrow(/1 to 2/);
     expect(append(alice, 'Chat/index.json', [turn('bad id!', 'hi')])).toThrow(/id/);
+  });
+});
+
+describe('code views', () => {
+  const code = (db: Db, query: Record<string, string>) => codeView(db, { query: new Map(Object.entries({ space: 'quirq', project: 'quirq', ...query })), viewer: null, now: 1_800_000_100 }) as any;
+
+  it('list branches, folders with their last commit and README, and files', () => {
+    const { db, push } = hub();
+    push({ 'README.md': '# quirq, edited', 'Chat/index.json': CONVERSATION, '.github/ci.yml': 'on: push' });
+    const refs = code(db, { view: 'refs' });
+    expect(refs.branches.map((b: { name: string }) => b.name)).toEqual(['main']);
+    expect(refs.branches[0].commit.subject).toBe('seed');
+    const root = code(db, { view: 'tree' });
+    expect(root.kind).toBe('tree');
+    // The code view shows dotfiles, unlike the workspace.
+    expect(root.entries.map((e: { name: string }) => e.name)).toEqual(['.github', 'Chat', 'README.md']);
+    expect(root.readme).toEqual({ name: 'README.md', content: '# quirq, edited' });
+    expect(root.entries.find((e: { name: string }) => e.name === 'README.md').last.subject).toBe('seed');
+    const blob = code(db, { view: 'tree', path: 'Chat/index.json' });
+    expect(blob).toMatchObject({ kind: 'blob', binary: false, size: CONVERSATION.length, path: 'Chat/index.json' });
+    expect(JSON.parse(blob.text).title).toBe('quirq chat');
+    expect(code(db, { view: 'files' }).paths).toEqual(['.github/ci.yml', 'Chat/index.json', 'README.md']);
+    expect(status(() => code(db, { view: 'tree', path: 'nope' }))).toBe(404);
+    expect(status(() => code(db, { view: 'tree', ref: 'nobranch' }))).toBe(404);
+    expect(status(() => code(db, { view: 'tree', path: '../x' }))).toBe(400);
+  });
+
+  it('page history, filter it by path, and show a commit with its diff', () => {
+    const { db, push, call, alice, turn } = hub();
+    push({ 'README.md': '# quirq\nsecond line', 'Chat/index.json': CONVERSATION });
+    call(alice, mod.appendChat, { project: 'quirq/quirq', conversation: 'Chat/index.json', turns: [turn('u1', 'hi')] });
+    const all = code(db, { view: 'commits' });
+    expect(all.commits.map((c: { subject: string }) => c.subject)).toEqual(['chat: 1 message in Chat/index.log.jsonl', 'seed', 'seed']);
+    expect(all.more).toBe(false);
+    const readme = code(db, { view: 'commits', path: 'README.md' });
+    expect(readme.commits).toHaveLength(2);
+    const diff = code(db, { view: 'commit', oid: readme.commits[0].oid });
+    const file = diff.files.find((f: { path: string }) => f.path === 'README.md');
+    expect(file).toMatchObject({ status: 'M', adds: 1, dels: 0 });
+    expect(file.hunks[0].lines).toContainEqual(['+', null, 2, 'second line']);
+    expect(diff.files.find((f: { path: string }) => f.path === 'Library/logo.png')).toMatchObject({ status: 'D', note: 'Binary file.' });
+    expect(status(() => code(db, { view: 'commit', oid: 'f'.repeat(40) }))).toBe(404);
+  });
+
+  it('describe people: avatars, profiles and who works on a project', () => {
+    const { db, call, alice, bob, view } = hub();
+    call(alice, mod.addProjectMember, { project: 'quirq/quirq', agent: 'bob' });
+    expect(avatarOf(db, 'alice')).toEqual({ name: 'alice', kind: 'personal', githubLogin: '' });
+    expect(avatarOf(db, 'quirq')).toMatchObject({ kind: 'org' });
+    expect(avatarOf(db, 'nobody')).toEqual({ name: 'nobody', kind: '', githubLogin: '' });
+    const profile = view({ space: 'alice' }).meta;
+    expect(profile).toMatchObject({ level: 'space', kind: 'personal', memberOf: [{ space: 'quirq', kind: 'org', role: 'owner' }], collaborates: [] });
+    expect(view({ space: 'bob' }).meta).toMatchObject({ collaborates: ['quirq/quirq'] });
+    expect(view({ space: 'quirq', project: 'quirq' }).meta).toMatchObject({ owners: ['alice'], members: [], collaborators: ['bob'] });
+    expect(view({}).meta).toMatchObject({ allProjects: [{ fullName: 'quirq/quirq', description: 'the workspace' }] });
+    void bob;
   });
 });

@@ -1,9 +1,10 @@
-// The hub's app: open-chat's interface for every space and project on the hub.
+// The hub's app: a desktop-style interface for every space and project on the hub.
 import "blobatar/motion.css";
 import "blobatar/gaze.css";
-import "./styles.css";
+import "./content.css";
+import "./app.css";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { HubApp } from "./hub-app";
+import { App } from "./app";
 
-createRoot(document.getElementById("root")!).render(<StrictMode><HubApp /></StrictMode>);
+createRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>);

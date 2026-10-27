@@ -67,7 +67,7 @@ export function ThemePicker() {
   }
 
   return <details className="theme-picker" ref={picker}>
-    <summary className="round-button" aria-label={`Appearance: ${preference}`} title="Appearance"><Icon size={20} strokeWidth={1.8} /></summary>
+    <summary className="icon-button" aria-label={`Appearance: ${preference}`} title="Appearance"><Icon size={17} strokeWidth={1.8} /></summary>
     <fieldset className="theme-menu">
       <legend>Appearance</legend>
       {choices.map(({ value, label, Icon: OptionIcon }) => <label className="theme-option" key={value}>

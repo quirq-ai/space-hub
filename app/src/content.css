@@ -112,12 +112,6 @@ svg { flex-shrink: 0; vertical-align: middle; }
 .search-action { width: 34px; height: 34px; background: var(--control); border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; color: var(--muted); }
 .search-action:hover { background: var(--blue); color: var(--text); }
 .mirror-caption { display: flex; align-items: center; justify-content: center; gap: 5px; color: var(--caption); font-size: 10px; margin: 8px 0 18px; }
-.dock { display: flex; width: max-content; max-width: min(370px, 100%); min-width: min(370px, 100%); background: var(--card); border: 1px solid var(--dock-border); border-radius: 40px; padding: 5px; box-shadow: 0 2px 18px var(--dock-shadow); margin: auto; overflow-x: auto; scrollbar-width: none; gap: 2px; }
-.dock::-webkit-scrollbar { display: none; }
-.dock-item { position: relative; height: 47px; flex: 1 0 58px; min-width: 58px; border-radius: 28px; display: flex; align-items: center; justify-content: center; color: var(--icon); }
-.dock-item.active { background: var(--neutral); color: var(--text); }
-.dock-item:hover { background: var(--dock-hover); color: var(--text); }
-.dock-item span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .file-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 22px; color: var(--muted); font-size: 11px; }
 .file-toolbar > span { display: inline-flex; gap: 6px; align-items: center; min-width: 0; overflow-wrap: anywhere; }
 .file-toolbar button { display: flex; align-items: center; gap: 5px; padding: 5px 9px; border-radius: 12px; font-size: 10px; flex-shrink: 0; }
@@ -134,10 +128,6 @@ svg { flex-shrink: 0; vertical-align: middle; }
 .message.user .bubble { border-radius: 22px 22px 7px 22px; background: var(--blue); }
 .message.system .bubble { background: var(--system); color: var(--muted); font-size: 13px; }
 .message-time { display: block; text-align: right; color: var(--placeholder); font-size: 10px; margin-top: 5px; padding-right: 5px; }
-.message-links { display: flex; flex-direction: column; gap: 7px; margin-top: 14px; }
-.message-links button { background: var(--link-card); border-radius: 13px; display: flex; gap: 9px; align-items: center; padding: 12px; font-size: 13px; width: 100%; text-align: left; }
-.message-links button:hover { background: var(--card); }
-.message-links button span { flex: 1; }
 .conversation-end { font-size: 10px; color: var(--quiet); display: flex; align-items: center; justify-content: center; gap: 5px; margin-top: 24px; }
 .markdown { overflow-wrap: anywhere; }
 .markdown > :first-child { margin-top: 0; }
@@ -361,24 +351,3 @@ progress::-moz-progress-bar { background: var(--progress-fill); border-radius: 8
 .url-preview iframe { display: block; width: 100%; height: 65dvh; min-height: 300px; border: 1px solid var(--line); border-top: 0; border-radius: 0 0 16px 16px; background: #fff; }
 .url-preview-note { color: var(--muted); font-size: 11px; margin-top: 10px; }
 @media (max-width: 600px) { .url-preview-bar { flex-wrap: wrap; gap: 8px; } .url-preview-bar > span { flex-basis: 100%; } }
-
-/* The hub: code links, presence, activity, clone commands and the account row. */
-.code-links { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 16px; }
-.code-links a { display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px; border-radius: 20px; background: var(--subtle); color: var(--text); font-size: 12px; text-decoration: none; }
-.code-links a:hover { background: var(--neutral); }
-.here-now { margin: 18px 0 0; display: grid; gap: 8px; }
-.here-now > div { display: flex; flex-wrap: wrap; gap: 6px; }
-.here-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--status-online); display: inline-block; }
-.hub-activity { margin-top: 24px; }
-.hub-activity h2 { margin-bottom: 2px; }
-.feed-text { margin: 6px 0 0; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
-.clone-box { display: grid; gap: 6px; margin: 16px 0; }
-.clone-line { display: block; padding: 7px 10px; border-radius: 10px; background: var(--subtle); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; overflow-x: auto; white-space: nowrap; user-select: all; }
-.empty-state .clone-line { margin-top: 8px; }
-.account-box { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin: 16px 0 8px; font-size: 13px; }
-.account-box form { display: flex; align-items: center; gap: 10px; margin: 0; }
-.account-box button { border: 0; background: var(--subtle); border-radius: 20px; padding: 4px 10px; cursor: pointer; }
-a.round-button { display: inline-flex; align-items: center; justify-content: center; color: inherit; }
-a.brand-name { color: inherit; text-decoration: none; }
-.breadcrumbs a { display: inline-flex; color: inherit; }
-.chat-config-error a { margin-left: 8px; }

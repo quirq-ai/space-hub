@@ -14,6 +14,7 @@
 // is current. Writes go through the append_chat reducer (chat.ts).
 import { PRESENCE_STALE_SECONDS, inSpace, objectKey, readObject, refKey, type Db } from './store';
 import { Sha1 } from './sha1';
+import { CodeError, commitView, commitsView, filesView, refsView, treeView } from './code';
 
 export const MAX_TEXT_BYTES = 2 * 1024 * 1024;
 export const MAX_PREVIEW_BYTES = 20 * 1024 * 1024;
@@ -85,9 +86,41 @@ export interface ActivityItem {
   count: number;
 }
 
+export interface ProjectCard {
+  fullName: string;
+  description: string;
+  pushedAt: string;
+}
+
+export interface Membership {
+  space: string;
+  kind: string;
+  role: string;
+}
+
 export type Meta =
-  | { level: 'hub'; spaces: number; projects: number; bytes: number; activity: ActivityItem[]; here: Here[] }
-  | { level: 'space'; name: string; kind: string; description: string; parent: string; owners: string[]; members: string[]; projects: number; bytes: number; github: string; here: Here[]; activity: ActivityItem[] }
+  | { level: 'hub'; spaces: number; projects: number; bytes: number; activity: ActivityItem[]; here: Here[]; allProjects: ProjectCard[] }
+  | {
+      level: 'space';
+      name: string;
+      displayName: string;
+      kind: string;
+      description: string;
+      parent: string;
+      owners: string[];
+      members: string[];
+      projects: number;
+      bytes: number;
+      github: string;
+      /** The GitHub account behind a builder (from sign-up) or an org (from its link), for its avatar. */
+      githubLogin: string;
+      createdAt: string;
+      memberOf: Membership[];
+      agents: string[];
+      collaborates: string[];
+      here: Here[];
+      activity: ActivityItem[];
+    }
   | {
       level: 'project';
       fullName: string;
@@ -98,6 +131,9 @@ export type Meta =
       bytes: number;
       head: { oid: string; subject: string; author: string; time: string } | null;
       canWrite: boolean;
+      owners: string[];
+      members: string[];
+      collaborators: string[];
       here: Here[];
       activity: ActivityItem[];
     };
@@ -279,7 +315,7 @@ function bytesOf(db: Db, projectId: bigint) {
   return Number(db.projectSize.projectId.find(projectId)?.bytes ?? 0n);
 }
 
-function here(db: Db, now: number, keep: (row: { space: string; projectId: bigint }) => boolean): Here[] {
+function here(db: Db, now: number, keep: (row: { space: string; projectId: bigint; agent: string }) => boolean): Here[] {
   const rows = [...db.presence.iter()].filter(row => now - Number(row.seenAt.microsSinceUnixEpoch / 1_000_000n) <= PRESENCE_STALE_SECONDS && keep(row));
   const seen = new Set<string>();
   const out: Here[] = [];
@@ -308,6 +344,28 @@ function rootId(key: string) {
   return new Sha1().update(encoder.encode(`hub\0${key}`)).hex();
 }
 
+function rolesOf(db: Db, space: string) {
+  const row = db.space.name.find(space);
+  const roles = [...db.spaceRole.space.filter(space)];
+  const owners = row?.kind === 'personal' ? [space] : row?.kind === 'agent' ? [row.parent] : roles.filter(role => role.role === 'owner').map(role => role.member).sort();
+  return { owners, members: roles.filter(role => role.role !== 'owner').map(role => role.member).sort() };
+}
+
+/** The GitHub login behind a space: a builder who signed up with GitHub, or an org linked to a GitHub account. */
+function githubLoginOf(db: Db, name: string): string {
+  const account = db.githubAccount.username.find(name);
+  if (account) return account.login;
+  const source = db.spaceLink.space.find(name)?.source ?? '';
+  return /^https:\/\/github\.com\/([A-Za-z0-9-]{1,39})$/.exec(source)?.[1] ?? '';
+}
+
+/** What an avatar needs: the kind of name and its GitHub login, if any. */
+export function avatarOf(db: Db, name: string) {
+  const space = db.space.name.find(name);
+  const kind = space?.kind ?? (db.agent.name.find(name) ? 'agent' : db.user.username.find(name) ? 'personal' : '');
+  return { name, kind, githubLogin: kind ? githubLoginOf(db, name) : '' };
+}
+
 function hubLevel(db: Db, now: number) {
   const projects = [...db.project.iter()];
   const counts = new Map<string, number>();
@@ -324,7 +382,18 @@ function hubLevel(db: Db, now: number) {
   const bytes = projects.reduce((sum, project) => sum + bytesOf(db, project.id), 0);
   return finish(
     { rootName: 'spacehub', rootId: rootId(''), roots: [], directory: { path: '', name: 'spacehub', entries } },
-    { level: 'hub', spaces: spaces.length, projects: projects.length, bytes, activity: activity(db, () => true), here: here(db, now, () => true) }
+    {
+      level: 'hub',
+      spaces: spaces.length,
+      projects: projects.length,
+      bytes,
+      activity: activity(db, () => true),
+      here: here(db, now, () => true),
+      allProjects: projects
+        .map(project => ({ fullName: project.fullName, description: project.description, pushedAt: iso(project.pushedAt) }))
+        .sort((a, b) => b.pushedAt.localeCompare(a.pushedAt))
+        .slice(0, 1000),
+    }
   );
 }
 
@@ -336,15 +405,15 @@ function spaceLevel(db: Db, name: string, now: number) {
     .filter(project => isVisibleName(project.name))
     .map(project => entryOf(project.name, 'directory', 0, iso(project.pushedAt), project.description || `${headOf(db, project) ? 'branch ' + project.defaultBranch : 'empty'}`))
     .sort(compareEntries);
-  const roles = [...db.spaceRole.space.filter(name)];
-  const owners = space.kind === 'personal' ? [name] : roles.filter(role => role.role === 'owner').map(role => role.member).sort();
-  const members = roles.filter(role => role.role !== 'owner').map(role => role.member).sort();
+  const { owners, members } = rolesOf(db, name);
   const ids = new Set(projects.map(project => project.id));
+  const memberOf = [...db.spaceRole.member.filter(name)].map(role => ({ space: role.space, kind: db.space.name.find(role.space)?.kind ?? '', role: role.role })).sort((a, b) => a.space.localeCompare(b.space));
   return finish(
     { rootName: name, rootId: rootId(name), roots: [], directory: { path: '', name, entries } },
     {
       level: 'space',
       name,
+      displayName: space.displayName || name,
       kind: space.kind,
       description: space.description,
       parent: space.parent,
@@ -353,7 +422,12 @@ function spaceLevel(db: Db, name: string, now: number) {
       projects: projects.length,
       bytes: projects.reduce((sum, project) => sum + bytesOf(db, project.id), 0),
       github: db.spaceLink.space.find(name)?.source ?? '',
-      here: here(db, now, row => (row.projectId === 0n ? row.space === name : ids.has(row.projectId))),
+      githubLogin: githubLoginOf(db, name),
+      createdAt: iso(space.createdAt),
+      memberOf,
+      agents: [...db.space.kind.filter('agent')].filter(agent => agent.parent === name).map(agent => agent.name).sort(),
+      collaborates: [...db.projectMember.agent.filter(name)].map(row => db.project.id.find(row.projectId)?.fullName ?? '').filter(Boolean).sort(),
+      here: here(db, now, row => (row.projectId === 0n ? row.space === name : ids.has(row.projectId)) || row.agent === name),
       activity: activity(db, row => row.path === name || row.path.startsWith(`${name}/`) || ids.has(row.projectId)),
     }
   );
@@ -407,6 +481,8 @@ function projectLevel(db: Db, project: Project, requested: string, viewer: strin
       bytes: bytesOf(db, project.id),
       head: commit ? { oid: head, subject: commit.subject, author: commit.author, time } : null,
       canWrite,
+      ...rolesOf(db, project.owner),
+      collaborators: [...db.projectMember.projectId.filter(project.id)].map(row => row.agent).sort(),
       here: here(db, now, row => row.projectId === project.id),
       activity: activity(db, row => row.projectId === project.id),
     }
@@ -447,9 +523,37 @@ export function workspace(db: Db, req: ApiRequest) {
   return projectLevel(db, row, req.query.get('path') ?? '', req.viewer, req.now);
 }
 
+/** The code views (code.ts) of a project, by `view`. */
+export function codeView(db: Db, req: ApiRequest): unknown {
+  const space = (req.query.get('space') ?? '').toLowerCase();
+  const row = db.project.fullName.find(`${space}/${req.query.get('project') ?? ''}`);
+  if (!row) throw new ApiError('There is no such project.', 404);
+  const ref = req.query.get('ref') ?? '';
+  const path = req.query.get('path') ?? '';
+  try {
+    switch (req.query.get('view')) {
+      case 'refs': return refsView(db, row, req.now);
+      case 'tree': return treeView(db, row, ref, path, req.now);
+      case 'commits': return commitsView(db, row, ref, path, Number(req.query.get('page') ?? 1), req.now);
+      case 'commit': return commitView(db, row, req.query.get('oid') ?? '', req.now);
+      case 'files': return filesView(db, row, ref, req.now);
+      default: throw new ApiError('Unknown view.', 400);
+    }
+  } catch (error) {
+    if (error instanceof CodeError) throw new ApiError(error.message, error.status);
+    throw error;
+  }
+}
+
 export function renderApi(db: Db, req: ApiRequest): { status: number; headers: Record<string, string>; body: string } {
   const headers: Record<string, string> = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' };
   try {
+    if (req.query.has('avatar')) return { status: 200, headers, body: JSON.stringify(avatarOf(db, (req.query.get('avatar') ?? '').toLowerCase())) };
+    if (req.query.has('view')) {
+      const body = JSON.stringify(codeView(db, req));
+      // Same content, same tag: the app polls these views too.
+      return { status: 200, headers: { ...headers, etag: `"${new Sha1().update(encoder.encode(body)).hex()}"` }, body };
+    }
     const result = workspace(db, req);
     return { status: 200, headers: { ...headers, etag: `"${result.snapshot.revision}"` }, body: JSON.stringify(result) };
   } catch (error) {

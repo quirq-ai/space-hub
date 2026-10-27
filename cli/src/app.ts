@@ -7,6 +7,7 @@
 //   GET  /-/api/view?space=&project=&path= the hub, a space or a project as folders and files
 //                                          (the module's /api, see module/src/workspace.ts)
 //   GET  /-/api/me                         who is signed in
+//   GET  /-/avatar/<name>                  a builder's, org's or agent's picture (avatar.ts)
 //   POST /-/api/chat                       save chat turns as the signed-in builder (append_chat)
 //
 // The browser never talks to SpacetimeDB: reads come from the module over
@@ -19,6 +20,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Conn } from './conn';
 import { findUser } from './conn';
+import { handleAvatar } from './avatar';
 
 export const APP_CSP =
   "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-src 'self' https:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
@@ -105,6 +107,12 @@ export function parseChat(input: unknown) {
 /** Handle the app's routes; false when the request is not one of them. */
 export async function handleApp(deps: AppDeps, req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<boolean> {
   const route = url.pathname;
+  const lookup = async (name: string) => {
+    const response = await fetch(`${deps.internalHttp}/v1/database/${encodeURIComponent(deps.db)}/route/api?avatar=${encodeURIComponent(name)}`);
+    if (!response.ok) throw new Error(`avatar lookup failed: ${response.status}`);
+    return (await response.json()) as { kind: string; githubLogin: string };
+  };
+  if (await handleAvatar({ lookup, githubBase: process.env.SPACEHUB_GITHUB_AVATARS }, req, res, url)) return true;
 
   if (req.method === 'GET' && route.startsWith('/-/app/')) {
     const name = route.slice('/-/app/'.length);

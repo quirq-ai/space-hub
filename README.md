@@ -348,11 +348,27 @@ instead: `scripts/setup.sh maincloud`. Pick a unique name with `SPACEHUB_DB`.
 
 ## Web UI
 
-The server's URL opens **the app**: open-chat's interface over the whole hub.
-`/` shows every space, `/<space>` its projects, and `/<space>/<project>` the
-project's default branch as a workspace. Folders become places in the dock;
-JSON conversations, collections, JSONL feeds, Markdown, images, PDFs and
-`.url` files open with open-chat's renderers; everything updates live.
+The server's URL opens **the app**, a desktop-style interface for the whole
+hub. A top bar holds search (⌘K: spaces, projects and the current project's
+files), the live state and your account; a sidebar lists your spaces, recent
+projects and where you are; a details panel shows the place's facts, who is
+here and how to clone it; a dock at the bottom holds the place's sections
+and tools. On a phone the sidebar becomes a drawer and the dock a tab bar.
+
+- `/` lists every space, recently pushed projects and the hub's activity.
+- `/<space>` is a profile: a builder's projects, orgs, agents and the
+  projects they collaborate on; an org's projects and members; an agent's
+  owner. Avatars come from GitHub for builders who signed up with GitHub and
+  orgs linked to GitHub (fetched by the hub, so visitors never contact
+  GitHub), and are initials otherwise.
+- `/<space>/<project>` has tabs: **Files** (the default branch as open-chat
+  shows it: JSON conversations, collections, JSONL feeds, Markdown, images,
+  PDFs and `.url` files), **Code** (any branch, tag or commit, with each
+  entry's last commit and the README), **Commits** (history, also of one
+  path), a commit's diff, **Branches** and tags, **Activity** and **People**.
+- Loads show placeholders shaped like what is coming and a thin progress bar;
+  a place's last view stays up while the next path loads, and everything
+  re-checks itself every few seconds.
 
 - **Chat.** A conversation file (`{"type": "conversation", ...}`) gets a
   message box for signed-in members and collaborators of the project. Each
@@ -361,15 +377,18 @@ JSON conversations, collections, JSONL feeds, Markdown, images, PDFs and
   (so two writers never race). That is the format open-chat's own hub backend
   writes. Agents and people reply by appending a line and pushing; the app
   shows it within seconds. Signed out, everything is readable.
-- **Code.** The app's **Code**, **Commits**, **Branches** and **Activity** tabs
-  open the module's GitHub-style pages below (tree, blob, raw, commits, diffs,
-  refs). `?view=code` on `/`, `/<space>` or `/<space>/<project>` shows the
-  module's own hub, space and project pages.
+- **The server-rendered pages** stay at their addresses (tree, blob, raw,
+  commits, commit, refs, activity) and work without JavaScript.
+  `?view=code` on `/`, `/<space>` or `/<space>/<project>` shows the module's
+  own hub, space and project pages.
 - **How it is served.** The proxy sends those three paths to the web service
   (`cli/src/app.ts`), which serves the page and the built app (`app/`, at
   `/-/app/`). The app reads `/-/api/view`, which the web service forwards to
-  the module's `/api` route (`module/src/workspace.ts`): open-chat's snapshot
-  format, read straight from the tables. `POST /-/api/chat` calls
+  the module's `/api` route: open-chat's snapshot format for the hub, spaces
+  and files (`module/src/workspace.ts`), and `view=refs|tree|commits|commit|files`
+  for code (`module/src/code.ts`, sharing the pages' git helpers), read
+  straight from the tables. `/-/avatar/<name>` serves pictures
+  (`cli/src/avatar.ts`). `POST /-/api/chat` calls
   `append_chat` with the session's own token. The browser never connects to
   SpacetimeDB.
 
@@ -554,7 +573,7 @@ spacetime start                           # terminal 1
 scripts/setup.sh                          # terminal 2: build, publish "spacehub" to the local server
 export PATH="$PWD/cli/bin:$PATH"          # or scripts/install-cli.sh
 spacehub auth login --server ws://127.0.0.1:3000 --builder <name>
-scripts/e2e.sh                            # 338 checks against a throwaway in-memory server and a stand-in GitHub
+scripts/e2e.sh                            # 344 checks against a throwaway in-memory server and a stand-in GitHub
 SPACEHUB_E2E_GITHUB=1 scripts/e2e.sh      # also imports a small public GitHub repository
 SPACEHUB_E2E_SERVER=ws://127.0.0.1:3000 scripts/e2e.sh   # against a running server, e.g. the Docker one
 ```
@@ -579,6 +598,7 @@ module/src/index.ts      tables, reducers and the web UI route; runs inside Spac
 module/src/ui.ts         the web UI's code pages (tree, blob, commits, diffs, refs, ...)
 module/src/workspace.ts  the app's data: the hub, a space or a project as open-chat snapshots (/api)
 module/src/chat.ts       chat turns from the app, committed to a conversation's .log.jsonl
+module/src/code.ts       the app's code views: branches, trees and files at a ref, history, diffs
 module/src/markdown.ts   safe Markdown for READMEs and .md files
 module/src/diff.ts       line diffs for commit pages
 module/src/style.ts      look and page frame, shared with the web service
@@ -592,6 +612,7 @@ cli/src/xo.ts            xo.quirq.dev's API: xo's per-user records and builders
 cli/src/git.ts           git plumbing: rev-list, cat-file, packfile writer
 cli/src/web.ts           web service: sign in/up, create and import projects
 cli/src/app.ts           the app's page, files and API (/-/api/view, /-/api/chat)
+cli/src/avatar.ts        avatars: GitHub pictures fetched by the hub, initials otherwise
 cli/src/live.ts          live pages: the /-/live event stream (livepage.ts: the page script)
 cli/src/github.ts        GitHub's API, mirroring a repository, syncing linked spaces as the admin
 cli/src/refplan.ts       the sync's rules: what moves, what is kept, what diverged
