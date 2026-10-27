@@ -583,7 +583,7 @@ same "live.js is served by the web service" "$(curl -s -o /dev/null -w '%{conten
 proxied_has() { local body; body="$(proxied "$1")" || return 1; grep -qF -- "$2" <<<"$body"; }
 proxied_lacks() { local body; body="$(proxied "$1")" || return 1; ! grep -qF -- "$2" <<<"$body"; }
 last_page_has() { grep '^data: ' "$LIVE" | tail -n 1 | grep -q -- "$1"; }
-check "project pages load it behind the proxy" proxied_has "/$PAD" 'src="/-/live.js"'
+check "project pages load it behind the proxy" proxied_has "/$PAD?view=code" 'src="/-/live.js"'
 check "the guide does not" proxied_lacks /-/guide 'live.js'
 same "pages that never change get no stream" "$(curl -s -o /dev/null -w '%{http_code}' "$WEB/-/live?path=/-/guide")" "204"
 same "bad live paths are refused" "$(curl -s -o /dev/null -w '%{http_code}' "$WEB/-/live?path=//evil.example")" "400"
