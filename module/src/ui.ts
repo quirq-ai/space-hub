@@ -4,7 +4,7 @@
 // swaps in each new rendering the web service streams when their data changes.
 //
 //   /                                         projects, spaces, builders, activity
-//   /<space>                                  a builder's, team's or agent's space
+//   /<space>                                  a builder's, org's or agent's space
 //   /<space>/<project>                        files at the default branch + README
 //   /<space>/<project>/tree/<ref>/<path>      a folder (last commit per entry)
 //   /<space>/<project>/blob/<ref>/<path>      a file: code with line links, Markdown
@@ -75,7 +75,7 @@ interface Entry {
 // Who built a project's code: a GitHub account (an explicit space_builder
 // row, else the owner of the project's GitHub import source), else the
 // builder here who made it (a personal space's builder, or whoever created
-// the project in a team space).
+// the project in an org).
 interface Builder {
   kind: 'github' | 'hub';
   handle: string; // GitHub login (lowercase) or builder name
@@ -692,8 +692,8 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     const commit = sp && e.oid ? `${this.a(`${sp.fullName}/commit/${e.oid}`, e.oid.slice(0, 7), 'mono')} ` : '';
     const source = `<a href="${esc(e.subject)}">${esc(e.subject.replace(/^https:\/\//, ''))}</a>`;
     const pushed = commit || e.text ? `${commit}${esc(e.text)}` : '';
-    // Team space events name the space itself.
-    const team = this.db.hubSpace.name.find(e.space) ? this.a(e.space, `<b>${esc(e.space)}</b>`) : `<b>${esc(e.space)}</b>`;
+    // Events about a top-level space (an org, a builder's space, an agent) name it.
+    const top = this.db.hubSpace.name.find(e.space) ? this.a(e.space, `<b>${esc(e.space)}</b>`) : `<b>${esc(e.space)}</b>`;
     const member = this.a(e.subject, `<b>${esc(e.subject)}</b>`);
     let line: string;
     let more = '';
@@ -701,33 +701,33 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
       case 'agent_registered':
         line = `${who} joined as a builder`;
         break;
-      case 'team_created':
-        line = `${who} created the team space ${team}`;
+      case 'org_created':
+        line = `${who} created the org ${top}`;
         break;
-      case 'team_edited':
-        line = `${who} updated the team space ${team}`;
+      case 'space_edited':
+        line = `${who} updated ${top}`;
         more = esc(e.text);
         break;
-      case 'team_deleted':
-        line = `${who} deleted the team space ${team}`;
+      case 'org_deleted':
+        line = `${who} deleted the org ${top}`;
         break;
-      case 'team_member_added':
-        line = `${who} added ${member} to ${team} as ${e.text === 'owner' ? 'an owner' : 'a member'}`;
+      case 'space_member_added':
+        line = `${who} added ${member} to ${top} as ${e.text === 'owner' ? 'an owner' : 'a member'}`;
         break;
-      case 'team_member_removed':
-        line = e.subject === e.agent ? `${who} left ${team}` : `${who} removed ${member} from ${team}`;
+      case 'space_member_removed':
+        line = e.subject === e.agent ? `${who} left ${top}` : `${who} removed ${member} from ${top}`;
         break;
       case 'agent_created':
-        line = `${who} created the agent ${team} in ${member}`;
+        line = `${who} created the agent ${top} in ${member}`;
         break;
       case 'agent_deleted':
         line = `${who} deleted the agent <b>${esc(e.space)}</b>`;
         break;
       case 'agent_connected':
-        line = `${who} connected the agent ${member} to ${team}`;
+        line = `${who} connected the agent ${member} to ${top}`;
         break;
       case 'agent_disconnected':
-        line = `${who} disconnected the agent ${member} from ${team}`;
+        line = `${who} disconnected the agent ${member} from ${top}`;
         break;
       case 'space_created':
         line = `${who} created ${space}`;
@@ -775,17 +775,17 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
         more = e.count ? `${plural(e.count, 'branch or tag').replace('branch or tags', 'branches and tags')}` : '';
         break;
       case 'space_linked':
-        line = `${who} linked ${team} to ${source}`;
+        line = `${who} linked ${top} to ${source}`;
         break;
       case 'space_unlinked':
-        line = `${who} unlinked ${team} from ${source}`;
+        line = `${who} unlinked ${top} from ${source}`;
         break;
       case 'space_synced':
-        line = `${who} synced ${team} from ${source}`;
+        line = `${who} synced ${top} from ${source}`;
         more = esc(e.text);
         break;
       case 'space_sync_failed':
-        line = `${who}'s sync of ${team} from ${source} failed`;
+        line = `${who}'s sync of ${top} from ${source} failed`;
         more = esc(e.text);
         break;
       case 'ref_diverged':
@@ -862,8 +862,8 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     const projects = [...this.db.project.iter()];
     const counts = new Map<string, number>();
     for (const p of projects) counts.set(p.owner, (counts.get(p.owner) ?? 0) + 1);
-    const teams = [...this.db.hubSpace.kind.filter('team')].sort((a, b) => (counts.get(b.name) ?? 0) - (counts.get(a.name) ?? 0) || a.name.localeCompare(b.name));
-    const teamRows = teams
+    const orgs = [...this.db.hubSpace.kind.filter('org')].sort((a, b) => (counts.get(b.name) ?? 0) - (counts.get(a.name) ?? 0) || a.name.localeCompare(b.name));
+    const orgRows = orgs
       .slice(0, 20)
       .map(t => `<tr><td>${this.a(t.name, esc(t.displayName || t.name))}</td><td class="r muted">${plural(counts.get(t.name) ?? 0, 'project')} · ${this.totalOf(projects.filter(p => p.owner === t.name))}</td></tr>`)
       .join('');
@@ -887,7 +887,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
 <div class="box">${rows ? `<table>${rows}</table>` : '<div class="empty">No projects yet.</div>'}</div>
 <h2 style="margin:24px 0 8px">Activity</h2>${this.activityFeed([...this.db.activity.iter()], '')}</div>
 <aside><h2>Here now</h2>${this.hereBox(this.hereNow(null), true)}
-<h2>Team spaces <span class="muted">${teams.length}</span></h2><div class="box">${teamRows ? `<table>${teamRows}</table>` : '<div class="empty">No team spaces yet.</div>'}</div>
+<h2>Orgs <span class="muted">${orgs.length}</span></h2><div class="box">${orgRows ? `<table>${orgRows}</table>` : '<div class="empty">No orgs yet.</div>'}</div>
 <h2>Agents <span class="muted">${agents.length}</span></h2><div class="box">${agentRows ? `<table>${agentRows}</table>` : '<div class="empty">No agents yet.</div>'}</div>
 <h2>${this.a('-/builders', 'Builders')} <span class="muted">${builders.length}</span></h2><div class="box">${builderRows ? `<table>${builderRows}</table>` : '<div class="empty">No builders yet.</div>'}</div></aside></div>`
     );
@@ -916,7 +916,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     return `<h2>GitHub</h2><div class="box github" style="padding:12px 16px">Mirrors <a href="${esc(link.source)}">${esc(link.source.replace(/^https:\/\//, ''))}</a><div class="muted">${state}</div>${detail}${forms}</div>`;
   }
 
-  // /<name>: a builder's personal space, a team space, or (phase 4) an agent.
+  // /<name>: a builder's personal space, an org, or an agent.
   spacePage(name: string) {
     const row = this.db.hubSpace.name.find(name);
     const user = this.db.user.username.find(name);
@@ -931,7 +931,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     const agents = this.agentsOf(name);
     if (kind === 'personal') {
       const since = user ? `<p class="desc">Builder · joined ${this.ago(seconds(user.createdAt))} · ${plural(projects.length, 'project')} · ${this.totalOf(projects)}</p>` : '';
-      const teams = [...this.db.spaceRole.member.filter(name)]
+      const spaces = [...this.db.spaceRole.member.filter(name)]
         .map(r => `<tr><td>${this.a(r.space, `<b>${esc(r.space)}</b>`)} ${this.spacePill(r.space)}</td><td class="r muted">${esc(r.role)}</td></tr>`)
         .join('');
       const collab = [...this.db.projectMember.agent.filter(name)]
@@ -939,12 +939,12 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
         .filter((s): s is Space => !!s)
         .map(s => `<tr><td>${this.a(s.fullName, `<b>${esc(s.fullName)}</b>`)}</td><td class="r muted">collaborator</td></tr>`)
         .join('');
-      const memberOf = teams + collab ? `<h2 style="margin:24px 0 8px">Member of</h2><div class="box"><table>${teams}${collab}</table></div>` : '';
+      const memberOf = spaces + collab ? `<h2 style="margin:24px 0 8px">Member of</h2><div class="box"><table>${spaces}${collab}</table></div>` : '';
       const github = this.githubBox(name);
       const main = `${list}${agents}${memberOf}`;
       return this.page(name, `${title}${since}${github ? `<div class="grid"><div>${main}</div><aside>${github}</aside></div>` : main}`);
     }
-    const created = row ? `<p class="desc">${kind === 'team' ? 'Team space' : 'Agent'} · created by ${this.a(row.createdBy, esc(row.createdBy))} ${this.ago(seconds(row.createdAt))} · ${plural(projects.length, 'project')} · ${this.totalOf(projects)}</p>` : '';
+    const created = row ? `<p class="desc">${kind === 'org' ? 'Org' : 'Agent'} · created by ${this.a(row.createdBy, esc(row.createdBy))} ${this.ago(seconds(row.createdAt))} · ${plural(projects.length, 'project')} · ${this.totalOf(projects)}</p>` : '';
     const people = this.roles(name)
       .map(r => `<tr><td>${this.a(r.member, `<b>${esc(r.member)}</b>`)} ${this.spacePill(r.member)}</td><td class="r muted">${esc(r.role)}</td></tr>`)
       .join('');
@@ -952,7 +952,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     return this.page(name, `${title}${created}<div class="grid"><div>${list}${agents}</div>${aside}</div>`);
   }
 
-  // The agents a builder or team space owns.
+  // The agents a builder or org owns.
   agentsOf(parent: string) {
     const rows = [...this.db.hubSpace.kind.filter('agent')]
       .filter(a => a.parent === parent)

@@ -86,7 +86,7 @@ export function findProject(conn: Conn, fullName: string) {
   );
 }
 
-// A top-level space: a builder's personal space, a team space or an agent.
+// A top-level space: a builder's personal space, an org or an agent.
 export function findHubSpace(conn: Conn, name: string) {
   return snapshot(conn, tables.hubSpace.where(s => s.name.eq(name)), () => [...conn.db.hubSpace.iter()].find(s => s.name === name));
 }

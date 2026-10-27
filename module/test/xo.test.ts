@@ -114,7 +114,7 @@ describe('GitHub sign-up', () => {
     expect(() => call(stranger, mod.githubLinkBuilder, args)).toThrow(/only the hub admin/);
     expect(() => call(admin, mod.githubLinkBuilder, { ...args, login: 'OCTOCAT' })).toThrow(/is taken/);
     call(as('alice'), mod.registerUser, { username: 'alice' });
-    call(as('alice'), mod.createTeam, { name: 'acme', description: '' });
+    call(as('alice'), mod.createOrg, { name: 'acme', description: '' });
     expect(() => call(admin, mod.githubLinkBuilder, { ...args, login: 'acme' })).toThrow(/is taken/);
     expect(() => call(admin, mod.githubLinkBuilder, { ...args, login: 'v1' })).toThrow(/reserved/);
     expect(() => call(admin, mod.githubLinkBuilder, { ...args, login: "x' OR 1=1" })).toThrow(/invalid GitHub login/);

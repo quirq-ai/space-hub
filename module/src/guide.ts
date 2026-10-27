@@ -32,9 +32,9 @@ function commands(ctx: GuideContext) {
     login: ctx.accounts === 'github' ? `${c} auth login --server ${ctx.server}` : `${c} auth login --server ${ctx.server} --builder <name>`,
     gh: 'gh auth login',
     create: `${c} project create <name> --source . --push`,
-    team: `${c} space create <team>`,
-    teamMember: `${c} space member add <team> <builder>`,
-    teamProject: `${c} project create <team>/<name> --source . --push`,
+    org: `${c} space create <org>`,
+    orgMember: `${c} space member add <org> <builder>`,
+    orgProject: `${c} project create <org>/<name> --source . --push`,
     clone: `${c} project clone <space>/<project>`,
     sync: `${c} project sync --watch`,
     watch: `${c} project watch <space>/<project> --exec "<command>"`,
@@ -47,8 +47,8 @@ function commands(ctx: GuideContext) {
     spaceSync: `cd <space> && ${c} space sync --watch --auto`,
     autosync: `${c} project sync --watch --auto`,
     who: `${c} project who <space>/<project>`,
-    members: `${c} space member list <team>`,
-    leave: `${c} space member remove <team> <your name>`,
+    members: `${c} space member list <org>`,
+    leave: `${c} space member remove <org> <your name>`,
     interval: `${c} project sync --watch --auto --interval 10`,
     resolve: 'git add <files> && git rebase --continue',
     gitRebase: `git pull --rebase ${HUB.remote} main && git push ${HUB.remote} main`,
@@ -96,11 +96,12 @@ export function guidePage(ctx: GuideContext): string {
 <section id="what"><h2>What it is</h2>
 <p>A hub for git repositories, laid out like GitHub. You use plain git to push and pull. The hub tells every connected copy about each push as it happens, so machines, people and AI agents stay on the same code.</p>
 <dl class="terms">
-<dt>Space</dt><dd>A name at the top of the hub, <code>/&lt;space&gt;</code>, like a GitHub user or organization. A builder's personal space has the builder's name; a team space groups projects for several builders; an agent is a space too.</dd>
+<dt>Space</dt><dd>A name at the top of the hub, <code>/&lt;space&gt;</code>, like a GitHub user or organization. A builder's personal space has the builder's name; an org groups projects for several builders; an agent is a space too.</dd>
+<dt>Org</dt><dd>A space for several builders, like a GitHub organization. Its owners manage it, and its members push to all of its projects.</dd>
 <dt>Project</dt><dd>A git repository in a space, <code>/&lt;space&gt;/&lt;project&gt;</code>, like a GitHub repository.</dd>
 <dt>Builder</dt><dd>A person with a login here. Builders also means who made a project's code: GitHub accounts show as builders for the repos imported from them.</dd>
 <dt>Agent</dt><dd>A space of its own with its own identity: its definition lives in <code>&lt;agent&gt;/home</code>, it is connected to the spaces it works in, and it runs anywhere with <code>spacehub agent run</code> (XO Swarm launches it the same way).</dd>
-<dt>Member</dt><dd>Belongs to a team space and pushes to all of its projects. Owners also manage the space.</dd>
+<dt>Member</dt><dd>Belongs to an org and pushes to all of its projects. Owners also manage the org.</dd>
 <dt>Collaborator</dt><dd>May push to one project outside their own spaces.</dd>
 <dt>Activity</dt><dd>The log of every change on the hub: pushes, new projects and spaces, imports and edits.</dd>
 </dl></section>
@@ -109,8 +110,8 @@ export function guidePage(ctx: GuideContext): string {
 <li><b>Anyone</b> who can open this page can browse every space and project, read the activity and clone any project.</li>
 ${
   github
-    ? `<li><b>Builders</b> can also create projects and team spaces, push and import from GitHub. Sign up with your GitHub account: log in to GitHub with ${code(cmd.gh)} then run ${code(cmd.login)} Your builder name, and your personal space, are your GitHub login.</li>`
-    : `<li><b>Builders</b> can also create projects and team spaces, push and import from GitHub. Register at the top right, or with ${code(cmd.login)}</li>`
+    ? `<li><b>Builders</b> can also create projects and orgs, push and import from GitHub. Sign up with your GitHub account: log in to GitHub with ${code(cmd.gh)} then run ${code(cmd.login)} Your builder name, and your personal space, are your GitHub login.</li>`
+    : `<li><b>Builders</b> can also create projects and orgs, push and import from GitHub. Register at the top right, or with ${code(cmd.login)}</li>`
 }
 <li>A space's owners and members push to its projects. To let someone push to one project only, add them as a collaborator: ${code(cmd.collaborator)}</li>
 ${
@@ -130,7 +131,7 @@ ${step('Open a project to browse its files, commits and activity. Imported proje
 ${step('Install it (needs git and Node 22+):', cmd.install)}
 ${github ? `${step('Log in to GitHub, then sign up with that account (your builder name is your GitHub login):', cmd.gh)}${code(cmd.login)}` : step('Log in as a builder:', cmd.login)}
 ${step('Share a repo (run inside it):', cmd.create)}
-${step('Make a team space, add people, and share a repo into it:', cmd.team)}${code(cmd.teamMember)}${code(cmd.teamProject)}
+${step('Make an org, add people, and share a repo into it:', cmd.org)}${code(cmd.orgMember)}${code(cmd.orgProject)}
 ${step("Mirror a GitHub user's or organization's public repositories into a space:", cmd.link)}
 ${step('Clone every project of a space into one folder, and keep them all current:', cmd.spaceClone)}${code(cmd.spaceSync)}
 ${step('Make an agent, let it work in a space, and run it:', cmd.agentCreate)}${code(cmd.agentConnect)}${code(cmd.agentRun)}
@@ -147,7 +148,7 @@ ${code(cmd.gitClone)}${code(cmd.gitPush)}${code(cmd.gitPull)}
 <section id="together"><h2>Edit together</h2>
 <p>Several builders and agents can work in one project at the same time. Each works in its own clone, and the hub keeps the clones the same within seconds.</p>
 <h3>Set it up</h3><ol>
-${step('Put the project in a team space and add everyone as members:', cmd.teamMember)}
+${step('Put the project in an org and add everyone as members:', cmd.orgMember)}
 ${step('Each one clones the project:', cmd.clone)}
 ${step('Each one starts autosync inside the clone and leaves it running:', cmd.autosync)}
 ${step('Edit files as usual. To see who else is working right now:', cmd.who)}
@@ -168,7 +169,7 @@ ${step('Edit files as usual. To see who else is working right now:', cmd.who)}
 <div class="cases">
 <div class="case"><h3>One repo on every machine</h3><p>Create the project once, clone it on each laptop, cloud machine or agent, and keep each copy current.</p>${code(cmd.clone)}${code(cmd.sync)}</div>
 <div class="case"><h3>Hand work to an agent</h3><p>The agent waits for your push and starts on it right away. Its push comes back to you the same way.</p>${code(cmd.watch)}</div>
-<div class="case"><h3>Edit together</h3><p>Add the others to a team space. Each runs autosync in a clone, and every edit reaches the others within seconds. The project page shows who is here now.</p>${code(cmd.teamMember)}${code(cmd.autosync)}</div>
+<div class="case"><h3>Edit together</h3><p>Add the others to an org. Each runs autosync in a clone, and every edit reaches the others within seconds. The project page shows who is here now.</p>${code(cmd.orgMember)}${code(cmd.autosync)}</div>
 <div class="case"><h3>Mirror a GitHub repo</h3><p>Click <b>New project</b> and paste the GitHub URL. Use <b>Sync from GitHub</b> on the project to pull later changes.</p></div>
 <div class="case"><h3>Agents that work in your spaces</h3><p>An agent is a space with its own identity. Its definition (soul, identity, memory, skills) is a project, it is connected to the spaces it may work in, and <code>agent run</code> keeps all of it in one folder, pushing as the agent. XO Swarm launches it the same way.</p>${code(cmd.agentCreate)}${code(cmd.agentConnect)}${code(cmd.agentRun)}</div>
 <div class="case"><h3>Mirror a whole GitHub organization</h3><p>Link a space to it: every public repository becomes a project with the same name, kept in step. Work done here is never overwritten; a branch GitHub moved another way is kept and marked <b>diverged</b>.</p>${code(cmd.link)}</div>
