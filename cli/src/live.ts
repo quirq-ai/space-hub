@@ -64,7 +64,7 @@ export class LiveHub {
     const db = conn.db;
     const live = (ctx: { event: { tag: string } }) => ctx.event.tag !== 'SubscribeApplied' && ctx.event.tag !== 'UnsubscribeApplied';
     const project = (id: bigint) => this.projectsById.get(id);
-    const forSpace = (id: bigint, ...more: string[]) => {
+    const forProject = (id: bigint, ...more: string[]) => {
       const sp = project(id);
       this.touch(['hub', ...(sp ? [`project:${sp.fullName}`, `space:${sp.owner}`] : []), ...more]);
     };
@@ -72,19 +72,19 @@ export class LiveHub {
 
     db.project.onInsert((ctx, r) => {
       remember(r);
-      if (live(ctx)) forSpace(r.id);
+      if (live(ctx)) forProject(r.id);
     });
     // A push's object uploads only move counters; wait for the ref.
     db.project.onUpdate((_ctx, old, r) => {
       remember(r);
-      if (old.description !== r.description || old.defaultBranch !== r.defaultBranch || old.pushedAt.microsSinceUnixEpoch !== r.pushedAt.microsSinceUnixEpoch) forSpace(r.id);
+      if (old.description !== r.description || old.defaultBranch !== r.defaultBranch || old.pushedAt.microsSinceUnixEpoch !== r.pushedAt.microsSinceUnixEpoch) forProject(r.id);
     });
-    // The name stays known for rows of the same space that go with it.
+    // The name stays known for rows of the same project that go with it.
     db.project.onDelete((ctx, r) => {
-      if (live(ctx)) forSpace(r.id);
+      if (live(ctx)) forProject(r.id);
     });
-    const row = (ctx: { event: { tag: string } }, r: { spaceId: bigint }) => {
-      if (live(ctx)) forSpace(r.spaceId);
+    const row = (ctx: { event: { tag: string } }, r: { projectId: bigint }) => {
+      if (live(ctx)) forProject(r.projectId);
     };
     db.gitRef.onInsert(row);
     db.gitRef.onUpdate((ctx, _old, r) => row(ctx, r));
@@ -95,22 +95,22 @@ export class LiveHub {
     db.projectBuilder.onInsert(row);
     db.projectBuilder.onUpdate((ctx, _old, r) => row(ctx, r));
     db.projectBuilder.onDelete(row);
-    const member = (ctx: { event: { tag: string } }, r: { spaceId: bigint; agent: string }) => {
-      if (live(ctx)) forSpace(r.spaceId, `space:${r.agent}`);
+    const member = (ctx: { event: { tag: string } }, r: { projectId: bigint; agent: string }) => {
+      if (live(ctx)) forProject(r.projectId, `space:${r.agent}`);
     };
     db.projectMember.onInsert(member);
     db.projectMember.onDelete(member);
     // Heartbeats only move seenAt; who is here changes on join, leave or
     // mode. Someone following a whole space shows on all of its projects.
-    const here = (r: { spaceId: bigint; space: string }) => {
-      if (r.spaceId !== 0n) return forSpace(r.spaceId);
+    const here = (r: { projectId: bigint; space: string }) => {
+      if (r.projectId !== 0n) return forProject(r.projectId);
       const projects = [...this.projectsById.entries()].filter(([, p]) => p.owner === r.space).map(([, p]) => `project:${p.fullName}`);
       this.touch(['hub', `space:${r.space}`, ...projects]);
     };
     db.presence.onInsert((ctx, r) => live(ctx) && here(r));
     db.presence.onDelete((ctx, r) => live(ctx) && here(r));
     db.presence.onUpdate((_ctx, old, r) => {
-      if (old.spaceId !== r.spaceId || old.space !== r.space || old.mode !== r.mode || old.branch !== r.branch) {
+      if (old.projectId !== r.projectId || old.space !== r.space || old.mode !== r.mode || old.branch !== r.branch) {
         here(old);
         here(r);
       }
@@ -120,12 +120,12 @@ export class LiveHub {
     };
     db.user.onInsert(builder);
     db.user.onDelete(builder);
-    const hubSpace = (ctx: { event: { tag: string } }, r: { name: string; parent: string }) => {
+    const space = (ctx: { event: { tag: string } }, r: { name: string; parent: string }) => {
       if (live(ctx)) this.touch(['hub', `space:${r.name}`, ...(r.parent ? [`space:${r.parent}`] : [])]);
     };
-    db.hubSpace.onInsert(hubSpace);
-    db.hubSpace.onUpdate((ctx, _old, r) => hubSpace(ctx, r));
-    db.hubSpace.onDelete(hubSpace);
+    db.space.onInsert(space);
+    db.space.onUpdate((ctx, _old, r) => space(ctx, r));
+    db.space.onDelete(space);
     const role = (ctx: { event: { tag: string } }, r: { space: string; member: string }) => {
       if (live(ctx)) this.touch(['hub', `space:${r.space}`, `space:${r.member}`]);
     };
@@ -138,12 +138,12 @@ export class LiveHub {
     // A project measured for the first time (or gone). Sizes that grow with a
     // push show up with the push's own ref update.
     const measured = (ctx: { event: { tag: string } }, r: { projectId: bigint }) => {
-      if (live(ctx)) forSpace(r.projectId);
+      if (live(ctx)) forProject(r.projectId);
     };
     db.projectSize.onInsert(measured);
     db.projectSize.onDelete(measured);
     const synced = (ctx: { event: { tag: string } }, r: { projectId: bigint }) => {
-      if (live(ctx)) forSpace(r.projectId);
+      if (live(ctx)) forProject(r.projectId);
     };
     db.refSync.onInsert(synced);
     db.refSync.onUpdate((ctx, _old, r) => synced(ctx, r));
@@ -163,7 +163,7 @@ export class LiveHub {
           resolve();
         })
         .onError(ctx => reject(new Error(`subscription failed: ${(ctx as { event?: unknown }).event}`)))
-        .subscribe([tables.user, tables.hubSpace, tables.spaceRole, tables.spaceLink, tables.refSync, tables.projectSize, tables.project, tables.gitRef, tables.projectMember, tables.presence, tables.projectImport, tables.projectBuilder]);
+        .subscribe([tables.user, tables.space, tables.spaceRole, tables.spaceLink, tables.refSync, tables.projectSize, tables.project, tables.gitRef, tables.projectMember, tables.presence, tables.projectImport, tables.projectBuilder]);
     });
   }
 

@@ -11,7 +11,7 @@ import {
 } from "spacetimedb";
 
 export default __t.row({
-  spaceId: __t.u64().primaryKey().name("space_id"),
+  projectId: __t.u64().primaryKey().name("project_id"),
   handle: __t.string(),
   name: __t.string(),
   url: __t.string(),

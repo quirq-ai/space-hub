@@ -102,7 +102,7 @@ export async function githubBuilder(api: GithubApi, login: string) {
     login = user.login ?? login;
     name = user.name?.trim() || login;
   }
-  return { handle: login, name, url: `https://github.com/${login}` };
+  return { handle: login, name };
 }
 
 export interface GithubRepo {
@@ -283,8 +283,8 @@ export class GithubSync {
         try {
           if (fresh) {
             await conn.reducers.createProject({ space, name: repo.name, description: repo.description });
-            await conn.reducers.setBuilder({ space: full, ...builder });
-            await conn.reducers.startImport({ space: full, source: repo.source });
+            await conn.reducers.setProjectBuilder({ project: full, ...builder });
+            await conn.reducers.startImport({ project: full, source: repo.source });
           }
           const project = (await projectsIn(conn, space)).find(p => p.name === repo.name);
           if (!project) throw new Error(`project ${full} is missing`);
@@ -292,13 +292,13 @@ export class GithubSync {
           diverged += result.diverged;
           if (result.failed) failed.push(`${repo.name} (${result.failed} refs not pushed; the next sync tries again)`);
           if (fresh) {
-            if (result.head) await conn.reducers.editSpace({ space: full, description: undefined, defaultBranch: result.head }).catch(() => undefined);
-            await conn.reducers.updateImport({ space: full, status: 'done', message: 'imported' });
+            if (result.head) await conn.reducers.editProject({ project: full, description: undefined, defaultBranch: result.head }).catch(() => undefined);
+            await conn.reducers.updateImport({ project: full, status: 'done', message: 'imported' });
           }
           done++;
         } catch (err) {
           failed.push(`${repo.name} (${errorMessage(err).slice(0, 200)})`);
-          if (fresh) await conn.reducers.updateImport({ space: full, status: 'failed', message: errorMessage(err).slice(-500) }).catch(() => undefined);
+          if (fresh) await conn.reducers.updateImport({ project: full, status: 'failed', message: errorMessage(err).slice(-500) }).catch(() => undefined);
         }
       }
       const parts = [`${done} of ${repos.length} repositories`];

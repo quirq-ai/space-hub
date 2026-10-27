@@ -1,8 +1,8 @@
 // Hub URLs. A hub remote is always called "quirq" and always points at a
 // quirq URL:
 //
-//   quirq://hub.quirq.dev/alice/notes   a space on a named hub
-//   quirq://alice/notes                 a space on the hub you are logged in to
+//   quirq://hub.quirq.dev/alice/notes   a project on a named hub
+//   quirq://alice/notes                 a project on the hub you are logged in to
 //                                       (hub.quirq.dev unless you chose another)
 //
 // URLs we write always name the host, so a clone keeps working whatever server
@@ -18,8 +18,8 @@ export interface HubUrl {
   // ws:// or wss:// address of the hub, from the URL's host; absent when the
   // URL names none (use the configured server).
   server?: string;
-  // owner/name
-  space: string;
+  // space/project
+  project: string;
 }
 
 // This machine only: the whole host (and an optional port), never a prefix,
@@ -53,8 +53,8 @@ export function hostOfServer(server: string): string {
   return server.replace(/^[a-z]+:\/\//, '').replace(/\/+$/, '');
 }
 
-export function hubUrl(server: string, space: string): string {
-  return `${SCHEME}://${hostOfServer(server)}/${space}`;
+export function hubUrl(server: string, project: string): string {
+  return `${SCHEME}://${hostOfServer(server)}/${project}`;
 }
 
 export function parseHubUrl(raw: string): HubUrl | null {
@@ -68,5 +68,5 @@ export function parseHubUrl(raw: string): HubUrl | null {
     server = serverOfHost(host);
   }
   if (parts.length !== 2 || !PART.test(parts[0]) || !PART.test(parts[1])) return null;
-  return { ...(server ? { server } : {}), space: `${parts[0]}/${parts[1]}` };
+  return { ...(server ? { server } : {}), project: `${parts[0]}/${parts[1]}` };
 }

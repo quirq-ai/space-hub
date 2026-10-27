@@ -6,7 +6,8 @@
 # nobody reaches SpacetimeDB until the module is published and the hub admin
 # claimed. Only then does the real allowlist proxy take the port over.
 # Publishing never passes --delete-data: a breaking schema change makes
-# startup fail instead of wiping spaces.
+# startup fail instead of wiping spaces. The one exception is a database from
+# before the project tables, which is moved aside, not deleted (see below).
 set -eu
 
 ROOT="${SPACETIME_ROOT:-/data}"
@@ -31,39 +32,61 @@ if [ ! -w "$ROOT" ]; then
   exit 1
 fi
 
-spacetime --root-dir "$ROOT" start --listen-addr "$INTERNAL" --non-interactive &
-server=$!
+start_spacetime() {
+  spacetime --root-dir "$ROOT" start --listen-addr "$INTERNAL" --non-interactive &
+  server=$!
+  tries=0
+  until curl -sf "http://$INTERNAL/v1/ping" >/dev/null 2>&1; do
+    if ! kill -0 "$server" 2>/dev/null; then
+      echo "spacehub: SpacetimeDB exited during startup" >&2
+      exit 1
+    fi
+    tries=$((tries + 1))
+    if [ "$tries" -gt 300 ]; then
+      echo "spacehub: SpacetimeDB did not answer on $INTERNAL" >&2
+      exit 1
+    fi
+    sleep 0.2
+  done
+}
+
+server=""
 caddy run --config /opt/spacehub/starting.Caddyfile --adapter caddyfile &
 proxy=$!
 web=""
 stop() {
-  kill -TERM "$server" "$proxy" $web 2>/dev/null || true
+  kill -TERM $server "$proxy" $web 2>/dev/null || true
   wait
 }
 trap 'stop; exit 0' TERM INT
+start_spacetime
 
-tries=0
-until curl -sf "http://$INTERNAL/v1/ping" >/dev/null 2>&1; do
-  if ! kill -0 "$server" 2>/dev/null; then
-    echo "spacehub: SpacetimeDB exited during startup" >&2
+publish() {
+  spacetime --root-dir "$ROOT" publish --server "http://$INTERNAL" "$DB" --js-path /opt/spacehub/module.js --yes
+}
+if ! publish; then
+  # A database from before the project tables (its `space` table held
+  # repositories) cannot take this schema: SpacetimeDB renames neither tables
+  # nor columns. Move it aside under another name, where its data stays
+  # untouched, and start a new database under this one. Anything else that
+  # stops the publish still stops the server.
+  BEFORE="$DB-before-projects"
+  if ! spacetime --root-dir "$ROOT" sql --server "http://$INTERNAL" "$DB" "SELECT full_name FROM space WHERE id = 0" >/dev/null 2>&1; then
+    echo "spacehub: could not publish the module to \"$DB\"" >&2
     exit 1
   fi
-  tries=$((tries + 1))
-  if [ "$tries" -gt 300 ]; then
-    echo "spacehub: SpacetimeDB did not answer on $INTERNAL" >&2
+  identity="$(curl -sf "http://$INTERNAL/v1/database/$DB" | sed -n 's/.*"database_identity":{"__identity__":"0x\([0-9a-f]*\)".*/\1/p')"
+  if [ -z "$identity" ] || ! spacetime --root-dir "$ROOT" rename --server "http://$INTERNAL" --to "$BEFORE" "$identity" --yes; then
+    echo "spacehub: \"$DB\" is from before the project tables, and could not be renamed to \"$BEFORE\"" >&2
     exit 1
   fi
-  sleep 0.2
-done
-
-spacetime --root-dir "$ROOT" publish --server "http://$INTERNAL" "$DB" --js-path /opt/spacehub/module.js --yes
-# Rebuild the activity feed's history once (later calls do nothing).
-spacetime --root-dir "$ROOT" call --server "http://$INTERNAL" "$DB" backfill_activity >/dev/null 2>&1 \
-  || echo "spacehub: could not rebuild the activity history; the feed starts from now" >&2
-# Give builders from before spaces their personal spaces (later calls do nothing).
-if ! out="$(spacetime --root-dir "$ROOT" call --server "http://$INTERNAL" "$DB" migrate_spaces 2>&1)"; then
-  echo "spacehub: could not migrate to spaces: $out" >&2
-  exit 1
+  echo "spacehub: \"$DB\" is from before the project tables; it is kept, unchanged, as \"$BEFORE\", and \"$DB\" starts empty"
+  publish
+  # Restart SpacetimeDB so the old database, loaded by the checks above, is
+  # not held in memory; nothing opens it again.
+  kill -TERM "$server" 2>/dev/null || true
+  wait "$server" 2>/dev/null || true
+  start_spacetime
 fi
 
 # The identity that owns the database is the hub's admin (it alone writes the
@@ -135,16 +158,6 @@ proxy=$!
 SPACEHUB_SERVER="ws://$INTERNAL" SPACEHUB_INTERNAL_HTTP="http://$INTERNAL" SPACEHUB_DB="$DB" node /opt/spacehub/cli/dist/web.mjs &
 web=$!
 echo "spacehub: serving database \"$DB\" on port $PORT"
-
-# Count the size of projects from before sizes were kept, one project per
-# call, in the background, so startup and health checks never wait for it.
-(
-  n=0
-  while [ "$n" -lt 100000 ] && spacetime --root-dir "$ROOT" call --server "http://$INTERNAL" "$DB" measure_next_project >/dev/null 2>&1; do
-    n=$((n + 1))
-  done
-  if [ "$n" -gt 0 ]; then echo "spacehub: measured $n projects from before sizes were kept"; fi
-) &
 
 while kill -0 "$server" 2>/dev/null && kill -0 "$proxy" 2>/dev/null && kill -0 "$web" 2>/dev/null; do
   sleep 2

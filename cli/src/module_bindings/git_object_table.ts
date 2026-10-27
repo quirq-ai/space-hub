@@ -13,7 +13,7 @@ import {
 export default __t.row({
   id: __t.u64().primaryKey(),
   key: __t.string(),
-  spaceId: __t.u64().name("space_id"),
+  projectId: __t.u64().name("project_id"),
   pos: __t.u64(),
   oid: __t.string(),
   kind: __t.string(),

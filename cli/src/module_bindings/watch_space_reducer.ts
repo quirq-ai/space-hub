@@ -13,5 +13,5 @@ import {
 export default {
   space: __t.string(),
   mode: __t.string(),
-  branch: __t.string(),
+  host: __t.string(),
 };

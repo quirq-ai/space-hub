@@ -24,7 +24,7 @@ const FETCH_WINDOW = 8 * 1024 * 1024;
 quietSdkLogs();
 
 const [, , remoteName, url] = process.argv;
-const { server: hubServer, space: fullName } = parseUrl(url ?? remoteName ?? '');
+const { server: hubServer, project: fullName } = parseUrl(url ?? remoteName ?? '');
 let verbosity = 1;
 const leases = new Map<string, string>();
 
@@ -32,7 +32,7 @@ let session: Promise<Conn> | null = null;
 let remoteRefs = new Map<string, string>();
 
 function parseUrl(raw: string) {
-  return parseHubUrl(raw) ?? fail(`expected a URL like quirq://hub.quirq.dev/owner/space, got "${raw}"`);
+  return parseHubUrl(raw) ?? fail(`expected a URL like quirq://hub.quirq.dev/space/project, got "${raw}"`);
 }
 
 function fail(message: string): never {
@@ -53,7 +53,7 @@ function conn(): Promise<Conn> {
   return session;
 }
 
-async function requireSpace(c: Conn) {
+async function requireProject(c: Conn) {
   const sp = await findProject(c, fullName);
   if (!sp) {
     fail(`project "${fullName}" does not exist (create it with: spacehub project create ${fullName})`);
@@ -63,7 +63,7 @@ async function requireSpace(c: Conn) {
 
 async function list(): Promise<string> {
   const c = await conn();
-  const sp = await requireSpace(c);
+  const sp = await requireProject(c);
   const refs = await listRefs(c, sp.id);
   remoteRefs = new Map(refs.map(r => [r.name, r.oid]));
   const lines = refs.map(r => `${r.oid} ${r.name}`);
@@ -74,38 +74,38 @@ async function list(): Promise<string> {
 
 // ---------------------------------------------------------------- fetch
 
-// Per-repository record of how far into the space's object log we have
+// Per-repository record of how far into the project's object log we have
 // already downloaded, so later fetches only transfer new objects.
 function stateFile() {
   const gitDir = process.env.GIT_DIR ?? '.git';
   return path.join(gitDir, 'spacehub', `${fullName.replace('/', '__')}.json`);
 }
 
-function readState(spaceId: bigint): bigint {
+function readState(projectId: bigint): bigint {
   try {
     const s = JSON.parse(fs.readFileSync(stateFile(), 'utf8'));
-    return s.spaceId === spaceId.toString() ? BigInt(s.pos) : 0n;
+    return s.projectId === projectId.toString() ? BigInt(s.pos) : 0n;
   } catch {
     return 0n;
   }
 }
 
-function writeState(spaceId: bigint, pos: bigint) {
+function writeState(projectId: bigint, pos: bigint) {
   fs.mkdirSync(path.dirname(stateFile()), { recursive: true });
-  fs.writeFileSync(stateFile(), JSON.stringify({ spaceId: spaceId.toString(), pos: pos.toString() }) + '\n');
+  fs.writeFileSync(stateFile(), JSON.stringify({ projectId: projectId.toString(), pos: pos.toString() }) + '\n');
 }
 
-async function chunkedBody(c: Conn, spaceId: bigint, oid: string, size: number, chunks: number): Promise<Uint8Array> {
+async function chunkedBody(c: Conn, projectId: bigint, oid: string, size: number, chunks: number): Promise<Uint8Array> {
   const body = new Uint8Array(size);
   const step = 8;
   for (let lo = 0; lo < chunks; lo += step) {
     const hi = Math.min(chunks, lo + step);
     await snapshot(
       c,
-      tables.objectChunk.where(r => r.spaceId.eq(spaceId).and(r.oid.eq(oid)).and(r.idx.gte(lo)).and(r.idx.lt(hi))),
+      tables.objectChunk.where(r => r.projectId.eq(projectId).and(r.oid.eq(oid)).and(r.idx.gte(lo)).and(r.idx.lt(hi))),
       () => {
         for (const ch of c.db.objectChunk.iter()) {
-          if (ch.spaceId === spaceId && ch.oid === oid && ch.idx >= lo && ch.idx < hi) {
+          if (ch.projectId === projectId && ch.oid === oid && ch.idx >= lo && ch.idx < hi) {
             body.set(ch.data, ch.idx * CHUNK_SIZE);
           }
         }
@@ -116,19 +116,19 @@ async function chunkedBody(c: Conn, spaceId: bigint, oid: string, size: number, 
 }
 
 // Download every object logged after `from` and store the ones we lack.
-async function download(c: Conn, spaceId: bigint, from: bigint, to: bigint): Promise<number> {
+async function download(c: Conn, projectId: bigint, from: bigint, to: bigint): Promise<number> {
   const pack = new PackWriter();
   for (let lo = from; lo < to; lo += BigInt(FETCH_WINDOW)) {
     const hi = lo + BigInt(FETCH_WINDOW);
     const rows = await snapshot(
       c,
-      tables.gitObject.where(r => r.spaceId.eq(spaceId).and(r.pos.gt(lo)).and(r.pos.lte(hi))),
-      () => [...c.db.gitObject.iter()].filter(r => r.spaceId === spaceId && r.pos > lo && r.pos <= hi)
+      tables.gitObject.where(r => r.projectId.eq(projectId).and(r.pos.gt(lo)).and(r.pos.lte(hi))),
+      () => [...c.db.gitObject.iter()].filter(r => r.projectId === projectId && r.pos > lo && r.pos <= hi)
     );
     const have = await presentObjects(rows.map(r => r.oid));
     for (const row of rows) {
       if (have.has(row.oid)) continue;
-      const data = row.chunks === 0 ? row.data : await chunkedBody(c, spaceId, row.oid, Number(row.size), row.chunks);
+      const data = row.chunks === 0 ? row.data : await chunkedBody(c, projectId, row.oid, Number(row.size), row.chunks);
       pack.add(row.kind, data);
     }
   }
@@ -152,14 +152,14 @@ async function fetch(batch: string[]) {
   const have = await presentObjects(wanted);
   if (wanted.every(oid => have.has(oid)) && (await complete(wanted))) return;
   const c = await conn();
-  const sp = await requireSpace(c);
+  const sp = await requireProject(c);
   const from = readState(sp.id);
   await download(c, sp.id, from, sp.objectPos);
   if (!(await complete(wanted))) {
-    if (from === 0n) fail(`space "${fullName}" is missing objects needed by its refs`);
-    progress('local copy is behind its fetch record, downloading the full space');
+    if (from === 0n) fail(`project "${fullName}" is missing objects needed by its refs`);
+    progress('local copy is behind its fetch record, downloading the full project');
     await download(c, sp.id, 0n, sp.objectPos);
-    if (!(await complete(wanted))) fail(`space "${fullName}" is missing objects needed by its refs`);
+    if (!(await complete(wanted))) fail(`project "${fullName}" is missing objects needed by its refs`);
   }
   writeState(sp.id, sp.objectPos);
 }
@@ -174,7 +174,7 @@ async function upload(c: Conn, oids: string[]) {
 
   const flush = async () => {
     if (batch.length === 0) return;
-    await c.reducers.putObjects({ space: fullName, objects: batch });
+    await c.reducers.putObjects({ project: fullName, objects: batch });
     sent += batch.length;
     sentBytes += batchBytes;
     batch = [];
@@ -186,10 +186,10 @@ async function upload(c: Conn, oids: string[]) {
       const chunks = Math.ceil(obj.data.length / CHUNK_SIZE);
       for (let idx = 0; idx < chunks; idx++) {
         const data = obj.data.subarray(idx * CHUNK_SIZE, (idx + 1) * CHUNK_SIZE);
-        await c.reducers.putChunk({ space: fullName, oid: obj.oid, idx, data });
+        await c.reducers.putChunk({ project: fullName, oid: obj.oid, idx, data });
       }
       await c.reducers.finishObject({
-        space: fullName,
+        project: fullName,
         oid: obj.oid,
         kind: obj.kind,
         size: BigInt(obj.data.length),
@@ -240,7 +240,7 @@ async function push(batch: string[]): Promise<string> {
     return specs.map(s => `error ${s.dst} ${why}`).join('\n') + '\n\n';
   }
 
-  // The first branch to land in an empty space becomes its default, so let
+  // The first branch to land in an empty project becomes its default, so let
   // the branch checked out here (or main/master) land first.
   if (remoteRefs.size === 0) {
     const head = (await git(['symbolic-ref', '-q', 'HEAD']).catch(() => '')).trim();
@@ -254,7 +254,7 @@ async function push(batch: string[]): Promise<string> {
     const lease = leases.get(s.dst);
     const oldOid = lease !== undefined ? lease : s.force ? '*' : remoteRefs.get(s.dst) ?? '';
     try {
-      await c.reducers.updateRef({ space: fullName, name: s.dst, oldOid, newOid: s.oid, force: s.force });
+      await c.reducers.updateRef({ project: fullName, name: s.dst, oldOid, newOid: s.oid, force: s.force });
       results.set(s.dst, `ok ${s.dst}`);
     } catch (err) {
       results.set(s.dst, `error ${s.dst} ${errorMessage(err).replace(/\n/g, ' ')}`);

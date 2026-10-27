@@ -10,7 +10,7 @@ import path from 'node:path';
 import readline from 'node:readline/promises';
 import { configFile, githubLogin, loadConfig, removeToken, saveSettings, saveToken } from './config';
 import os from 'node:os';
-import { connect, connectTo, errorMessage, findHubSpace, findProject, findUser, listRefs, projectsIn, quietSdkLogs, snapshot, spaceRoles, tables, type Conn } from './conn';
+import { connect, connectTo, errorMessage, findSpace, findProject, findUser, listRefs, projectsIn, quietSdkLogs, snapshot, spaceRoles, tables, type Conn } from './conn';
 import { AgentRun } from './agentrun';
 import { agentTemplate } from './agenttemplate';
 import { Autosync, AutosyncLoop, AutosyncStop, conflictHelp, UNFINISHED, unfinishedWork } from './autosync';
@@ -21,7 +21,7 @@ import { deviceSignIn } from './devicelogin';
 
 quietSdkLogs();
 
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 
 const HELP = `spacehub: git hosting on SpacetimeDB, laid out like GitHub
 
@@ -239,7 +239,7 @@ async function username(): Promise<string> {
 // ---------------------------------------------------------------- projects in git
 
 function parseProjectUrl(url: string): string | null {
-  return parseHubUrl(url)?.space ?? null;
+  return parseHubUrl(url)?.project ?? null;
 }
 
 // The hub remote of the repository in `cwd`: the one named `prefer`, else
@@ -267,7 +267,7 @@ async function projectRemote(prefer?: string, cwd?: string): Promise<{ remote: s
 async function resolveProject(arg: string | undefined): Promise<string> {
   if (arg) {
     const parsed = parseHubUrl(arg);
-    if (parsed) return parsed.space;
+    if (parsed) return parsed.project;
     const name = arg.replace(/\.git$/, '');
     if (name.includes('/')) {
       if (!/^[^/\s]+\/[^/\s]+$/.test(name)) die(`"${arg}" is not space/name`);
@@ -287,7 +287,7 @@ async function requireProject(fullName: string) {
 
 async function requireHubSpace(name: string) {
   const { conn } = await open();
-  return (await findHubSpace(conn, name.toLowerCase())) ?? die(`no space named "${name}"`);
+  return (await findSpace(conn, name.toLowerCase())) ?? die(`no space named "${name}"`);
 }
 
 // What a `space` command's argument names: a top-level space, or (older
@@ -296,7 +296,7 @@ async function requireHubSpace(name: string) {
 async function spaceOrProject(arg: string | undefined): Promise<{ space: string } | { project: string }> {
   if (!arg || arg.includes('/') || parseHubUrl(arg)) return { project: await resolveProject(arg) };
   const { conn } = await open();
-  if (await findHubSpace(conn, arg.toLowerCase())) return { space: arg.toLowerCase() };
+  if (await findSpace(conn, arg.toLowerCase())) return { space: arg.toLowerCase() };
   const mine = `${await username()}/${arg.replace(/\.git$/, '')}`;
   if (await findProject(conn, mine)) return { project: mine };
   die(`no space named "${arg}" (and no project ${mine})`);
@@ -307,20 +307,20 @@ async function followRefs(fullName: string, onChange: (refName: string, oid: str
   const { conn } = await open();
   const sp = await requireProject(fullName);
   conn.db.gitRef.onInsert((ctx, r) => {
-    if (r.spaceId === sp.id && ctx.event.tag !== 'SubscribeApplied') onChange(r.name, r.oid, '+');
+    if (r.projectId === sp.id && ctx.event.tag !== 'SubscribeApplied') onChange(r.name, r.oid, '+');
   });
   conn.db.gitRef.onUpdate((_ctx, _old, r) => {
-    if (r.spaceId === sp.id) onChange(r.name, r.oid, '~');
+    if (r.projectId === sp.id) onChange(r.name, r.oid, '~');
   });
   conn.db.gitRef.onDelete((ctx, r) => {
-    if (r.spaceId === sp.id && ctx.event.tag !== 'UnsubscribeApplied') onChange(r.name, '', '-');
+    if (r.projectId === sp.id && ctx.event.tag !== 'UnsubscribeApplied') onChange(r.name, '', '-');
   });
   await new Promise<void>((resolve, reject) =>
     conn
       .subscriptionBuilder()
       .onApplied(() => resolve())
       .onError(ctx => reject(new Error(`subscription failed: ${(ctx as { event?: unknown }).event}`)))
-      .subscribe(tables.gitRef.where(r => r.spaceId.eq(sp.id)))
+      .subscribe(tables.gitRef.where(r => r.projectId.eq(sp.id)))
   );
   return { conn, sp };
 }
@@ -348,17 +348,17 @@ function serialized(task: () => Promise<unknown>) {
   return tick;
 }
 
-// Tell the hub this connection follows `space`, then keep saying so: the
+// Tell the hub this connection follows `project`, then keep saying so: the
 // heartbeat lets the hub drop rows of connections that vanished without
 // closing. Agents only; presence never stops the command itself.
 const HEARTBEAT_MS = 60_000;
 
-async function announce(space: string, mode: 'watch' | 'sync' | 'autosync', branch = '') {
+async function announce(project: string, mode: 'watch' | 'sync' | 'autosync', branch = '') {
   const { conn, identity } = await open();
   if (!(await findUser(conn, identity))) return;
   let warned = false;
   const beat = () =>
-    conn.reducers.watchSpace({ space, mode, branch }).catch(err => {
+    conn.reducers.watchProject({ project, mode, branch }).catch(err => {
       if (!warned) note(`spacehub: could not show presence: ${errorMessage(err)}`);
       warned = true;
     });
@@ -367,12 +367,12 @@ async function announce(space: string, mode: 'watch' | 'sync' | 'autosync', bran
 }
 
 // The same, for a connection that follows every project of a space.
-async function announceHub(space: string, mode: 'sync' | 'autosync') {
+async function announceSpace(space: string, mode: 'sync' | 'autosync') {
   const { conn, identity } = await open();
   if (!(await findUser(conn, identity))) return;
   let warned = false;
   const beat = () =>
-    conn.reducers.watchHub({ space, mode, host: '' }).catch(err => {
+    conn.reducers.watchSpace({ space, mode, host: '' }).catch(err => {
       if (!warned) note(`spacehub: could not show presence: ${errorMessage(err)}`);
       warned = true;
     });
@@ -556,8 +556,8 @@ async function authDelete(args: string[]) {
   const { conn, server } = await open();
   const owned = async () => ({
     projects: await projectsIn(conn, name),
-    agents: await snapshot(conn, tables.hubSpace.where(s => s.kind.eq('agent')), () =>
-      [...conn.db.hubSpace.iter()].filter(s => s.kind === 'agent' && s.parent === name).map(s => s.name)
+    agents: await snapshot(conn, tables.space.where(s => s.kind.eq('agent')), () =>
+      [...conn.db.space.iter()].filter(s => s.kind === 'agent' && s.parent === name).map(s => s.name)
     ),
   });
   const refuseLastOwner = async () => {
@@ -580,12 +580,12 @@ async function authDelete(args: string[]) {
   await refuseLastOwner();
   const { projects, agents } = await owned();
   for (const agent of agents) {
-    for (const p of await projectsIn(conn, agent)) await conn.reducers.deleteSpace({ space: p.fullName });
+    for (const p of await projectsIn(conn, agent)) await conn.reducers.deleteProject({ project: p.fullName });
     await conn.reducers.deleteAgent({ name: agent });
     out(`Deleted the agent ${agent}`);
   }
   for (const p of projects) {
-    await conn.reducers.deleteSpace({ space: p.fullName });
+    await conn.reducers.deleteProject({ project: p.fullName });
     out(`Deleted ${p.fullName}`);
   }
   await conn.reducers.deleteBuilder({});
@@ -653,16 +653,16 @@ function findUserByIdentity(conn: Conn, identity: Parameters<typeof findUser>[1]
 }
 
 async function builderLine(conn: Conn, sp: { id: bigint; owner: string; ownerIdentity: Parameters<typeof findUser>[1] }) {
-  const row = await snapshot(conn, tables.projectBuilder.where(r => r.spaceId.eq(sp.id)), () =>
-    [...conn.db.projectBuilder.iter()].find(r => r.spaceId === sp.id)
+  const row = await snapshot(conn, tables.projectBuilder.where(r => r.projectId.eq(sp.id)), () =>
+    [...conn.db.projectBuilder.iter()].find(r => r.projectId === sp.id)
   );
   if (row?.url.startsWith('https://github.com/')) return `${row.name} (${row.url.replace('https://', '')})`;
-  const imp = await snapshot(conn, tables.projectImport.where(r => r.spaceId.eq(sp.id)), () =>
-    [...conn.db.projectImport.iter()].find(r => r.spaceId === sp.id)
+  const imp = await snapshot(conn, tables.projectImport.where(r => r.projectId.eq(sp.id)), () =>
+    [...conn.db.projectImport.iter()].find(r => r.projectId === sp.id)
   );
   const gh = imp ? /^https:\/\/github\.com\/([^/]+)\//.exec(imp.source) : null;
   if (gh) return `${gh[1]} (github.com/${gh[1]})`;
-  const space = await findHubSpace(conn, sp.owner);
+  const space = await findSpace(conn, sp.owner);
   const maker = !space || space.kind === 'personal' ? sp.owner : ((await findUserByIdentity(conn, sp.ownerIdentity)) ?? sp.owner);
   return `${maker} (builder)`;
 }
@@ -711,13 +711,13 @@ async function projectEdit(args: string[]) {
   const fullName = await resolveProject(args[0]);
   const { conn } = await open();
   if (description !== undefined || defaultBranch !== undefined) {
-    await conn.reducers.editSpace({ space: fullName, description, defaultBranch });
+    await conn.reducers.editProject({ project: fullName, description, defaultBranch });
   }
   if (builder !== undefined) {
     // A builder is a GitHub account; "" resets to the default.
     const login = builder.trim() ? githubLogin(builder) : '';
     if (login === null) die(`--builder takes a GitHub user or organization, like anthropics or https://github.com/anthropics`);
-    await conn.reducers.setBuilder({ space: fullName, handle: login, name: login, url: '' });
+    await conn.reducers.setProjectBuilder({ project: fullName, handle: login, name: login });
   }
   out(`Updated ${fullName}`);
 }
@@ -727,7 +727,7 @@ async function projectDelete(args: string[]) {
   const fullName = await resolveProject(args[0] ?? die('usage: spacehub project delete <project> --yes'));
   if (!yes) die(`this deletes ${fullName} and all of its history; re-run with --yes`);
   const { conn } = await open();
-  await conn.reducers.deleteSpace({ space: fullName });
+  await conn.reducers.deleteProject({ project: fullName });
   out(`Deleted ${fullName}`);
 }
 
@@ -787,7 +787,7 @@ async function autosync(found: { remote: string; project: string }, branch: stri
   const { conn, sp } = await followRefs(found.project, refName => {
     if (refName === ref) wake();
   });
-  const remoteOid = () => [...conn.db.gitRef.iter()].find(r => r.spaceId === sp.id && r.name === ref)?.oid ?? '';
+  const remoteOid = () => [...conn.db.gitRef.iter()].find(r => r.projectId === sp.id && r.name === ref)?.oid ?? '';
   await announce(found.project, 'autosync', branch);
   note(`Autosync ${found.project} ${branch}: committing every ${seconds}s, rebasing onto every push (ctrl-c to stop)`);
 
@@ -811,13 +811,13 @@ async function projectWatch(args: string[]) {
   });
   await announce(fullName, 'watch');
   out(`Watching ${fullName} (ctrl-c to stop)`);
-  for (const r of conn.db.gitRef.iter()) if (r.spaceId === sp.id) out(`          ${r.name} ${r.oid.slice(0, 12)}`);
+  for (const r of conn.db.gitRef.iter()) if (r.projectId === sp.id) out(`          ${r.name} ${r.oid.slice(0, 12)}`);
   await new Promise(() => {});
 }
 
-function memberRows(conn: Conn, spaceId: bigint) {
-  return snapshot(conn, tables.projectMember.where(r => r.spaceId.eq(spaceId)), () =>
-    [...conn.db.projectMember.iter()].filter(r => r.spaceId === spaceId).sort((a, b) => a.agent.localeCompare(b.agent))
+function memberRows(conn: Conn, projectId: bigint) {
+  return snapshot(conn, tables.projectMember.where(r => r.projectId.eq(projectId)), () =>
+    [...conn.db.projectMember.iter()].filter(r => r.projectId === projectId).sort((a, b) => a.agent.localeCompare(b.agent))
   );
 }
 
@@ -832,10 +832,10 @@ async function projectMember(args: string[]) {
     const fullName = await resolveProject(args.length === 2 ? args[0] : undefined);
     const { conn } = await open();
     if (sub === 'add') {
-      await conn.reducers.addMember({ space: fullName, agent });
+      await conn.reducers.addProjectMember({ project: fullName, agent });
       out(`${agent} is a collaborator on ${fullName} and can push to it`);
     } else {
-      await conn.reducers.removeMember({ space: fullName, agent });
+      await conn.reducers.removeProjectMember({ project: fullName, agent });
       out(`${agent} is no longer a collaborator on ${fullName}`);
     }
     return;
@@ -859,7 +859,7 @@ async function projectWho(args: string[]) {
   const now = Date.now() * 1000;
   const rows = await snapshot(conn, tables.presence, () =>
     [...conn.db.presence.iter()].filter(
-      r => (r.spaceId === sp.id || (r.spaceId === 0n && r.space === sp.owner)) && now - Number(r.seenAt.microsSinceUnixEpoch) <= 180_000_000
+      r => (r.projectId === sp.id || (r.projectId === 0n && r.space === sp.owner)) && now - Number(r.seenAt.microsSinceUnixEpoch) <= 180_000_000
     )
   );
   if (rows.length === 0) {
@@ -868,7 +868,7 @@ async function projectWho(args: string[]) {
   }
   rows.sort((a, b) => a.agent.localeCompare(b.agent) || Number(a.since.microsSinceUnixEpoch - b.since.microsSinceUnixEpoch));
   const width = Math.max(...rows.map(r => r.agent.length));
-  for (const r of rows) out(`${r.agent.padEnd(width)}  ${r.mode.padEnd(8)}  ${(r.spaceId === 0n ? `(all of ${r.space})` : r.branch || '-').padEnd(12)}  since ${when(r.since)}`.trimEnd());
+  for (const r of rows) out(`${r.agent.padEnd(width)}  ${r.mode.padEnd(8)}  ${(r.projectId === 0n ? `(all of ${r.space})` : r.branch || '-').padEnd(12)}  since ${when(r.since)}`.trimEnd());
 }
 
 // ---------------------------------------------------------------- spaces
@@ -904,7 +904,7 @@ async function spaceCreate(args: string[]) {
 async function spaceList(args: string[]) {
   const who = args[0]?.toLowerCase();
   const { conn } = await open();
-  const spaces = await snapshot(conn, tables.hubSpace, () => [...conn.db.hubSpace.iter()]);
+  const spaces = await snapshot(conn, tables.space, () => [...conn.db.space.iter()]);
   const counts = await snapshot(conn, tables.project, () => {
     const n = new Map<string, number>();
     for (const p of conn.db.project.iter()) n.set(p.owner, (n.get(p.owner) ?? 0) + 1);
@@ -959,7 +959,7 @@ async function spaceEdit(args: string[]) {
   if ('project' in target) return projectEdit(args);
   const description = opt(args, '--description', '-d') ?? die('nothing to change; pass --description');
   const { conn } = await open();
-  await conn.reducers.editHubSpace({ space: target.space, description });
+  await conn.reducers.editSpace({ space: target.space, description });
   out(`Updated ${target.space}`);
 }
 
@@ -1082,7 +1082,7 @@ async function spaceSync(args: string[]) {
     log: line => note(`${clock()}  ${line}`),
   });
   if (watch) {
-    await announceHub(space, auto ? 'autosync' : 'sync');
+    await announceSpace(space, auto ? 'autosync' : 'sync');
     note(`${auto ? 'Autosync' : 'Watching'} every project of ${space} in ${found.dir} (ctrl-c to stop)`);
     process.once('SIGINT', () => void sync.stop());
     process.once('SIGTERM', () => void sync.stop());
@@ -1101,7 +1101,7 @@ async function spaceWho(args: string[]) {
   const now = Date.now() * 1000;
   const rows = await snapshot(conn, tables.presence, () =>
     [...conn.db.presence.iter()].filter(
-      r => (r.spaceId === 0n ? r.space === target.space : projects.has(r.spaceId)) && now - Number(r.seenAt.microsSinceUnixEpoch) <= 180_000_000
+      r => (r.projectId === 0n ? r.space === target.space : projects.has(r.projectId)) && now - Number(r.seenAt.microsSinceUnixEpoch) <= 180_000_000
     )
   );
   if (rows.length === 0) {
@@ -1110,7 +1110,7 @@ async function spaceWho(args: string[]) {
   }
   const width = Math.max(...rows.map(r => r.agent.length));
   for (const r of rows.sort((a, b) => a.agent.localeCompare(b.agent))) {
-    out(`${r.agent.padEnd(width)}  ${r.mode.padEnd(8)}  ${projects.get(r.spaceId)}  ${r.branch || '-'}  since ${when(r.since)}`);
+    out(`${r.agent.padEnd(width)}  ${r.mode.padEnd(8)}  ${projects.get(r.projectId)}  ${r.branch || '-'}  since ${when(r.since)}`);
   }
 }
 
@@ -1166,7 +1166,7 @@ async function agentCreate(args: string[]) {
 }
 
 async function agentRows(conn: Conn) {
-  const agents = await snapshot(conn, tables.hubSpace.where(s => s.kind.eq('agent')), () => [...conn.db.hubSpace.iter()].filter(s => s.kind === 'agent'));
+  const agents = await snapshot(conn, tables.space.where(s => s.kind.eq('agent')), () => [...conn.db.space.iter()].filter(s => s.kind === 'agent'));
   const roles = await snapshot(conn, tables.spaceRole, () => [...conn.db.spaceRole.iter()]);
   const now = Date.now() * 1000;
   const here = await snapshot(conn, tables.presence, () => [...conn.db.presence.iter()].filter(p => p.mode === 'agent' && now - Number(p.seenAt.microsSinceUnixEpoch) <= 180_000_000));
@@ -1235,7 +1235,7 @@ async function agentDelete(args: string[]) {
   await requireAgent(name);
   if (!yes) die(`this deletes the agent ${name} and its own projects; re-run with --yes`);
   const { conn } = await open();
-  for (const p of await projectsIn(conn, name)) await conn.reducers.deleteSpace({ space: p.fullName });
+  for (const p of await projectsIn(conn, name)) await conn.reducers.deleteProject({ project: p.fullName });
   await conn.reducers.deleteAgent({ name });
   out(`Deleted ${name}`);
 }

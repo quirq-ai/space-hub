@@ -87,8 +87,8 @@ export function findProject(conn: Conn, fullName: string) {
 }
 
 // A top-level space: a builder's personal space, an org or an agent.
-export function findHubSpace(conn: Conn, name: string) {
-  return snapshot(conn, tables.hubSpace.where(s => s.name.eq(name)), () => [...conn.db.hubSpace.iter()].find(s => s.name === name));
+export function findSpace(conn: Conn, name: string) {
+  return snapshot(conn, tables.space.where(s => s.name.eq(name)), () => [...conn.db.space.iter()].find(s => s.name === name));
 }
 
 export function spaceRoles(conn: Conn, space: string) {
@@ -103,9 +103,9 @@ export function projectsIn(conn: Conn, space: string) {
   );
 }
 
-export function listRefs(conn: Conn, spaceId: bigint) {
-  return snapshot(conn, tables.gitRef.where(r => r.spaceId.eq(spaceId)), () =>
-    [...conn.db.gitRef.iter()].filter(r => r.spaceId === spaceId).sort((a, b) => a.name.localeCompare(b.name))
+export function listRefs(conn: Conn, projectId: bigint) {
+  return snapshot(conn, tables.gitRef.where(r => r.projectId.eq(projectId)), () =>
+    [...conn.db.gitRef.iter()].filter(r => r.projectId === projectId).sort((a, b) => a.name.localeCompare(b.name))
   );
 }
 

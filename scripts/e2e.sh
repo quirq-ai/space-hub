@@ -79,13 +79,9 @@ else
   done
   spacetime publish --server "http://127.0.0.1:$PORT" "$SPACEHUB_DB" --module-path "$ROOT/module" --yes >"$WORK/publish.log" 2>&1 \
     || { cat "$WORK/publish.log" >&2; fail "publish module"; }
-  spacetime call --server "http://127.0.0.1:$PORT" "$SPACEHUB_DB" backfill_activity >/dev/null 2>&1 || fail "backfill activity"
-  spacetime call --server "http://127.0.0.1:$PORT" "$SPACEHUB_DB" migrate_spaces >/dev/null 2>&1 || fail "migrate spaces"
   # This CLI's identity published the module, so it is the hub's admin (as
   # in the server image), and the web service syncs GitHub links with its token.
   spacetime call --server "http://127.0.0.1:$PORT" "$SPACEHUB_DB" claim_admin >/dev/null 2>&1 || fail "claim admin"
-  expect_fail "a new hub has no projects to measure" "every project is measured" \
-    spacetime call --server "http://127.0.0.1:$PORT" "$SPACEHUB_DB" measure_next_project
   ADMIN_TOKEN="$(spacetime login show --token 2>/dev/null | grep -oE 'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+' | head -n 1)"
   ok "module published"
 fi
@@ -776,14 +772,14 @@ check "delete project" as alice spacehub project delete "$NOTES" --yes
 page_has "deletions stay in the hub feed" "" "deleted <b>$NOTES</b>"
 check "delete second project" as alice spacehub project delete proj --yes
 check "a collaborator again, to delete with the project" as alice spacehub project member add pad "$BOB"
-member_rows() { # member_rows: the space_member rows naming bob (local server only)
-  spacetime sql --server "http://127.0.0.1:$PORT" "$SPACEHUB_DB" "SELECT agent FROM space_member WHERE agent = '$BOB'"
+member_rows() { # member_rows: the project_member rows naming bob (local server only)
+  spacetime sql --server "http://127.0.0.1:$PORT" "$SPACEHUB_DB" "SELECT agent FROM project_member WHERE agent = '$BOB'"
 }
 has_member_rows() { local rows; rows="$(member_rows 2>/dev/null)" && grep -q "$BOB" <<<"$rows"; }
 [[ -n "${SPACEHUB_E2E_SERVER:-}" ]] || check "collaborators are rows" has_member_rows
 check "delete a project that has collaborators" as alice spacehub project delete pad --yes
 if [[ -z "${SPACEHUB_E2E_SERVER:-}" ]]; then
-  rows="$(member_rows 2>&1)" || fail "query space_member"
+  rows="$(member_rows 2>&1)" || fail "query project_member"
   grep -q "$BOB" <<<"$rows" && fail "its collaborators went with it" || ok "its collaborators went with it"
 fi
 expect_fail "deleted project is gone" "does not exist" as alice git ls-remote "$HUB/$NOTES"

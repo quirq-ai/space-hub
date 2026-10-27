@@ -58,7 +58,7 @@ const SYNC = ADMIN_TOKEN
   : null;
 
 const USERNAME = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
-const SPACE_NAME = /^[A-Za-z0-9._-]{1,100}$/;
+const PROJECT_NAME = /^[A-Za-z0-9._-]{1,100}$/;
 
 // ---------------------------------------------------------------- http bits
 
@@ -176,7 +176,7 @@ function parseGithub(input: string) {
 
 interface Job {
   token: string;
-  space: string;
+  project: string;
   source: string;
   sync: boolean;
 }
@@ -189,19 +189,19 @@ let running = 0;
 async function runJob(job: Job) {
   await withConn(job.token, async conn => {
     const report = (status: string, message: string) =>
-      conn.reducers.updateImport({ space: job.space, status, message }).catch(() => undefined);
+      conn.reducers.updateImport({ project: job.project, status, message }).catch(() => undefined);
     try {
       await report('running', 'copying from GitHub');
-      const project = (await findProject(conn, job.space)) ?? (() => { throw new Error(`no project ${job.space}`); })();
+      const project = (await findProject(conn, job.project)) ?? (() => { throw new Error(`no project ${job.project}`); })();
       const result = await mirrorProject(conn, project, `${job.source}.git`, { SPACEHUB_TOKEN: job.token, SPACEHUB_SERVER: SERVER, SPACEHUB_DB: DB });
-      if (result.head && !job.sync) await conn.reducers.editSpace({ space: job.space, description: undefined, defaultBranch: result.head }).catch(() => undefined);
+      if (result.head && !job.sync) await conn.reducers.editProject({ project: job.project, description: undefined, defaultBranch: result.head }).catch(() => undefined);
       if (result.failed && result.failed === result.refs) throw new Error(`no refs could be pushed`);
       const note = `${result.diverged ? `; ${result.diverged} refs diverged (kept here)` : ''}${result.failed ? `; ${result.failed} refs not pushed` : ''}`;
       await report('done', `${job.sync ? 'synced' : 'imported'}${note}`);
     } catch (err) {
       await report('failed', errorMessage(err).slice(-500));
     }
-  }).catch(err => process.stderr.write(`spacehub-web: import of ${job.space} could not report: ${errorMessage(err)}\n`));
+  }).catch(err => process.stderr.write(`spacehub-web: import of ${job.project} could not report: ${errorMessage(err)}\n`));
 }
 
 function pump() {
@@ -380,11 +380,11 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
       const source = values.github ? parseGithub(values.github) : null;
       if (values.github && !source) throw new Fail('Use a GitHub repository URL like https://github.com/owner/repo.');
       const name = (values.name || source?.repo || '').replace(/\.git$/, '');
-      if (!SPACE_NAME.test(name)) throw new Fail('Pick a project name: letters, digits, ".", "_" and "-".');
+      if (!PROJECT_NAME.test(name)) throw new Fail('Pick a project name: letters, digits, ".", "_" and "-".');
       const owner = values.space || session.username;
       if (!spaces.includes(owner)) throw new Fail(`You cannot create projects in "${owner}".`);
       let description = values.description;
-      let builder: { handle: string; name: string; url: string } | null = null;
+      let builder: { handle: string; name: string } | null = null;
       if (values.builder) {
         const login = githubLogin(values.builder);
         if (!login) throw new Fail('Built by must be a GitHub user or organization, like anthropics or https://github.com/anthropics.');
@@ -397,14 +397,14 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
         description ||= info?.description ?? '';
         builder ??= await githubBuilder(info?.ownerLogin ?? source.owner);
       }
-      const space = `${owner}/${name}`;
+      const project = `${owner}/${name}`;
       await withConn(session.token, async conn => {
         await conn.reducers.createProject({ space: owner, name, description });
-        if (builder) await conn.reducers.setBuilder({ space, ...builder });
-        if (source) await conn.reducers.startImport({ space, source: source.url });
+        if (builder) await conn.reducers.setProjectBuilder({ project, ...builder });
+        if (source) await conn.reducers.startImport({ project, source: source.url });
       });
       if (source) {
-        queue.push({ token: session.token, space, source: source.url, sync: false });
+        queue.push({ token: session.token, project, source: source.url, sync: false });
         pump();
       }
       return redirect(res, `/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`);
@@ -417,34 +417,34 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   if (sync && req.method === 'POST') {
     const session = await sessionOf(req);
     if (!session) return redirect(res, `/-/login?next=${encodeURIComponent(route)}`);
-    const space = `${decodeURIComponent(sync[1])}/${decodeURIComponent(sync[2])}`;
+    const project = `${decodeURIComponent(sync[1])}/${decodeURIComponent(sync[2])}`;
     const back = `/${sync[1]}/${sync[2]}`;
     try {
       const source = await withConn(session.token, async conn => {
-        const sp = await findProject(conn, space);
-        if (!sp) throw new Fail(`No project ${space}.`);
-        const row = await snapshot(conn, tables.projectImport.where(r => r.spaceId.eq(sp.id)), () =>
-          [...conn.db.projectImport.iter()].find(r => r.spaceId === sp.id)
+        const sp = await findProject(conn, project);
+        if (!sp) throw new Fail(`No project ${project}.`);
+        const row = await snapshot(conn, tables.projectImport.where(r => r.projectId.eq(sp.id)), () =>
+          [...conn.db.projectImport.iter()].find(r => r.projectId === sp.id)
         );
-        if (!row) throw new Fail(`${space} was not imported from GitHub.`);
-        await conn.reducers.startImport({ space, source: row.source });
-        // Spaces imported before builders existed get theirs on first sync.
-        const credited = await snapshot(conn, tables.projectBuilder.where(r => r.spaceId.eq(sp.id)), () =>
-          [...conn.db.projectBuilder.iter()].some(r => r.spaceId === sp.id)
+        if (!row) throw new Fail(`${project} was not imported from GitHub.`);
+        await conn.reducers.startImport({ project, source: row.source });
+        // Projects imported before builders existed get theirs on first sync.
+        const credited = await snapshot(conn, tables.projectBuilder.where(r => r.projectId.eq(sp.id)), () =>
+          [...conn.db.projectBuilder.iter()].some(r => r.projectId === sp.id)
         );
         const owner = /^https:\/\/github\.com\/([^/]+)\//.exec(row.source)?.[1];
         if (!credited && owner) {
           await githubBuilder(owner)
-            .then(b => conn.reducers.setBuilder({ space, ...b }))
+            .then(b => conn.reducers.setProjectBuilder({ project, ...b }))
             .catch(() => undefined);
         }
         return row.source;
       });
-      queue.push({ token: session.token, space, source, sync: true });
+      queue.push({ token: session.token, project, source, sync: true });
       pump();
       return redirect(res, back);
     } catch (err) {
-      return send(res, 400, page('Sync failed · spacehub', session.username, `<h1><b>Sync failed</b></h1><div class="banner err">${esc(errorMessage(err))}</div><p><a href="${esc(back)}">Back to ${esc(space)}</a></p>`));
+      return send(res, 400, page('Sync failed · spacehub', session.username, `<h1><b>Sync failed</b></h1><div class="banner err">${esc(errorMessage(err))}</div><p><a href="${esc(back)}">Back to ${esc(project)}</a></p>`));
     }
   }
 

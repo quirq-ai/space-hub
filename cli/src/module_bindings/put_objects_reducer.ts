@@ -15,7 +15,7 @@ import {
 } from "./types";
 
 export default {
-  space: __t.string(),
+  project: __t.string(),
   get objects() {
     return __t.array(ObjectIn);
   },

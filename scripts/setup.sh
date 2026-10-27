@@ -12,12 +12,8 @@ DB="${SPACEHUB_DB:-spacehub}"
 (cd "$ROOT/module" && npm install --no-audit --no-fund --silent)
 (cd "$ROOT/cli" && npm install --no-audit --no-fund --silent && npm run build --silent)
 spacetime publish --server "$SERVER" "$DB" --module-path "$ROOT/module" --yes
-spacetime call --server "$SERVER" "$DB" backfill_activity >/dev/null
-spacetime call --server "$SERVER" "$DB" migrate_spaces >/dev/null
-# The identity that published is the hub's admin (as in the server image);
-# as admin it counts the size of any project from before sizes were kept.
+# The identity that published is the hub's admin (as in the server image).
 spacetime call --server "$SERVER" "$DB" claim_admin >/dev/null
-while spacetime call --server "$SERVER" "$DB" measure_next_project >/dev/null 2>&1; do :; done
 
 cat <<MSG
 

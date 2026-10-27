@@ -13,8 +13,8 @@ import {
 export const Activity = __t.object("Activity", {
   id: __t.u64(),
   at: __t.timestamp(),
-  spaceId: __t.u64(),
-  space: __t.string(),
+  projectId: __t.u64(),
+  path: __t.string(),
   agent: __t.string(),
   kind: __t.string(),
   subject: __t.string(),
@@ -41,7 +41,7 @@ export type AgentSecret = __Infer<typeof AgentSecret>;
 export const GitObject = __t.object("GitObject", {
   id: __t.u64(),
   key: __t.string(),
-  spaceId: __t.u64(),
+  projectId: __t.u64(),
   pos: __t.u64(),
   oid: __t.string(),
   kind: __t.string(),
@@ -54,7 +54,7 @@ export type GitObject = __Infer<typeof GitObject>;
 export const GitRef = __t.object("GitRef", {
   id: __t.u64(),
   key: __t.string(),
-  spaceId: __t.u64(),
+  projectId: __t.u64(),
   name: __t.string(),
   oid: __t.string(),
   updatedAt: __t.timestamp(),
@@ -72,17 +72,6 @@ export const GithubAccount = __t.object("GithubAccount", {
 });
 export type GithubAccount = __Infer<typeof GithubAccount>;
 
-export const HubSpace = __t.object("HubSpace", {
-  name: __t.string(),
-  kind: __t.string(),
-  displayName: __t.string(),
-  description: __t.string(),
-  parent: __t.string(),
-  createdBy: __t.string(),
-  createdAt: __t.timestamp(),
-});
-export type HubSpace = __Infer<typeof HubSpace>;
-
 export const HubState = __t.object("HubState", {
   key: __t.string(),
   value: __t.string(),
@@ -92,7 +81,7 @@ export type HubState = __Infer<typeof HubState>;
 export const ObjectChunk = __t.object("ObjectChunk", {
   id: __t.u64(),
   key: __t.string(),
-  spaceId: __t.u64(),
+  projectId: __t.u64(),
   oid: __t.string(),
   idx: __t.u32(),
   data: __t.byteArray(),
@@ -108,7 +97,7 @@ export type ObjectIn = __Infer<typeof ObjectIn>;
 
 export const Presence = __t.object("Presence", {
   connectionId: __t.connectionId(),
-  spaceId: __t.u64(),
+  projectId: __t.u64(),
   agent: __t.string(),
   mode: __t.string(),
   branch: __t.string(),
@@ -118,6 +107,49 @@ export const Presence = __t.object("Presence", {
   host: __t.string(),
 });
 export type Presence = __Infer<typeof Presence>;
+
+export const Project = __t.object("Project", {
+  id: __t.u64(),
+  fullName: __t.string(),
+  owner: __t.string(),
+  ownerIdentity: __t.identity(),
+  name: __t.string(),
+  description: __t.string(),
+  defaultBranch: __t.string(),
+  objectCount: __t.u64(),
+  objectPos: __t.u64(),
+  createdAt: __t.timestamp(),
+  pushedAt: __t.timestamp(),
+});
+export type Project = __Infer<typeof Project>;
+
+export const ProjectBuilder = __t.object("ProjectBuilder", {
+  projectId: __t.u64(),
+  handle: __t.string(),
+  name: __t.string(),
+  url: __t.string(),
+});
+export type ProjectBuilder = __Infer<typeof ProjectBuilder>;
+
+export const ProjectImport = __t.object("ProjectImport", {
+  projectId: __t.u64(),
+  source: __t.string(),
+  status: __t.string(),
+  message: __t.string(),
+  startedAt: __t.timestamp(),
+  updatedAt: __t.timestamp(),
+});
+export type ProjectImport = __Infer<typeof ProjectImport>;
+
+export const ProjectMember = __t.object("ProjectMember", {
+  id: __t.u64(),
+  key: __t.string(),
+  projectId: __t.u64(),
+  agent: __t.string(),
+  addedBy: __t.string(),
+  addedAt: __t.timestamp(),
+});
+export type ProjectMember = __Infer<typeof ProjectMember>;
 
 export const ProjectSize = __t.object("ProjectSize", {
   projectId: __t.u64(),
@@ -143,37 +175,15 @@ export const RefSyncIn = __t.object("RefSyncIn", {
 export type RefSyncIn = __Infer<typeof RefSyncIn>;
 
 export const Space = __t.object("Space", {
-  id: __t.u64(),
-  fullName: __t.string(),
-  owner: __t.string(),
-  ownerIdentity: __t.identity(),
   name: __t.string(),
+  kind: __t.string(),
+  displayName: __t.string(),
   description: __t.string(),
-  defaultBranch: __t.string(),
-  objectCount: __t.u64(),
-  objectPos: __t.u64(),
+  parent: __t.string(),
+  createdBy: __t.string(),
   createdAt: __t.timestamp(),
-  pushedAt: __t.timestamp(),
 });
 export type Space = __Infer<typeof Space>;
-
-export const SpaceBuilder = __t.object("SpaceBuilder", {
-  spaceId: __t.u64(),
-  handle: __t.string(),
-  name: __t.string(),
-  url: __t.string(),
-});
-export type SpaceBuilder = __Infer<typeof SpaceBuilder>;
-
-export const SpaceImport = __t.object("SpaceImport", {
-  spaceId: __t.u64(),
-  source: __t.string(),
-  status: __t.string(),
-  message: __t.string(),
-  startedAt: __t.timestamp(),
-  updatedAt: __t.timestamp(),
-});
-export type SpaceImport = __Infer<typeof SpaceImport>;
 
 export const SpaceLink = __t.object("SpaceLink", {
   space: __t.string(),
@@ -186,16 +196,6 @@ export const SpaceLink = __t.object("SpaceLink", {
   projects: __t.u32(),
 });
 export type SpaceLink = __Infer<typeof SpaceLink>;
-
-export const SpaceMember = __t.object("SpaceMember", {
-  id: __t.u64(),
-  key: __t.string(),
-  spaceId: __t.u64(),
-  agent: __t.string(),
-  addedBy: __t.string(),
-  addedAt: __t.timestamp(),
-});
-export type SpaceMember = __Infer<typeof SpaceMember>;
 
 export const SpaceRole = __t.object("SpaceRole", {
   id: __t.u64(),
