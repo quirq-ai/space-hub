@@ -108,6 +108,18 @@ if [ "$ACCOUNTS" = github ] && [ -z "$SPACEHUB_ADMIN_TOKEN" ]; then
   echo "spacehub: GitHub sign-up needs the admin's token, and it could not be read" >&2
   exit 1
 fi
+# The hub's GitHub OAuth App (device flow sign-in): its client id and secret, both or neither.
+if [ -z "${SPACEHUB_GITHUB_CLIENT_ID:-}" ] && [ -n "${SPACEHUB_GITHUB_CLIENT_SECRET:-}" ]; then
+  github_app=half
+elif [ -n "${SPACEHUB_GITHUB_CLIENT_ID:-}" ] && [ -z "${SPACEHUB_GITHUB_CLIENT_SECRET:-}" ]; then
+  github_app=half
+else
+  github_app=ok
+fi
+if [ "$github_app" = half ]; then
+  echo "spacehub: set both SPACEHUB_GITHUB_CLIENT_ID and SPACEHUB_GITHUB_CLIENT_SECRET (the OAuth App's), or neither" >&2
+  exit 1
+fi
 if [ -n "${SPACEHUB_XO_KEY:-}" ] && [ -z "$SPACEHUB_ADMIN_TOKEN" ]; then
   echo "spacehub: SPACEHUB_XO_KEY is set but the admin's token could not be read" >&2
   exit 1

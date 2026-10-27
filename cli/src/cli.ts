@@ -17,6 +17,7 @@ import { Autosync, AutosyncLoop, AutosyncStop, conflictHelp, UNFINISHED, unfinis
 import { git } from './git';
 import { cloneProject, findManifest, SpaceSync, writeManifest } from './spacesync';
 import { DEFAULT_HUB_HOST, githubTokenTarget, hubUrl, parseHubUrl, REMOTE } from './url';
+import { deviceSignIn } from './devicelogin';
 
 quietSdkLogs();
 
@@ -442,8 +443,8 @@ function webUrl(server: string) {
   return (process.env.SPACEHUB_WEB ?? server.replace(/^ws/, 'http')).replace(/\/+$/, '');
 }
 
-// Sign up or log in with GitHub: the hub asks GitHub whose token this is and
-// answers with that account's builder and token, making the builder the
+// Sign up or log in with GitHub: the hub learns whose GitHub account it is
+// (from its own device flow, or by asking GitHub about gh's token) and answers with that account's builder and token, making the builder the
 // first time. The saved token is kept when it already is a builder.
 async function githubSignIn() {
   const cfg = loadConfig();
@@ -455,7 +456,8 @@ async function githubSignIn() {
     session?.conn.disconnect();
     session = null;
   }
-  const url = `${webUrl(cfg.server)}/-/api/auth/github`;
+  const web = webUrl(cfg.server);
+  const url = `${web}/-/api/auth/github`;
   let target: 'send' | 'ask';
   try {
     target = githubTokenTarget(url);
@@ -463,27 +465,49 @@ async function githubSignIn() {
     die((err as Error).message);
   }
   const host = new URL(url).host;
-  if (target === 'ask') {
-    // gh's token can usually read and write your repositories: only a hub you
-    // trust gets it, and only after you say so.
-    if (!process.stdin.isTTY) die(`${host} is not ${DEFAULT_HUB_HOST}: run spacehub auth login at a terminal to confirm sending it your GitHub token`);
-    const answer = await ask(`${host} is not ${DEFAULT_HUB_HOST}. Signing in sends it your GitHub token, which can act as you on GitHub. Send it? [y/N] `);
-    if (!/^y(es)?$/i.test(answer)) die('nothing was sent');
-  }
-  const github = localGithubToken();
-  process.stderr.write(`Checking your GitHub account with ${host} (the GitHub token is used once, not kept)\n`);
-  let res: Response;
+  type Answer = { builder?: string; token?: string; created?: boolean; error?: string };
+  let body: Answer | null;
   try {
-    res = await fetch(url, { method: 'POST', headers: { authorization: `Bearer ${github}` }, signal: AbortSignal.timeout(60_000) });
-  } catch {
-    die(`could not reach ${url}`);
+    // A code for this hub's GitHub app signs in to whichever hub holds it, and a
+    // hostile hub can hand on another hub's code. So, as for gh's token, a hub
+    // that is not the default asks first, and says what to check on GitHub.
+    const confirm = async () => {
+      if (target === 'send') return;
+      if (!process.stdin.isTTY) throw new Error(`${host} is not ${DEFAULT_HUB_HOST}: run spacehub auth login at a terminal to confirm signing in to it`);
+      const answer = await ask(
+        `${host} is not ${DEFAULT_HUB_HOST}. On GitHub, approve only an app you know belongs to ${host}: approving another hub's app (such as ${DEFAULT_HUB_HOST}'s) would give ${host} your account there. Continue? [y/N] `
+      );
+      if (!/^y(es)?$/i.test(answer)) throw new Error('nothing was done');
+    };
+    body = (await deviceSignIn(web, host, note, confirm)) as Answer | null;
+  } catch (err) {
+    die((err as Error).message);
   }
-  const body = (await res.json().catch(() => null)) as { builder?: string; token?: string; created?: boolean; error?: string } | null;
-  if (!body || res.status === 404 || res.status === 405) {
-    die(`${cfg.server} has no GitHub sign-in (HTTP ${res.status}); on a hub with open sign-up, use --builder <name>`);
+  if (!body) {
+    if (target === 'ask') {
+      // gh's token can usually read and write your repositories: only a hub you
+      // trust gets it, and only after you say so.
+      if (!process.stdin.isTTY) die(`${host} is not ${DEFAULT_HUB_HOST}: run spacehub auth login at a terminal to confirm sending it your GitHub token`);
+      const answer = await ask(`${host} is not ${DEFAULT_HUB_HOST}. Signing in sends it your GitHub token, which can act as you on GitHub. Send it? [y/N] `);
+      if (!/^y(es)?$/i.test(answer)) die('nothing was sent');
+    }
+    const github = localGithubToken();
+    process.stderr.write(`Checking your GitHub account with ${host} (the GitHub token is used once, not kept)\n`);
+    let res: Response;
+    try {
+      res = await fetch(url, { method: 'POST', headers: { authorization: `Bearer ${github}` }, redirect: 'error', signal: AbortSignal.timeout(60_000) });
+    } catch {
+      die(`could not reach ${url}`);
+    }
+    body = (await res.json().catch(() => null)) as Answer | null;
+    if (!body || res.status === 404 || res.status === 405) {
+      die(`${cfg.server} has no GitHub sign-in (HTTP ${res.status}); on a hub with open sign-up, use --builder <name>`);
+    }
+    if (!res.ok) die(body.error ?? `GitHub sign-in failed (HTTP ${res.status})`);
   }
-  if (!res.ok || !body.token) die(body.error ?? `GitHub sign-in failed (HTTP ${res.status})`);
-  saveToken(cfg.server, body.token);
+  const token = body.token;
+  if (typeof token !== 'string' || !token) die(body.error ?? 'GitHub sign-in failed: the hub sent no token');
+  saveToken(cfg.server, token);
   const { conn, identity, server: at, database: db } = await open();
   const user = await findUser(conn, identity);
   if (!user) die(`the hub signed you in as ${body.builder}, but database ${db} on ${at} has no such builder`);

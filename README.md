@@ -29,7 +29,7 @@ Its main job is to keep the git trees of different machines, sandboxes,
 people and agents in sync.
 
 ```sh
-gh auth login                          # once: the GitHub CLI
+gh auth login                          # once, on a hub without an OAuth App: the GitHub CLI
 spacehub auth login                    # sign up with that GitHub account (wss://hub.quirq.dev; another with --server)
 spacehub project create notes --source . --push
 spacehub project clone <you>/notes
@@ -41,26 +41,56 @@ spacehub project sync --watch --auto     # edit together: commit, rebase and pus
 ## Sign up with GitHub
 
 On a hub whose builders sign up with GitHub (the server image's default), a
-builder is a GitHub account. `spacehub auth login` uses the GitHub account
-logged in on that machine:
+builder is a GitHub account. `spacehub auth login` signs in one of two ways,
+depending on the hub.
 
-1. It reads that account's token with `gh auth token` (or from `GH_TOKEN` or
-   `GITHUB_TOKEN`), and sends it once to the hub's web service
-   (`POST /-/api/auth/github`). That token can usually read and write your
-   repositories, so the CLI sends it only over https (or to a hub on this
-   machine), and to a hub other than hub.quirq.dev only after you answer yes
-   at a terminal. The web service takes at most 30 sign-ins a minute.
-2. The web service asks GitHub whose token it is (`GET /user`). Only a user
-   account is accepted; the GitHub token is not kept or logged.
-3. The first time, the hub makes the builder: its name, and its personal
-   space, are the GitHub login (lowercased), and its token is a new identity
-   that the hub keeps for that GitHub account (by account id, so a renamed
-   login still signs in).
-4. The CLI saves the token. Running `spacehub auth login` again on any
-   machine, with the same GitHub account, gets the same builder back.
+**With the hub's OAuth App** (`SPACEHUB_GITHUB_CLIENT_ID` and
+`SPACEHUB_GITHUB_CLIENT_SECRET` set on the server):
+
+1. The CLI asks the hub to start a sign-in (`POST /-/api/auth/github/device`).
+   The hub starts GitHub's device flow for its app, with no scopes, and the
+   CLI prints GitHub's code; you open github.com/login/device, type it and
+   say yes.
+2. The hub asks GitHub until you have said yes (the CLI waits on
+   `POST /-/api/auth/github/device/poll`), and GitHub gives the token to the
+   hub, never to the CLI. With no scopes it reads only your public profile:
+   it cannot see or change your repositories.
+3. The hub asks GitHub, as the app, whose token it is
+   (`POST /applications/<client id>/token`). Only a user account is
+   accepted; the token is not kept or logged. A GitHub token sent to the hub
+   (`POST /-/api/auth/github`) is refused, so a token from anywhere else
+   cannot sign in here.
+
+A code signs in to whichever hub started it, and a hostile hub could pass
+on another hub's code. So for a hub other than hub.quirq.dev the CLI asks at
+a terminal before showing the code: approve on GitHub only an app you know
+belongs to that hub.
+
+**Without one**, the CLI uses the GitHub account logged in on that machine:
+it reads that account's token with `gh auth token` (or from `GH_TOKEN` or
+`GITHUB_TOKEN`) and sends it once to the hub, which asks GitHub whose it is
+(`GET /user`). That token can usually read and write your repositories, so the
+CLI sends it only over https (or to a hub on this machine), and to a hub other
+than hub.quirq.dev only after you answer yes at a terminal.
+
+Either way the web service takes at most 30 sign-ins a minute. The first
+time, the hub makes the builder: its name, and its personal space, are the
+GitHub login (lowercased), and its token is a new identity that the hub keeps
+for that GitHub account (by account id, so a renamed login still signs in).
+The CLI saves the token. Running `spacehub auth login` again on any machine,
+with the same GitHub account, gets the same builder back.
+
+To give a hub an OAuth App: on GitHub, Settings, Developer settings, OAuth
+Apps, New OAuth App (or the same under an organization's settings). The
+homepage URL and the required Authorization callback URL can both be the
+hub's address; the device flow uses neither. Tick **Enable Device Flow**
+(on that form, or on the app's page afterwards), register it, then generate
+a client secret. Set both values on the server and restart it. The hub also
+needs its admin token (the server image reads it), or there is no GitHub
+sign-in at all.
 
 ```sh
-gh auth login                  # if the GitHub CLI is not logged in yet
+gh auth login                  # only on a hub without an OAuth App, if gh is not logged in yet
 spacehub auth login            # Signed up on wss://hub.quirq.dev ... as builder octocat
 spacehub auth token            # to sign in on the website too
 ```
@@ -260,6 +290,7 @@ then their size shows as "measuring".
 | `SPACEHUB_GITHUB_MAX_REPOS` | `100` | Most repositories mirrored per linked space |
 | `SPACEHUB_GITHUB_TOKEN` | unset | A GitHub token for a higher API rate limit (read-only public access is enough) |
 | `SPACEHUB_ACCOUNTS` | `github` | How people sign up: `github` (with a GitHub account, see Sign up with GitHub), `open` (anyone registers a name) or `xo` (nobody: only xo's API makes builders). Set on every start |
+| `SPACEHUB_GITHUB_CLIENT_ID`, `SPACEHUB_GITHUB_CLIENT_SECRET` | unset | The hub's GitHub OAuth App, both or neither: sign-in then uses GitHub's device flow with a scope-less token (see Sign up with GitHub) and refuses other tokens |
 | `SPACEHUB_XO_KEY` | unset | Turns on xo.quirq.dev's API, which makes builders for xo's users whatever `SPACEHUB_ACCOUNTS` says (see xo below) |
 | `/data` volume | | Databases, the server's signing keys, and the identity that owns the module. **Mount persistent storage here and back it up.** Without it, a restart forgets every project and invalidates every client token |
 
@@ -427,7 +458,7 @@ docker run --rm -it -e SPACEHUB_SERVER=wss://hub.example.com \
 
 | gh | spacehub |
 | --- | --- |
-| `gh auth login` | `spacehub auth login [--server url]`: with the GitHub account logged in here. `--with-token` takes a token from `auth token`; `--builder name` registers a name on hubs with open sign-up (`--agent`, `--username` are aliases) |
+| `gh auth login` | `spacehub auth login [--server url]`: with GitHub (a device code on a hub with an OAuth App, else the account gh has logged in here). `--with-token` takes a token from `auth token`; `--builder name` registers a name on hubs with open sign-up (`--agent`, `--username` are aliases) |
 | `gh auth status` / `token` / `logout` | `spacehub auth status` / `token` / `logout --yes` |
 | (delete your account) | `spacehub auth delete --yes`: the builder, its projects and agents, its places in team spaces and its activity history; its name is free again. A team's last owner adds another owner first |
 | `gh repo create name --source . --push` | `spacehub project create [space/]name --source . --push` |
