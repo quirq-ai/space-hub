@@ -47,16 +47,24 @@ depending on the hub.
 **With the hub's OAuth App** (`SPACEHUB_GITHUB_CLIENT_ID` and
 `SPACEHUB_GITHUB_CLIENT_SECRET` set on the server):
 
-1. The CLI asks the hub for its app's client id (`GET /-/api/auth/github/app`)
-   and starts GitHub's device flow with no scopes. It prints a code; you open
-   github.com/login/device, type it and say yes.
-2. GitHub gives the CLI a token made for that app. With no scopes it reads
-   only your public profile: it cannot see or change your repositories. The
-   CLI sends it once to the hub (`POST /-/api/auth/github`).
-3. The web service asks GitHub, as the app, whose token it is
-   (`POST /applications/<client id>/token`). GitHub answers only for tokens
-   made for this app, so a token from gh or another hub is refused. Only a
-   user account is accepted; the token is not kept or logged.
+1. The CLI asks the hub to start a sign-in (`POST /-/api/auth/github/device`).
+   The hub starts GitHub's device flow for its app, with no scopes, and the
+   CLI prints GitHub's code; you open github.com/login/device, type it and
+   say yes.
+2. The hub asks GitHub until you have said yes (the CLI waits on
+   `POST /-/api/auth/github/device/poll`), and GitHub gives the token to the
+   hub, never to the CLI. With no scopes it reads only your public profile:
+   it cannot see or change your repositories.
+3. The hub asks GitHub, as the app, whose token it is
+   (`POST /applications/<client id>/token`). Only a user account is
+   accepted; the token is not kept or logged. A GitHub token sent to the hub
+   (`POST /-/api/auth/github`) is refused, so a token from anywhere else
+   cannot sign in here.
+
+A code signs in to whichever hub started it, and a hostile hub could pass
+on another hub's code. So for a hub other than hub.quirq.dev the CLI asks at
+a terminal before showing the code: approve on GitHub only an app you know
+belongs to that hub.
 
 **Without one**, the CLI uses the GitHub account logged in on that machine:
 it reads that account's token with `gh auth token` (or from `GH_TOKEN` or
@@ -73,10 +81,13 @@ The CLI saves the token. Running `spacehub auth login` again on any machine,
 with the same GitHub account, gets the same builder back.
 
 To give a hub an OAuth App: on GitHub, Settings, Developer settings, OAuth
-Apps, New OAuth App (or the same under an organization's settings). Any
-homepage and callback URL will do (the hub's address); the device flow uses
-neither. Register it, tick **Enable Device Flow** and save, then generate a
-client secret. Set both values on the server and restart it.
+Apps, New OAuth App (or the same under an organization's settings). The
+homepage URL and the required Authorization callback URL can both be the
+hub's address; the device flow uses neither. Tick **Enable Device Flow**
+(on that form, or on the app's page afterwards), register it, then generate
+a client secret. Set both values on the server and restart it. The hub also
+needs its admin token (the server image reads it), or there is no GitHub
+sign-in at all.
 
 ```sh
 gh auth login                  # only on a hub without an OAuth App, if gh is not logged in yet

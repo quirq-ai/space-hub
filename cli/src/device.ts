@@ -1,8 +1,8 @@
-// GitHub's device flow, for a hub with an OAuth App (signin.ts): the person
-// opens github.com/login/device, types the code shown here and says yes, and
-// GitHub hands this CLI a token made for that app with no scopes. Such a
-// token reads only the public profile and acts as no one, so sending it to
-// the hub (which asks GitHub whose it is) risks nothing on GitHub.
+// GitHub's device flow, run by the hub for its OAuth App (signin.ts): the hub
+// asks GitHub for a code, the CLI shows it, the person enters it on
+// github.com and says yes, and the hub, polling GitHub with the device code
+// only it holds, receives a token with no scopes. The token never leaves the
+// hub, so no other server can be handed it to replay here.
 //
 // https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#device-flow
 
@@ -14,9 +14,24 @@ export interface DeviceCode {
   interval: number;
 }
 
-// github.com, or a stand-in in tests (SPACEHUB_GITHUB_WEB).
+function local(host: string) {
+  return /^(localhost|127(?:\.\d{1,3}){3}|\[::1\])(?::\d{1,5})?$/.test(host);
+}
+
+// github.com, or a stand-in on this machine in tests (SPACEHUB_GITHUB_WEB):
+// https, or plain http to a local host only.
 export function githubWeb(env: NodeJS.ProcessEnv = process.env) {
-  return (env.SPACEHUB_GITHUB_WEB ?? 'https://github.com').replace(/\/+$/, '');
+  const web = (env.SPACEHUB_GITHUB_WEB ?? 'https://github.com').replace(/\/+$/, '');
+  let u: URL;
+  try {
+    u = new URL(web);
+  } catch {
+    throw new Error(`SPACEHUB_GITHUB_WEB is not a URL: ${web}`);
+  }
+  if (u.username || u.password || u.pathname !== '/' || !(u.protocol === 'https:' || (u.protocol === 'http:' && local(u.host)))) {
+    throw new Error('SPACEHUB_GITHUB_WEB must be an https origin, or http on this machine');
+  }
+  return u.origin;
 }
 
 async function post(url: string, form: Record<string, string>): Promise<Record<string, unknown>> {
@@ -27,13 +42,13 @@ async function post(url: string, form: Record<string, string>): Promise<Record<s
       headers: { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded', 'user-agent': 'spacehub' },
       body: new URLSearchParams(form).toString(),
       redirect: 'error',
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(15_000),
     });
   } catch {
-    throw new Error(`could not reach ${new URL(url).origin}`);
+    throw new Error('GitHub did not answer; try again');
   }
   const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
-  if (!body) throw new Error(`${new URL(url).origin} answered ${res.status} with no JSON`);
+  if (!body) throw new Error(`GitHub answered ${res.status} with no JSON`);
   return body;
 }
 
@@ -50,37 +65,30 @@ export async function deviceCode(web: string, clientId: string): Promise<DeviceC
   return { device_code, user_code, verification_uri, expires_in: Number(expires_in) || 900, interval: Number(interval) || 5 };
 }
 
-// Ask GitHub every `interval` seconds until the person said yes (the token),
-// said no, or the code ran out. `sleep` is replaced in tests.
-export async function deviceToken(
-  web: string,
-  clientId: string,
-  code: DeviceCode,
-  sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
-): Promise<string> {
-  let interval = Math.max(1, code.interval);
-  const until = Date.now() + code.expires_in * 1000;
-  for (;;) {
-    await sleep(interval * 1000);
-    const body = await post(`${web}/login/oauth/access_token`, {
-      client_id: clientId,
-      device_code: code.device_code,
-      grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-    });
-    if (typeof body.access_token === 'string' && body.access_token) return body.access_token;
-    switch (body.error) {
-      case 'authorization_pending':
-        break;
-      case 'slow_down':
-        interval = Number(body.interval) || interval + 5;
-        break;
-      case 'access_denied':
-        throw new Error('sign-in was cancelled on GitHub; nothing was sent to the hub');
-      case 'expired_token':
-        throw new Error('the code ran out before it was entered; run spacehub auth login again');
-      default:
-        throw new Error(`GitHub refused the sign-in: ${body.error_description ?? body.error ?? 'no token'}`);
-    }
-    if (Date.now() > until) throw new Error('the code ran out before it was entered; run spacehub auth login again');
+export type Poll =
+  | { kind: 'token'; token: string }
+  | { kind: 'pending'; interval?: number } // interval: GitHub asked to slow down
+  | { kind: 'denied' }
+  | { kind: 'expired' };
+
+// One question to GitHub: has the person said yes yet?
+export async function pollToken(web: string, clientId: string, code: string): Promise<Poll> {
+  const body = await post(`${web}/login/oauth/access_token`, {
+    client_id: clientId,
+    device_code: code,
+    grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+  });
+  if (typeof body.access_token === 'string' && body.access_token) return { kind: 'token', token: body.access_token };
+  switch (body.error) {
+    case 'authorization_pending':
+      return { kind: 'pending' };
+    case 'slow_down':
+      return { kind: 'pending', interval: Number(body.interval) || undefined };
+    case 'access_denied':
+      return { kind: 'denied' };
+    case 'expired_token':
+      return { kind: 'expired' };
+    default:
+      throw new Error(`GitHub refused the sign-in: ${body.error_description ?? body.error ?? 'no token'}`);
   }
 }
