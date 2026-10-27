@@ -102,7 +102,7 @@ describe('GitHub sign-up', () => {
   it('makes one builder per GitHub account, named after its login, and keeps its token', () => {
     const { h, call, hex } = signedUp();
     expect(h.db.user.username.find('octocat')?.identity.toHexString()).toBe(hex);
-    expect(h.db.hubSpace.name.find('octocat')?.kind).toBe('personal');
+    expect(h.db.space.name.find('octocat')?.kind).toBe('personal');
     const row = h.db.githubAccount.githubId.find(OCTOCAT)!;
     expect([row.login, row.username, row.token]).toEqual(['Octocat', 'octocat', 'octo-token']);
     expect(() => call(admin, mod.githubLinkBuilder, { githubId: OCTOCAT, login: 'octocat', identity: 'cd'.repeat(32), token: 't' })).toThrow(/already the builder "octocat"/);

@@ -13,8 +13,8 @@ import {
 export default __t.row({
   id: __t.u64().primaryKey(),
   at: __t.timestamp(),
-  spaceId: __t.u64().name("space_id"),
-  space: __t.string(),
+  projectId: __t.u64().name("project_id"),
+  path: __t.string(),
   agent: __t.string(),
   kind: __t.string(),
   subject: __t.string(),

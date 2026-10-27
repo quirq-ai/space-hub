@@ -8,10 +8,10 @@ import { githubTokenTarget, hubUrl, parseHubUrl, serverOfHost } from '../src/url
 import { loadConfig, saveToken } from '../src/config.ts';
 
 test('quirq URLs name their hub; short and old ones mean the logged-in hub', () => {
-  assert.deepEqual(parseHubUrl('quirq://hub.quirq.dev/alice/notes'), { server: 'wss://hub.quirq.dev', space: 'alice/notes' });
-  assert.deepEqual(parseHubUrl('quirq://127.0.0.1:3197/a/b.git'), { server: 'ws://127.0.0.1:3197', space: 'a/b' });
-  assert.deepEqual(parseHubUrl('quirq://alice/notes'), { space: 'alice/notes' });
-  assert.deepEqual(parseHubUrl('spacehub://alice/notes'), { space: 'alice/notes' });
+  assert.deepEqual(parseHubUrl('quirq://hub.quirq.dev/alice/notes'), { server: 'wss://hub.quirq.dev', project: 'alice/notes' });
+  assert.deepEqual(parseHubUrl('quirq://127.0.0.1:3197/a/b.git'), { server: 'ws://127.0.0.1:3197', project: 'a/b' });
+  assert.deepEqual(parseHubUrl('quirq://alice/notes'), { project: 'alice/notes' });
+  assert.deepEqual(parseHubUrl('spacehub://alice/notes'), { project: 'alice/notes' });
   for (const bad of ['quirq://a', 'quirq://h/a/b/c', 'spacehub://h/a/b', 'quirq://bad host/a/b', 'https://github.com/a/b', 'quirq://h/a@b/c'])
     assert.equal(parseHubUrl(bad), null, bad);
   assert.equal(hubUrl('wss://hub.quirq.dev', 'alice/notes'), 'quirq://hub.quirq.dev/alice/notes');

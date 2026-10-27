@@ -109,7 +109,7 @@ export class AgentRun {
         env: this.env,
         author: this.o.agent,
       });
-      const beat = () => conn.reducers.watchHub({ space, mode: 'agent', host: this.o.host }).catch(err => this.o.log(`${space}: could not show presence: ${errorMessage(err)}`));
+      const beat = () => conn.reducers.watchSpace({ space, mode: 'agent', host: this.o.host }).catch(err => this.o.log(`${space}: could not show presence: ${errorMessage(err)}`));
       await beat();
       const running = { conn, sync, beat: setInterval(beat, HEARTBEAT_MS) };
       this.spaces.set(space, running);

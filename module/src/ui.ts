@@ -46,7 +46,7 @@ export interface UiResponse {
   body: string | Uint8Array;
 }
 
-type Space = NonNullable<ReturnType<Db['project']['fullName']['find']>>;
+type Project = NonNullable<ReturnType<Db['project']['fullName']['find']>>;
 type Activity = NonNullable<ReturnType<Db['activity']['id']['find']>>;
 type Presence = NonNullable<ReturnType<Db['presence']['connectionId']['find']>>;
 
@@ -72,7 +72,7 @@ interface Entry {
   type: 'tree' | 'blob' | 'commit';
 }
 
-// Who built a project's code: a GitHub account (an explicit space_builder
+// Who built a project's code: a GitHub account (an explicit project_builder
 // row, else the owner of the project's GitHub import source), else the
 // builder here who made it (a personal space's builder, or whoever created
 // the project in an org).
@@ -333,7 +333,7 @@ class Renderer {
 
   // ------------------------------------------------------------ git access
 
-  commit(sp: Space, oid: string): Commit | null {
+  commit(sp: Project, oid: string): Commit | null {
     if (this.commits.has(oid)) return this.commits.get(oid)!;
     let target = oid;
     let obj = readObject(this.db, sp.id, target);
@@ -347,7 +347,7 @@ class Renderer {
     return commit;
   }
 
-  tree(sp: Space, oid: string): Entry[] {
+  tree(sp: Project, oid: string): Entry[] {
     const cached = this.trees.get(oid);
     if (cached) return cached;
     const obj = readObject(this.db, sp.id, oid);
@@ -358,7 +358,7 @@ class Renderer {
   }
 
   // The entry at `path` under a root tree, or null when it does not exist.
-  locate(sp: Space, root: string, path: string[]): { type: Entry['type']; oid: string } | null {
+  locate(sp: Project, root: string, path: string[]): { type: Entry['type']; oid: string } | null {
     let current: { type: Entry['type']; oid: string } = { type: 'tree', oid: root };
     for (const name of path) {
       if (current.type !== 'tree') return null;
@@ -369,13 +369,13 @@ class Renderer {
     return current;
   }
 
-  refs(sp: Space) {
-    return [...this.db.gitRef.spaceId.filter(sp.id)].sort((a, b) => a.name.localeCompare(b.name));
+  refs(sp: Project) {
+    return [...this.db.gitRef.projectId.filter(sp.id)].sort((a, b) => a.name.localeCompare(b.name));
   }
 
   // "<ref>/<path...>": the longest prefix naming a branch or tag wins, else
   // a full commit id.
-  resolve(sp: Space, segs: string[]) {
+  resolve(sp: Project, segs: string[]) {
     const refs = this.refs(sp);
     for (let k = segs.length; k >= 1; k--) {
       const name = segs.slice(0, k).join('/');
@@ -387,7 +387,7 @@ class Renderer {
   }
 
   // Commits reachable from `tip`, newest first by commit time.
-  history(sp: Space, tip: string, limit: number): Commit[] {
+  history(sp: Project, tip: string, limit: number): Commit[] {
     const first = this.commit(sp, tip);
     if (!first) return [];
     const seen = new Set([first.oid]);
@@ -408,7 +408,7 @@ class Renderer {
     return out;
   }
 
-  countCommits(sp: Space, tip: string) {
+  countCommits(sp: Project, tip: string) {
     const first = this.commit(sp, tip);
     if (!first) return 0;
     const seen = new Set([first.oid]);
@@ -425,7 +425,7 @@ class Renderer {
   }
 
   // Did `c` change `path` compared with its first parent?
-  touches(sp: Space, c: Commit, path: string[]) {
+  touches(sp: Project, c: Commit, path: string[]) {
     if (path.length === 0) return true;
     const now = this.locate(sp, c.tree, path)?.oid ?? null;
     const parent = c.parents[0] ? this.commit(sp, c.parents[0]) : null;
@@ -435,7 +435,7 @@ class Renderer {
 
   // The most recent commit that changed each named entry of a folder, and
   // the folder itself, scanning back at most LAST_COMMIT_SCAN commits.
-  lastChanges(sp: Space, tip: string, folder: string[], names: string[]) {
+  lastChanges(sp: Project, tip: string, folder: string[], names: string[]) {
     const byName = new Map<string, Commit>();
     let folderCommit: Commit | null = null;
     const folderAt = (c: Commit) => (folder.length ? (this.locate(sp, c.tree, folder)?.oid ?? null) : c.tree);
@@ -460,12 +460,12 @@ class Renderer {
 
   // ------------------------------------------------------------ shared parts
 
-  importRow(sp: Space) {
-    return this.db.projectImport.spaceId.find(sp.id) ?? null;
+  importRow(sp: Project) {
+    return this.db.projectImport.projectId.find(sp.id) ?? null;
   }
 
-  builderOf(sp: Space): Builder {
-    const row = this.db.projectBuilder.spaceId.find(sp.id);
+  builderOf(sp: Project): Builder {
+    const row = this.db.projectBuilder.projectId.find(sp.id);
     if (row && row.url.startsWith('https://github.com/')) return { kind: 'github', handle: row.handle, name: this.builderName(row.handle, row.name), url: row.url };
     const source = this.importRow(sp)?.source ?? '';
     const gh = /^https:\/\/github\.com\/([^/]+)\//.exec(source);
@@ -473,7 +473,7 @@ class Renderer {
       const handle = gh[1].toLowerCase();
       return { kind: 'github', handle, name: this.builderName(handle, gh[1]), url: `https://github.com/${gh[1]}` };
     }
-    const space = this.db.hubSpace.name.find(sp.owner);
+    const space = this.db.space.name.find(sp.owner);
     const maker = !space || space.kind === 'personal' ? sp.owner : (this.db.user.identity.find(sp.ownerIdentity)?.username ?? sp.owner);
     return { kind: 'hub', handle: maker, name: maker, url: '' };
   }
@@ -498,7 +498,7 @@ class Renderer {
   }
 
   // "built by X" for listings, when someone other than the space built it.
-  builtBy(sp: Space) {
+  builtBy(sp: Project) {
     const b = this.builderOf(sp);
     return b.kind === 'hub' && b.handle === sp.owner ? '' : `<div class="muted">built by ${this.builderLink(b)}</div>`;
   }
@@ -506,7 +506,7 @@ class Renderer {
   // Every builder here (with or without projects) and every GitHub account
   // credited with a project, by how many projects they built.
   builders() {
-    const groups = new Map<string, { builder: Builder; spaces: Space[] }>();
+    const groups = new Map<string, { builder: Builder; spaces: Project[] }>();
     for (const u of this.db.user.iter()) groups.set(`hub:${u.username}`, { builder: { kind: 'hub', handle: u.username, name: u.username, url: '' }, spaces: [] });
     for (const sp of this.db.project.iter()) {
       const b = this.builderOf(sp);
@@ -519,7 +519,7 @@ class Renderer {
   }
 
   kindOf(space: string) {
-    return this.db.hubSpace.name.find(space)?.kind ?? 'personal';
+    return this.db.space.name.find(space)?.kind ?? 'personal';
   }
 
   spacePill(space: string) {
@@ -527,32 +527,32 @@ class Renderer {
     return `<span class="pill">${kind === 'personal' ? 'builder' : esc(kind)}</span>`;
   }
 
-  syncForm(sp: Space, label: string) {
+  syncForm(sp: Project, label: string) {
     if (this.base === null || !ownsSpace(this.db, sp.owner, this.viewer)) return '';
     return `<form method="post" action="/-/sync/${encodeURIComponent(sp.owner)}/${encodeURIComponent(sp.name)}" class="inline"><button class="btn" type="submit">${esc(label)}</button></form>`;
   }
 
-  members(sp: Space) {
-    return [...this.db.projectMember.spaceId.filter(sp.id)].sort((a, b) => a.agent.localeCompare(b.agent));
+  members(sp: Project) {
+    return [...this.db.projectMember.projectId.filter(sp.id)].sort((a, b) => a.agent.localeCompare(b.agent));
   }
 
   // The space a presence row is about: its own column, or (rows from older
   // clients) its project's space.
   presenceSpace(p: Presence) {
-    return p.space || this.db.project.id.find(p.spaceId)?.owner || '';
+    return p.space || this.db.project.id.find(p.projectId)?.owner || '';
   }
 
   // Connections that follow a project (with those following its whole
   // space), a space, or the whole hub, and are still heartbeating; one line
   // per agent, mode, branch and project.
-  hereNow(where: { project: Space } | { space: string } | null) {
+  hereNow(where: { project: Project } | { space: string } | null) {
     let rows = [...this.db.presence.iter()];
-    if (where && 'project' in where) rows = rows.filter(p => p.spaceId === where.project.id || (p.spaceId === 0n && p.space === where.project.owner));
+    if (where && 'project' in where) rows = rows.filter(p => p.projectId === where.project.id || (p.projectId === 0n && p.space === where.project.owner));
     else if (where) rows = rows.filter(p => this.presenceSpace(p) === where.space);
     const groups = new Map<string, { row: Presence; count: number }>();
     for (const p of rows) {
       if (this.now - seconds(p.seenAt) > PRESENCE_STALE_SECONDS) continue;
-      const key = `${p.spaceId}:${p.space}:${p.agent}:${p.mode}:${p.branch}`;
+      const key = `${p.projectId}:${p.space}:${p.agent}:${p.mode}:${p.branch}`;
       const g = groups.get(key);
       if (!g) groups.set(key, { row: p, count: 1 });
       else {
@@ -567,8 +567,8 @@ class Renderer {
     const rows = groups
       .slice(0, 30)
       .map(({ row: p, count }) => {
-        const sp = withSpace ? this.db.project.id.find(p.spaceId) : undefined;
-        const whole = p.spaceId === 0n;
+        const sp = withSpace ? this.db.project.id.find(p.projectId) : undefined;
+        const whole = p.projectId === 0n;
         const branch = p.branch ? ` ${esc(p.branch)}` : whole ? ' all projects' : '';
         const where = sp ? ` <span class="muted">in</span> ${this.a(sp.fullName, esc(sp.fullName))}` : whole && withSpace ? ` <span class="muted">of</span> ${this.a(p.space, esc(p.space))}` : '';
         const times = count > 1 ? ` <span class="muted">×${count}</span>` : '';
@@ -579,7 +579,7 @@ class Renderer {
     return `<div class="box here">${rows ? `<table>${rows}</table>` : '<div class="empty">Nobody is connected right now.</div>'}</div>`;
   }
 
-  importBanner(sp: Space) {
+  importBanner(sp: Project) {
     const row = this.importRow(sp);
     if (!row) return '';
     const source = `<a href="${esc(row.source)}">${esc(row.source.replace(/^https:\/\//, ''))}</a>`;
@@ -596,7 +596,7 @@ class Renderer {
     return '';
   }
 
-  spaceHead(sp: Space, tab: 'code' | 'commits' | 'activity' | 'refs', ref: string) {
+  spaceHead(sp: Project, tab: 'code' | 'commits' | 'activity' | 'refs', ref: string) {
     const refs = this.refs(sp);
     const branches = refs.filter(r => r.name.startsWith('refs/heads/')).length;
     const tags = refs.filter(r => r.name.startsWith('refs/tags/')).length;
@@ -607,7 +607,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
   }
 
   // Branch and tag picker; keeps the current view and path.
-  refMenu(sp: Space, current: string, view: 'tree' | 'blob' | 'commits', path: string[]) {
+  refMenu(sp: Project, current: string, view: 'tree' | 'blob' | 'commits', path: string[]) {
     const refs = this.refs(sp);
     const item = (name: string) => this.a(`${sp.fullName}/${view}/${name}/${path.join('/')}`, esc(name), name === current ? 'on' : '');
     const branches = refs.filter(r => r.name.startsWith('refs/heads/')).map(r => item(shortRef(r.name)));
@@ -618,7 +618,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     }</div></details>`;
   }
 
-  crumbs(sp: Space, ref: string, path: string[], lastIsLink = false) {
+  crumbs(sp: Project, ref: string, path: string[], lastIsLink = false) {
     const parts = [this.a(`${sp.fullName}/tree/${ref}`, `<b>${esc(sp.name)}</b>`)];
     path.forEach((name, i) => {
       const sub = path.slice(0, i + 1).join('/');
@@ -627,14 +627,14 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     return parts.join(' / ');
   }
 
-  commitBar(sp: Space, c: Commit, historyPath: string, ref: string) {
+  commitBar(sp: Project, c: Commit, historyPath: string, ref: string) {
     const subject = c.message.split('\n')[0];
     return `<div class="bar"><span class="nowrap"><b>${esc(c.author.name)}</b></span><span class="grow">${this.a(`${sp.fullName}/commit/${c.oid}`, esc(subject), 'muted')}</span>
 <span class="muted mono nowrap">${this.a(`${sp.fullName}/commit/${c.oid}`, c.oid.slice(0, 7))} · ${this.ago(c.committer.time)}</span>
 <span class="nowrap">${this.a(`${sp.fullName}/commits/${ref}/${historyPath}`, 'History')}</span></div>`;
   }
 
-  aside(sp: Space, ref: string, commits: number) {
+  aside(sp: Project, ref: string, commits: number) {
     const refs = this.refs(sp);
     const row = this.importRow(sp);
     const source = row
@@ -655,7 +655,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
 
   // Links inside Markdown: external links stay, repo paths become UI links,
   // and repo images are shown inline from the raw view.
-  resolver(sp: Space, ref: string, dir: string[]): Resolve {
+  resolver(sp: Project, ref: string, dir: string[]): Resolve {
     return (url, image) => {
       if (/^https?:\/\//i.test(url) || /^mailto:/i.test(url)) return { href: url, inline: false };
       if (url.startsWith('#')) return { href: url, inline: false };
@@ -674,7 +674,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     };
   }
 
-  builtByLine(sp: Space) {
+  builtByLine(sp: Project) {
     const b = this.builderOf(sp);
     if (b.kind === 'hub' && b.handle === sp.owner) return '';
     const profile = b.url ? ` <span class="muted">·</span> <a href="${esc(b.url)}">${esc(b.url.replace(/^https?:\/\//, ''))}</a>` : '';
@@ -683,9 +683,9 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
 
   // One activity as a sentence: who did what, where, and when.
   activityItem(e: Activity) {
-    const sp = e.spaceId ? this.db.project.id.find(e.spaceId) : undefined;
+    const sp = e.projectId ? this.db.project.id.find(e.projectId) : undefined;
     const who = e.agent === '-github' ? '<b>GitHub sync</b>' : e.agent ? this.a(e.agent, `<b>${esc(e.agent)}</b>`) : '<b>someone</b>';
-    const space = sp ? this.a(sp.fullName, `<b>${esc(sp.fullName)}</b>`) : `<b>${esc(e.space)}</b>`;
+    const project = sp ? this.a(sp.fullName, `<b>${esc(sp.fullName)}</b>`) : `<b>${esc(e.path)}</b>`;
     const refName = shortRef(e.subject);
     const refKind = e.subject.startsWith('refs/tags/') ? 'tag' : 'branch';
     const refLink = sp ? this.a(`${sp.fullName}/tree/${refName}`, esc(refName)) : esc(refName);
@@ -693,7 +693,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     const source = `<a href="${esc(e.subject)}">${esc(e.subject.replace(/^https:\/\//, ''))}</a>`;
     const pushed = commit || e.text ? `${commit}${esc(e.text)}` : '';
     // Events about a top-level space (an org, a builder's space, an agent) name it.
-    const top = this.db.hubSpace.name.find(e.space) ? this.a(e.space, `<b>${esc(e.space)}</b>`) : `<b>${esc(e.space)}</b>`;
+    const top = this.db.space.name.find(e.path) ? this.a(e.path, `<b>${esc(e.path)}</b>`) : `<b>${esc(e.path)}</b>`;
     const member = this.a(e.subject, `<b>${esc(e.subject)}</b>`);
     let line: string;
     let more = '';
@@ -721,7 +721,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
         line = `${who} created the agent ${top} in ${member}`;
         break;
       case 'agent_deleted':
-        line = `${who} deleted the agent <b>${esc(e.space)}</b>`;
+        line = `${who} deleted the agent <b>${esc(e.path)}</b>`;
         break;
       case 'agent_connected':
         line = `${who} connected the agent ${member} to ${top}`;
@@ -729,49 +729,45 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
       case 'agent_disconnected':
         line = `${who} disconnected the agent ${member} from ${top}`;
         break;
-      case 'space_created':
-        line = `${who} created ${space}`;
+      case 'project_created':
+        line = `${who} created ${project}`;
         break;
-      case 'space_deleted':
-        line = `${who} deleted ${space}`;
+      case 'project_deleted':
+        line = `${who} deleted ${project}`;
         break;
-      case 'space_edited':
-        line = `${who} updated ${space}`;
+      case 'project_edited':
+        line = `${who} updated ${project}`;
         more = esc(e.text);
         break;
       case 'builder_set':
-        line = `${who} credited ${this.a(`-/builders/${e.subject}`, `<b>${esc(e.text || e.subject)}</b>`)} as the builder of ${space}`;
+        line = `${who} credited ${this.a(`-/builders/${e.subject}`, `<b>${esc(e.text || e.subject)}</b>`)} as the builder of ${project}`;
         break;
       case 'builder_cleared':
-        line = `${who} removed the builder credit from ${space}`;
+        line = `${who} removed the builder credit from ${project}`;
         break;
       case 'ref_created':
-        line = `${who} created ${refKind} ${refLink} in ${space}`;
+        line = `${who} created ${refKind} ${refLink} in ${project}`;
         more = pushed;
         break;
       case 'ref_updated':
-        line = `${who} pushed ${e.count ? `${plural(e.count, 'commit')} ` : ''}to ${refLink} in ${space}`;
+        line = `${who} pushed ${e.count ? `${plural(e.count, 'commit')} ` : ''}to ${refLink} in ${project}`;
         more = pushed;
         break;
       case 'ref_forced':
-        line = `${who} force-pushed ${refKind} ${refLink} in ${space}`;
+        line = `${who} force-pushed ${refKind} ${refLink} in ${project}`;
         more = pushed;
         break;
       case 'ref_deleted':
-        line = `${who} deleted ${refKind} ${esc(refName)} from ${space}`;
-        break;
-      case 'ref_pushed':
-        line = `${who} pushed ${refKind} ${refLink} in ${space}`;
-        more = pushed;
+        line = `${who} deleted ${refKind} ${esc(refName)} from ${project}`;
         break;
       case 'import_started':
-        line = `${who} started importing ${source} into ${space}`;
+        line = `${who} started importing ${source} into ${project}`;
         break;
       case 'sync_started':
-        line = `${who} started syncing ${space} from ${source}`;
+        line = `${who} started syncing ${project} from ${source}`;
         break;
       case 'import_done':
-        line = e.text.startsWith('synced') ? `${who} synced ${space} from ${source}` : `${who} imported ${source} into ${space}`;
+        line = e.text.startsWith('synced') ? `${who} synced ${project} from ${source}` : `${who} imported ${source} into ${project}`;
         more = e.count ? `${plural(e.count, 'branch or tag').replace('branch or tags', 'branches and tags')}` : '';
         break;
       case 'space_linked':
@@ -789,21 +785,21 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
         more = esc(e.text);
         break;
       case 'ref_diverged':
-        line = `${refKind} ${refLink} in ${space} diverged from GitHub; the hub kept its own commits`;
+        line = `${refKind} ${refLink} in ${project} diverged from GitHub; the hub kept its own commits`;
         more = e.oid ? `GitHub has ${esc(e.oid.slice(0, 7))}` : '';
         break;
       case 'import_failed':
-        line = `${who}'s import of ${source} into ${space} failed`;
+        line = `${who}'s import of ${source} into ${project} failed`;
         more = esc(e.text);
         break;
-      case 'member_added':
-        line = `${who} added ${member} as a collaborator on ${space}`;
+      case 'project_member_added':
+        line = `${who} added ${member} as a collaborator on ${project}`;
         break;
-      case 'member_removed':
-        line = e.subject === e.agent ? `${who} left the collaborators on ${space}` : `${who} removed ${member} from the collaborators on ${space}`;
+      case 'project_member_removed':
+        line = e.subject === e.agent ? `${who} left the collaborators on ${project}` : `${who} removed ${member} from the collaborators on ${project}`;
         break;
       default:
-        line = `${who} ${esc(e.kind.replace(/_/g, ' '))} ${space}`;
+        line = `${who} ${esc(e.kind.replace(/_/g, ' '))} ${project}`;
     }
     return `<tr><td>${line}${more ? `<div class="muted">${more}</div>` : ''}</td><td class="r muted">${this.ago(seconds(e.at))}</td></tr>`;
   }
@@ -829,13 +825,13 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
 
   // What a project stores (its git objects, uncompressed), or "measuring"
   // while the server is still counting a project from before sizes were kept.
-  sizeOf(sp: Space) {
+  sizeOf(sp: Project) {
     const row = this.db.projectSize.projectId.find(sp.id);
     return row ? size(Number(row.bytes)) : 'measuring';
   }
 
   // What some projects store together, noting any still being measured.
-  totalOf(projects: Space[]) {
+  totalOf(projects: Project[]) {
     let total = 0n;
     let waiting = 0;
     for (const sp of projects) {
@@ -848,7 +844,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
 
   // ------------------------------------------------------------ pages
 
-  projectRows(projects: Space[], fullNames: boolean) {
+  projectRows(projects: Project[], fullNames: boolean) {
     return projects
       .sort((a, b) => seconds(b.pushedAt) - seconds(a.pushedAt))
       .map(
@@ -862,7 +858,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     const projects = [...this.db.project.iter()];
     const counts = new Map<string, number>();
     for (const p of projects) counts.set(p.owner, (counts.get(p.owner) ?? 0) + 1);
-    const orgs = [...this.db.hubSpace.kind.filter('org')].sort((a, b) => (counts.get(b.name) ?? 0) - (counts.get(a.name) ?? 0) || a.name.localeCompare(b.name));
+    const orgs = [...this.db.space.kind.filter('org')].sort((a, b) => (counts.get(b.name) ?? 0) - (counts.get(a.name) ?? 0) || a.name.localeCompare(b.name));
     const orgRows = orgs
       .slice(0, 20)
       .map(t => `<tr><td>${this.a(t.name, esc(t.displayName || t.name))}</td><td class="r muted">${plural(counts.get(t.name) ?? 0, 'project')} · ${this.totalOf(projects.filter(p => p.owner === t.name))}</td></tr>`)
@@ -872,7 +868,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
       .slice(0, 20)
       .map(g => `<tr><td>${this.builderLink(g.builder)} ${this.builderKind(g.builder)}</td><td class="r muted">${plural(g.spaces.length, 'project')}</td></tr>`)
       .join('');
-    const agents = [...this.db.hubSpace.kind.filter('agent')].sort((a, b) => a.name.localeCompare(b.name));
+    const agents = [...this.db.space.kind.filter('agent')].sort((a, b) => a.name.localeCompare(b.name));
     const agentRows = agents
       .slice(0, 20)
       .map(a => `<tr><td>${this.a(a.name, esc(a.name))} <span class="muted">of ${esc(a.parent)}</span></td><td class="r muted">${this.running(a.name).length ? 'running' : ''}</td></tr>`)
@@ -918,7 +914,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
 
   // /<name>: a builder's personal space, an org, or an agent.
   spacePage(name: string) {
-    const row = this.db.hubSpace.name.find(name);
+    const row = this.db.space.name.find(name);
     const user = this.db.user.username.find(name);
     const projects = [...this.db.project.owner.filter(name)];
     if (!row && !user && projects.length === 0) return this.notFound(`No space "${name}".`);
@@ -935,8 +931,8 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
         .map(r => `<tr><td>${this.a(r.space, `<b>${esc(r.space)}</b>`)} ${this.spacePill(r.space)}</td><td class="r muted">${esc(r.role)}</td></tr>`)
         .join('');
       const collab = [...this.db.projectMember.agent.filter(name)]
-        .map(m => this.db.project.id.find(m.spaceId))
-        .filter((s): s is Space => !!s)
+        .map(m => this.db.project.id.find(m.projectId))
+        .filter((s): s is Project => !!s)
         .map(s => `<tr><td>${this.a(s.fullName, `<b>${esc(s.fullName)}</b>`)}</td><td class="r muted">collaborator</td></tr>`)
         .join('');
       const memberOf = spaces + collab ? `<h2 style="margin:24px 0 8px">Member of</h2><div class="box"><table>${spaces}${collab}</table></div>` : '';
@@ -954,7 +950,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
 
   // The agents a builder or org owns.
   agentsOf(parent: string) {
-    const rows = [...this.db.hubSpace.kind.filter('agent')]
+    const rows = [...this.db.space.kind.filter('agent')]
       .filter(a => a.parent === parent)
       .sort((a, b) => a.name.localeCompare(b.name))
       .map(a => `<tr><td>${this.a(a.name, `<b>${esc(a.name)}</b>`)}${a.description ? `<div class="muted">${esc(a.description)}</div>` : ''}</td><td class="r muted">${this.running(a.name).length ? 'running' : ''}</td></tr>`)
@@ -977,7 +973,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
   }
 
   // /<agent>: what it is (its projects), where it is connected, where it runs.
-  agentPage(row: NonNullable<ReturnType<Db['hubSpace']['name']['find']>>, list: string) {
+  agentPage(row: NonNullable<ReturnType<Db['space']['name']['find']>>, list: string) {
     const name = row.name;
     const connected = [...this.db.spaceRole.member.filter(name)]
       .sort((a, b) => a.space.localeCompare(b.space))
@@ -994,7 +990,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     return this.page(name, `${title}${desc}<div class="grid"><div>${list}${connections}</div>${aside}</div>`);
   }
 
-  emptySpace(sp: Space) {
+  emptySpace(sp: Project) {
     const head = this.spaceHead(sp, 'code', sp.defaultBranch);
     const pushHint = `<code>git remote add quirq quirq://${esc(this.host)}/${esc(sp.fullName)}<br>git push quirq ${esc(sp.defaultBranch)}</code>`;
     const body =
@@ -1004,7 +1000,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     return this.page(sp.fullName, `${head}<div class="grid"><div class="box">${body}</div>${this.aside(sp, sp.defaultBranch, 0)}</div>`);
   }
 
-  treePage(sp: Space, segs: string[] | null): UiResponse {
+  treePage(sp: Project, segs: string[] | null): UiResponse {
     if (segs === null) {
       const refs = this.refs(sp);
       if (refs.length === 0) return this.emptySpace(sp);
@@ -1057,7 +1053,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     return this.page(`${sp.fullName}${rest.length ? `/${rest.join('/')}` : ''}`, `${this.spaceHead(sp, 'code', ref)}${body}`);
   }
 
-  fileAt(sp: Space, segs: string[]) {
+  fileAt(sp: Project, segs: string[]) {
     const { ref, oid, rest } = this.resolve(sp, segs);
     const tip = this.commit(sp, oid);
     if (!tip) throw new NotFound(`"${ref}" does not point at a commit`);
@@ -1067,7 +1063,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     return { ref, rest, tip, target };
   }
 
-  blobPage(sp: Space, segs: string[]): UiResponse {
+  blobPage(sp: Project, segs: string[]): UiResponse {
     const { ref, rest, tip, target } = this.fileAt(sp, segs);
     if (target.type === 'tree') return this.treePage(sp, segs);
     if (target.type !== 'blob') throw new NotFound(`"${rest.join('/')}" is a submodule`);
@@ -1114,7 +1110,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     );
   }
 
-  raw(sp: Space, segs: string[]): UiResponse {
+  raw(sp: Project, segs: string[]): UiResponse {
     const { rest, target } = this.fileAt(sp, segs);
     if (target.type !== 'blob') throw new NotFound(`"${rest.join('/')}" is not a file`);
     const obj = readObject(this.db, sp.id, target.oid);
@@ -1125,7 +1121,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     return { status: 200, headers: { 'content-type': type, 'content-security-policy': "default-src 'none'; sandbox" }, body: obj.data };
   }
 
-  commitsPage(sp: Space, segs: string[]) {
+  commitsPage(sp: Project, segs: string[]) {
     if (segs.length === 0) segs = [sp.defaultBranch];
     const { ref, oid, rest } = this.resolve(sp, segs);
     const page = Math.max(1, Math.min(1000, Number.parseInt(this.query.get('page') ?? '1', 10) || 1));
@@ -1158,7 +1154,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     );
   }
 
-  changes(sp: Space, before: string | null, after: string | null, prefix: string, out: Change[]) {
+  changes(sp: Project, before: string | null, after: string | null, prefix: string, out: Change[]) {
     const a = new Map(before ? this.tree(sp, before).map(e => [e.name, e] as [string, Entry]) : []);
     const b = new Map(after ? this.tree(sp, after).map(e => [e.name, e] as [string, Entry]) : []);
     for (const name of [...new Set([...a.keys(), ...b.keys()])].sort()) {
@@ -1177,7 +1173,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     }
   }
 
-  blobText(sp: Space, oid: string | null): string[] | 'binary' | 'large' {
+  blobText(sp: Project, oid: string | null): string[] | 'binary' | 'large' {
     if (!oid) return [];
     const obj = readObject(this.db, sp.id, oid);
     if (!obj) return [];
@@ -1186,7 +1182,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     return textLines(obj.data);
   }
 
-  commitPage(sp: Space, oid: string) {
+  commitPage(sp: Project, oid: string) {
     const c = /^[0-9a-f]{40}$/.test(oid) ? this.commit(sp, oid) : null;
     if (!c) throw new NotFound(`no commit ${oid}`);
     const files: Change[] = [];
@@ -1246,11 +1242,11 @@ ${bodyText ? `<pre>${esc(bodyText)}</pre>` : ''}
   }
 
   // Refs whose GitHub copy went another way: the hub kept its own.
-  diverged(sp: Space) {
+  diverged(sp: Project) {
     return new Map([...this.db.refSync.projectId.filter(sp.id)].filter(r => r.status === 'diverged').map(r => [r.ref, r.githubOid]));
   }
 
-  refsPage(sp: Space) {
+  refsPage(sp: Project) {
     const refs = this.refs(sp);
     const diverged = this.diverged(sp);
     const mark = (ref: string) => (diverged.has(ref) ? ` <span class="pill" title="GitHub has ${esc(diverged.get(ref)!.slice(0, 7))}">diverged from GitHub</span>` : '');
@@ -1322,10 +1318,10 @@ ${bodyText ? `<pre>${esc(bodyText)}</pre>` : ''}
     );
   }
 
-  activityPage(sp: Space) {
+  activityPage(sp: Project) {
     return this.page(
       `Activity · ${sp.fullName}`,
-      `${this.spaceHead(sp, 'activity', sp.defaultBranch)}${this.activityFeed([...this.db.activity.spaceId.filter(sp.id)], `${sp.fullName}/activity`)}`
+      `${this.spaceHead(sp, 'activity', sp.defaultBranch)}${this.activityFeed([...this.db.activity.projectId.filter(sp.id)], `${sp.fullName}/activity`)}`
     );
   }
 
@@ -1354,7 +1350,7 @@ ${bodyText ? `<pre>${esc(bodyText)}</pre>` : ''}
     if (segs.length === 0) return this.home();
     if (segs[0] === '-') return this.hubPage(segs.slice(1)) ?? this.notFound(`No page "${segs.join('/')}".`);
     // Old addresses of the hub's pages, unless a space took the name.
-    if ((segs[0] === 'guide' || segs[0] === 'builders') && !this.db.hubSpace.name.find(segs[0]) && this.hubPage(segs)) {
+    if ((segs[0] === 'guide' || segs[0] === 'builders') && !this.db.space.name.find(segs[0]) && this.hubPage(segs)) {
       return this.redirect(`-/${segs.join('/')}`);
     }
     if (segs.length === 1) return this.spacePage(segs[0]);

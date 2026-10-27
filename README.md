@@ -274,12 +274,33 @@ public port (`$PORT`, default 3000) is a built-in Caddy allowlist. It serves:
 - everything else: the web UI (see below).
 
 Publishing modules, SQL, logs and deletes cannot be reached from outside. On
-every start, the module is published or updated in place, and
-`migrate_spaces` gives builders from before spaces their personal spaces. A
-schema change that would delete data makes startup fail rather than wipe
-projects. Once the hub is serving, `measure_next_project` counts the size of
-projects from before sizes were kept, one per call in the background; until
-then their size shows as "measuring".
+every start, the module is published or updated in place. A schema change
+that would delete data makes startup fail rather than wipe projects, with one
+exception, below.
+
+**Upgrading from before the project tables (CLI 0.4).** Until 0.4 the
+database stored projects in a table called `space`, with `space_id` columns.
+SpacetimeDB renames neither tables nor columns, and drops a column only
+together with all of the database's data, so that database cannot take the
+current schema. When the server finds one, it renames it to
+`<SPACEHUB_DB>-before-projects`, leaving its data untouched, and starts an
+empty database under the usual name. Nothing is copied over. After the
+upgrade, builders sign up again (`spacehub auth login`), orgs are created and
+linked to GitHub again (their GitHub projects then sync on their own), and
+other projects are pushed again from a clone (`spacehub project create`, then
+`git push quirq --all`). Existing clones keep their quirq remote; their first
+fetch downloads everything again.
+
+To go back, swap the names inside the container, then run the previous image:
+
+```sh
+spacetime --root-dir /data list --server http://127.0.0.1:3001   # both identities
+spacetime --root-dir /data rename --server http://127.0.0.1:3001 --to spacehub-projects <new identity>
+spacetime --root-dir /data rename --server http://127.0.0.1:3001 --to spacehub <old identity>
+```
+
+Once the new hub is in use, delete the old database with
+`spacetime --root-dir /data delete --server http://127.0.0.1:3001 spacehub-before-projects`.
 
 | Setting | Default | Notes |
 | --- | --- | --- |
@@ -553,24 +574,20 @@ scripts/                 setup.sh, install-cli.sh, e2e.sh
 
 **Data model**
 
-Stored names predate orgs: the `space` table holds projects and
-`space_id` columns hold a project's id, because SpacetimeDB cannot rename
-tables or columns in place. In the code they are called projects.
-
 | Table | Key | Holds |
 | --- | --- | --- |
 | `user` | identity | a builder's name |
-| `hub_space` | name | a top-level space: `personal` (a builder's), `org` or `agent` (with its parent space); display name, description, creator |
+| `space` | name | a top-level space: `personal` (a builder's), `org` or `agent` (with its parent space); display name, description, creator |
 | `space_role` | space + member | a space's owners and members |
-| `space` | `space/project` | a project: its space (`owner`), description, default branch, object counters, timestamps |
-| `space_import` | project | GitHub source, import status |
-| `space_builder` | project | the credited GitHub builder: login, display name, profile |
+| `project` | `space/project` | a project: its space (`owner`), description, default branch, object counters, timestamps |
+| `project_import` | project | GitHub source, import status |
+| `project_builder` | project | the credited GitHub builder: login, display name, profile |
 | `activity` | id (time, project indexed) | one row per change: who, what, which space or project and ref, commit, count, text |
 | `git_ref` | project + ref name | `refs/heads/*` and `refs/tags/*`, mapped to object ids |
 | `git_object` | project + oid | kind, size, raw body (inline up to 1 MiB) and `pos`, its place in the project's object log |
 | `object_chunk` | project + oid + index | 1 MiB pieces of larger objects |
-| `space_member` | project + builder | a project's collaborators |
-| `agent` | name | an agent's identity and creator (its space is in `hub_space`, kind `agent`) |
+| `project_member` | project + builder | a project's collaborators |
+| `agent` | name | an agent's identity and creator (its space is in `space`, kind `agent`) |
 | `agent_secret` | name | (private) an agent's token, read only through `agent_token` by its owners |
 | `github_account` | GitHub account id | (private) a builder who signed up with GitHub: its login then, its name, identity and token; written by `github_link_builder` (admin only), read by the web service to sign the account in again |
 | `hub_state` | key | (private) the hub's settings: its admin, and where builders come from (`accounts`: `open`, `github` or `xo`) |
@@ -583,7 +600,7 @@ tables or columns in place. In the code they are called projects.
 (`git rev-list --objects <new> --not <remote refs>`). It uploads them in
 batches of about 4 MiB, and chunks objects over 1 MiB. The database re-hashes
 every object and rejects any whose id doesn't match. Then each ref moves
-through `updateRef`, which checks four things:
+through `update_ref`, which checks four things:
 
 - The caller owns or belongs to the project's space, or collaborates on the
   project.
@@ -603,21 +620,23 @@ the whole project.
 **Sync.** Refs are rows, so `project watch` and `project sync --watch` hear about
 a push as soon as it commits. No polling is involved.
 
-**Presence.** A long-running command calls `watch_space` with its project,
-mode and branch, and repeats it every minute as a heartbeat. The row is keyed
+**Presence.** A long-running command calls `watch_project` with its project,
+mode and branch (or `watch_space` with a whole space), and repeats it every
+minute as a heartbeat. The row is keyed
 by the connection, so SpacetimeDB's `client_disconnected` removes it when the
 command stops. If a connection vanishes without closing, its row is swept by
 the next `client_connected` once its heartbeat is three minutes old, and
 pages and `project who` hide it as soon as it is stale.
 
-**Compatibility.** Reducers that act on one repository keep their names
-from before orgs (`create_space`, `edit_space`, `delete_space`,
-`add_member`, ...), with the project's full name as their `space` argument,
-so older CLIs keep pushing, cloning and syncing after an upgrade.
-Orgs were called team spaces until 0.3: `migrate_spaces` rewrites stored
-`team` spaces and their activity to `org` once, and `create_team` and
-`delete_team` are now `create_org` and `delete_org`, so a CLI from before
-needs an update to create or delete orgs.
+**Names.** A space is a top-level name and a project is a repository, in
+the tables, columns, reducers and activity alike. Reducers that act on one
+project are named for it and take its full name as `project`
+(`create_project` takes the space and the name): `delete_project`,
+`edit_project`, `set_project_builder`, `add_project_member`,
+`remove_project_member`, `watch_project`, `put_objects`, `update_ref`,
+`start_import`, and so on. Reducers for a space take `space`: `edit_space`,
+`watch_space`, `add_space_member`, `create_org`, `link_space`. A CLI from
+before 0.4 cannot talk to this hub (its reducers are gone); update it.
 
 ## xo
 

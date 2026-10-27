@@ -11,7 +11,7 @@ import {
 } from "spacetimedb";
 
 export default {
-  space: __t.string(),
+  project: __t.string(),
   status: __t.string(),
   message: __t.string(),
 };

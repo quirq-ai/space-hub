@@ -12,7 +12,7 @@ import {
 
 export default __t.row({
   connectionId: __t.connectionId().primaryKey().name("connection_id"),
-  spaceId: __t.u64().name("space_id"),
+  projectId: __t.u64().name("project_id"),
   agent: __t.string(),
   mode: __t.string(),
   branch: __t.string(),

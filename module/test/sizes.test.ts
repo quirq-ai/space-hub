@@ -1,7 +1,5 @@
 // How much each project stores, run in SpacetimeDB's in-process module
-// harness (no server needed): npm test. Measuring older projects scans an
-// index the harness cannot, so scripts/e2e.sh and the upgrade rehearsal
-// cover that part.
+// harness (no server needed): npm test.
 import { describe, expect, it } from 'vitest';
 import { ConnectionId } from 'spacetimedb';
 import { createModuleTestHarness, TestAuth } from 'spacetimedb/server/test-utils';
@@ -25,7 +23,7 @@ function hub() {
   const call = (auth: TestAuth, reducer: (ctx: any, args: any) => void, args: object = {}) => h.withReducerTx(auth, ctx => reducer(ctx, args));
   const alice = as('alice');
   call(alice, mod.registerUser, { username: 'alice' });
-  call(alice, mod.createSpace, { name: 'notes', description: '' });
+  call(alice, mod.createProject, { space: 'alice', name: 'notes', description: '' });
   const id = h.db.project.fullName.find('alice/notes')!.id;
   const bytes = () => h.db.projectSize.projectId.find(id)?.bytes;
   return { h, call, alice, bytes };
@@ -37,10 +35,10 @@ describe('project sizes', () => {
     expect(bytes()).toBe(0n);
     const a = object('blob', text('hello\n'));
     const b = object('blob', text('a bit more text\n'));
-    call(alice, mod.putObjects, { space: 'alice/notes', objects: [a, b] });
+    call(alice, mod.putObjects, { project: 'alice/notes', objects: [a, b] });
     expect(bytes()).toBe(BigInt(a.data.length + b.data.length));
     // Objects the project already has are not counted again.
-    call(alice, mod.putObjects, { space: 'alice/notes', objects: [a, b] });
+    call(alice, mod.putObjects, { project: 'alice/notes', objects: [a, b] });
     expect(bytes()).toBe(BigInt(a.data.length + b.data.length));
   });
 
@@ -48,19 +46,11 @@ describe('project sizes', () => {
     const { call, alice, bytes } = hub();
     const data = new Uint8Array(CHUNK_SIZE + 10).fill(7);
     const big = object('blob', data);
-    call(alice, mod.putChunk, { space: 'alice/notes', oid: big.oid, idx: 0, data: data.subarray(0, CHUNK_SIZE) });
-    call(alice, mod.putChunk, { space: 'alice/notes', oid: big.oid, idx: 1, data: data.subarray(CHUNK_SIZE) });
+    call(alice, mod.putChunk, { project: 'alice/notes', oid: big.oid, idx: 0, data: data.subarray(0, CHUNK_SIZE) });
+    call(alice, mod.putChunk, { project: 'alice/notes', oid: big.oid, idx: 1, data: data.subarray(CHUNK_SIZE) });
     expect(bytes()).toBe(0n);
-    call(alice, mod.finishObject, { space: 'alice/notes', oid: big.oid, kind: 'blob', size: BigInt(data.length), chunks: 2 });
-    call(alice, mod.finishObject, { space: 'alice/notes', oid: big.oid, kind: 'blob', size: BigInt(data.length), chunks: 2 });
+    call(alice, mod.finishObject, { project: 'alice/notes', oid: big.oid, kind: 'blob', size: BigInt(data.length), chunks: 2 });
+    call(alice, mod.finishObject, { project: 'alice/notes', oid: big.oid, kind: 'blob', size: BigInt(data.length), chunks: 2 });
     expect(bytes()).toBe(BigInt(data.length));
-  });
-
-  it('are measured by the hub admin only, until every project is counted', () => {
-    const { call, alice } = hub();
-    const admin = as('admin');
-    call(admin, mod.claimAdmin);
-    expect(() => call(alice, mod.measureNextProject)).toThrow(/only the hub admin/);
-    expect(() => call(admin, mod.measureNextProject)).toThrow(/every project is measured/);
   });
 });

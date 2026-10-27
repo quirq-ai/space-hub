@@ -105,8 +105,8 @@ export class SpaceSync {
       for (const p of this.projects.values()) await this.pull(p);
       return false;
     }
-    conn.db.gitRef.onInsert((ctx, r) => ctx.event.tag !== 'SubscribeApplied' && this.changed(r.spaceId, r.name));
-    conn.db.gitRef.onUpdate((_ctx, _old, r) => this.changed(r.spaceId, r.name));
+    conn.db.gitRef.onInsert((ctx, r) => ctx.event.tag !== 'SubscribeApplied' && this.changed(r.projectId, r.name));
+    conn.db.gitRef.onUpdate((_ctx, _old, r) => this.changed(r.projectId, r.name));
     const done = new Promise<boolean>(resolve => {
       this.finish = resolve;
     });
@@ -162,12 +162,12 @@ export class SpaceSync {
   }
 
   private remoteOid(p: Project) {
-    return [...this.o.conn.db.gitRef.iter()].find(r => r.spaceId === p.id && r.name === `refs/heads/${p.branch}`)?.oid ?? '';
+    return [...this.o.conn.db.gitRef.iter()].find(r => r.projectId === p.id && r.name === `refs/heads/${p.branch}`)?.oid ?? '';
   }
 
   private async follow(p: Project) {
     if (p.paused) return this.check();
-    await this.subscribe(tables.gitRef.where(r => r.spaceId.eq(p.id)));
+    await this.subscribe(tables.gitRef.where(r => r.projectId.eq(p.id)));
     if (this.o.mode === 'watch') return void this.pull(p);
     if (!p.branch) {
       this.log(p.name, 'paused: not on a branch (an unfinished rebase or merge?)');

@@ -12,6 +12,5 @@ import {
 
 export default {
   space: __t.string(),
-  description: __t.option(__t.string()),
-  defaultBranch: __t.option(__t.string()),
+  description: __t.string(),
 };

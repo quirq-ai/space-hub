@@ -11,6 +11,7 @@ import {
 } from "spacetimedb";
 
 export default {
-  name: __t.string(),
-  description: __t.string(),
+  project: __t.string(),
+  description: __t.option(__t.string()),
+  defaultBranch: __t.option(__t.string()),
 };

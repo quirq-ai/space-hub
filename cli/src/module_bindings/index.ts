@@ -34,43 +34,39 @@ import {
 } from "spacetimedb";
 
 // Import all reducer arg schemas
-import AddMemberReducer from "./add_member_reducer";
+import AddProjectMemberReducer from "./add_project_member_reducer";
 import AddSpaceMemberReducer from "./add_space_member_reducer";
-import BackfillActivityReducer from "./backfill_activity_reducer";
 import ClaimAdminReducer from "./claim_admin_reducer";
 import ConnectAgentReducer from "./connect_agent_reducer";
 import CreateAgentReducer from "./create_agent_reducer";
 import CreateOrgReducer from "./create_org_reducer";
 import CreateProjectReducer from "./create_project_reducer";
-import CreateSpaceReducer from "./create_space_reducer";
 import DeleteAgentReducer from "./delete_agent_reducer";
 import DeleteBuilderReducer from "./delete_builder_reducer";
 import DeleteOrgReducer from "./delete_org_reducer";
-import DeleteSpaceReducer from "./delete_space_reducer";
+import DeleteProjectReducer from "./delete_project_reducer";
 import DisconnectAgentReducer from "./disconnect_agent_reducer";
-import EditHubSpaceReducer from "./edit_hub_space_reducer";
+import EditProjectReducer from "./edit_project_reducer";
 import EditSpaceReducer from "./edit_space_reducer";
 import FinishObjectReducer from "./finish_object_reducer";
 import GithubLinkBuilderReducer from "./github_link_builder_reducer";
-import LeaveSpaceReducer from "./leave_space_reducer";
 import LinkSpaceReducer from "./link_space_reducer";
-import MeasureNextProjectReducer from "./measure_next_project_reducer";
-import MigrateSpacesReducer from "./migrate_spaces_reducer";
 import PutChunkReducer from "./put_chunk_reducer";
 import PutObjectsReducer from "./put_objects_reducer";
 import RecordRefSyncReducer from "./record_ref_sync_reducer";
 import RegisterUserReducer from "./register_user_reducer";
-import RemoveMemberReducer from "./remove_member_reducer";
+import RemoveProjectMemberReducer from "./remove_project_member_reducer";
 import RemoveSpaceMemberReducer from "./remove_space_member_reducer";
 import RequestSyncReducer from "./request_sync_reducer";
 import SetAccountsReducer from "./set_accounts_reducer";
-import SetBuilderReducer from "./set_builder_reducer";
 import SetLinkStatusReducer from "./set_link_status_reducer";
+import SetProjectBuilderReducer from "./set_project_builder_reducer";
 import StartImportReducer from "./start_import_reducer";
 import UnlinkSpaceReducer from "./unlink_space_reducer";
+import UnwatchReducer from "./unwatch_reducer";
 import UpdateImportReducer from "./update_import_reducer";
 import UpdateRefReducer from "./update_ref_reducer";
-import WatchHubReducer from "./watch_hub_reducer";
+import WatchProjectReducer from "./watch_project_reducer";
 import WatchSpaceReducer from "./watch_space_reducer";
 import XoLinkAgentReducer from "./xo_link_agent_reducer";
 import XoPutRecordReducer from "./xo_put_record_reducer";
@@ -83,7 +79,6 @@ import ActivityRow from "./activity_table";
 import AgentRow from "./agent_table";
 import GitObjectRow from "./git_object_table";
 import GitRefRow from "./git_ref_table";
-import HubSpaceRow from "./hub_space_table";
 import ObjectChunkRow from "./object_chunk_table";
 import PresenceRow from "./presence_table";
 import ProjectRow from "./project_table";
@@ -92,6 +87,7 @@ import ProjectImportRow from "./project_import_table";
 import ProjectMemberRow from "./project_member_table";
 import ProjectSizeRow from "./project_size_table";
 import RefSyncRow from "./ref_sync_table";
+import SpaceRow from "./space_table";
 import SpaceLinkRow from "./space_link_table";
 import SpaceRoleRow from "./space_role_table";
 import UserRow from "./user_table";
@@ -109,8 +105,8 @@ const tablesSchema = __schema({
       { accessor: 'id', name: 'activity_id_idx_btree', algorithm: 'btree', columns: [
         'id',
       ] },
-      { accessor: 'spaceId', name: 'activity_space_id_idx_btree', algorithm: 'btree', columns: [
-        'spaceId',
+      { accessor: 'projectId', name: 'activity_project_id_idx_btree', algorithm: 'btree', columns: [
+        'projectId',
       ] },
     ],
     constraints: [
@@ -141,8 +137,8 @@ const tablesSchema = __schema({
       { accessor: 'key', name: 'git_object_key_idx_btree', algorithm: 'btree', columns: [
         'key',
       ] },
-      { accessor: 'bySpacePos', name: 'git_object_space_id_pos_idx_btree', algorithm: 'btree', columns: [
-        'spaceId',
+      { accessor: 'byProjectPos', name: 'git_object_project_id_pos_idx_btree', algorithm: 'btree', columns: [
+        'projectId',
         'pos',
       ] },
     ],
@@ -160,8 +156,8 @@ const tablesSchema = __schema({
       { accessor: 'key', name: 'git_ref_key_idx_btree', algorithm: 'btree', columns: [
         'key',
       ] },
-      { accessor: 'spaceId', name: 'git_ref_space_id_idx_btree', algorithm: 'btree', columns: [
-        'spaceId',
+      { accessor: 'projectId', name: 'git_ref_project_id_idx_btree', algorithm: 'btree', columns: [
+        'projectId',
       ] },
     ],
     constraints: [
@@ -169,20 +165,6 @@ const tablesSchema = __schema({
       { name: 'git_ref_key_key', constraint: 'unique', columns: ['key'] },
     ],
   }, GitRefRow),
-  hubSpace: __table({
-    name: 'hub_space',
-    indexes: [
-      { accessor: 'kind', name: 'hub_space_kind_idx_btree', algorithm: 'btree', columns: [
-        'kind',
-      ] },
-      { accessor: 'name', name: 'hub_space_name_idx_btree', algorithm: 'btree', columns: [
-        'name',
-      ] },
-    ],
-    constraints: [
-      { name: 'hub_space_name_key', constraint: 'unique', columns: ['name'] },
-    ],
-  }, HubSpaceRow),
   objectChunk: __table({
     name: 'object_chunk',
     indexes: [
@@ -192,8 +174,8 @@ const tablesSchema = __schema({
       { accessor: 'key', name: 'object_chunk_key_idx_btree', algorithm: 'btree', columns: [
         'key',
       ] },
-      { accessor: 'bySpaceOid', name: 'object_chunk_space_id_oid_idx_btree', algorithm: 'btree', columns: [
-        'spaceId',
+      { accessor: 'byProjectOid', name: 'object_chunk_project_id_oid_idx_btree', algorithm: 'btree', columns: [
+        'projectId',
         'oid',
       ] },
     ],
@@ -208,14 +190,78 @@ const tablesSchema = __schema({
       { accessor: 'connectionId', name: 'presence_connection_id_idx_btree', algorithm: 'btree', columns: [
         'connectionId',
       ] },
-      { accessor: 'spaceId', name: 'presence_space_id_idx_btree', algorithm: 'btree', columns: [
-        'spaceId',
+      { accessor: 'projectId', name: 'presence_project_id_idx_btree', algorithm: 'btree', columns: [
+        'projectId',
       ] },
     ],
     constraints: [
       { name: 'presence_connection_id_key', constraint: 'unique', columns: ['connectionId'] },
     ],
   }, PresenceRow),
+  project: __table({
+    name: 'project',
+    indexes: [
+      { accessor: 'fullName', name: 'project_full_name_idx_btree', algorithm: 'btree', columns: [
+        'fullName',
+      ] },
+      { accessor: 'id', name: 'project_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'owner', name: 'project_owner_idx_btree', algorithm: 'btree', columns: [
+        'owner',
+      ] },
+    ],
+    constraints: [
+      { name: 'project_full_name_key', constraint: 'unique', columns: ['fullName'] },
+      { name: 'project_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, ProjectRow),
+  projectBuilder: __table({
+    name: 'project_builder',
+    indexes: [
+      { accessor: 'handle', name: 'project_builder_handle_idx_btree', algorithm: 'btree', columns: [
+        'handle',
+      ] },
+      { accessor: 'projectId', name: 'project_builder_project_id_idx_btree', algorithm: 'btree', columns: [
+        'projectId',
+      ] },
+    ],
+    constraints: [
+      { name: 'project_builder_project_id_key', constraint: 'unique', columns: ['projectId'] },
+    ],
+  }, ProjectBuilderRow),
+  projectImport: __table({
+    name: 'project_import',
+    indexes: [
+      { accessor: 'projectId', name: 'project_import_project_id_idx_btree', algorithm: 'btree', columns: [
+        'projectId',
+      ] },
+    ],
+    constraints: [
+      { name: 'project_import_project_id_key', constraint: 'unique', columns: ['projectId'] },
+    ],
+  }, ProjectImportRow),
+  projectMember: __table({
+    name: 'project_member',
+    indexes: [
+      { accessor: 'agent', name: 'project_member_agent_idx_btree', algorithm: 'btree', columns: [
+        'agent',
+      ] },
+      { accessor: 'id', name: 'project_member_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'key', name: 'project_member_key_idx_btree', algorithm: 'btree', columns: [
+        'key',
+      ] },
+      { accessor: 'projectId', name: 'project_member_project_id_idx_btree', algorithm: 'btree', columns: [
+        'projectId',
+      ] },
+    ],
+    constraints: [
+      { name: 'project_member_id_key', constraint: 'unique', columns: ['id'] },
+      { name: 'project_member_key_key', constraint: 'unique', columns: ['key'] },
+    ],
+  }, ProjectMemberRow),
   projectSize: __table({
     name: 'project_size',
     indexes: [
@@ -241,49 +287,20 @@ const tablesSchema = __schema({
       { name: 'ref_sync_key_key', constraint: 'unique', columns: ['key'] },
     ],
   }, RefSyncRow),
-  project: __table({
+  space: __table({
     name: 'space',
     indexes: [
-      { accessor: 'fullName', name: 'space_full_name_idx_btree', algorithm: 'btree', columns: [
-        'fullName',
+      { accessor: 'kind', name: 'space_kind_idx_btree', algorithm: 'btree', columns: [
+        'kind',
       ] },
-      { accessor: 'id', name: 'space_id_idx_btree', algorithm: 'btree', columns: [
-        'id',
-      ] },
-      { accessor: 'owner', name: 'space_owner_idx_btree', algorithm: 'btree', columns: [
-        'owner',
+      { accessor: 'name', name: 'space_name_idx_btree', algorithm: 'btree', columns: [
+        'name',
       ] },
     ],
     constraints: [
-      { name: 'space_full_name_key', constraint: 'unique', columns: ['fullName'] },
-      { name: 'space_id_key', constraint: 'unique', columns: ['id'] },
+      { name: 'space_name_key', constraint: 'unique', columns: ['name'] },
     ],
-  }, ProjectRow),
-  projectBuilder: __table({
-    name: 'space_builder',
-    indexes: [
-      { accessor: 'handle', name: 'space_builder_handle_idx_btree', algorithm: 'btree', columns: [
-        'handle',
-      ] },
-      { accessor: 'spaceId', name: 'space_builder_space_id_idx_btree', algorithm: 'btree', columns: [
-        'spaceId',
-      ] },
-    ],
-    constraints: [
-      { name: 'space_builder_space_id_key', constraint: 'unique', columns: ['spaceId'] },
-    ],
-  }, ProjectBuilderRow),
-  projectImport: __table({
-    name: 'space_import',
-    indexes: [
-      { accessor: 'spaceId', name: 'space_import_space_id_idx_btree', algorithm: 'btree', columns: [
-        'spaceId',
-      ] },
-    ],
-    constraints: [
-      { name: 'space_import_space_id_key', constraint: 'unique', columns: ['spaceId'] },
-    ],
-  }, ProjectImportRow),
+  }, SpaceRow),
   spaceLink: __table({
     name: 'space_link',
     indexes: [
@@ -295,27 +312,6 @@ const tablesSchema = __schema({
       { name: 'space_link_space_key', constraint: 'unique', columns: ['space'] },
     ],
   }, SpaceLinkRow),
-  projectMember: __table({
-    name: 'space_member',
-    indexes: [
-      { accessor: 'agent', name: 'space_member_agent_idx_btree', algorithm: 'btree', columns: [
-        'agent',
-      ] },
-      { accessor: 'id', name: 'space_member_id_idx_btree', algorithm: 'btree', columns: [
-        'id',
-      ] },
-      { accessor: 'key', name: 'space_member_key_idx_btree', algorithm: 'btree', columns: [
-        'key',
-      ] },
-      { accessor: 'spaceId', name: 'space_member_space_id_idx_btree', algorithm: 'btree', columns: [
-        'spaceId',
-      ] },
-    ],
-    constraints: [
-      { name: 'space_member_id_key', constraint: 'unique', columns: ['id'] },
-      { name: 'space_member_key_key', constraint: 'unique', columns: ['key'] },
-    ],
-  }, ProjectMemberRow),
   spaceRole: __table({
     name: 'space_role',
     indexes: [
@@ -356,43 +352,39 @@ const tablesSchema = __schema({
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
-  __reducerSchema("add_member", AddMemberReducer),
+  __reducerSchema("add_project_member", AddProjectMemberReducer),
   __reducerSchema("add_space_member", AddSpaceMemberReducer),
-  __reducerSchema("backfill_activity", BackfillActivityReducer),
   __reducerSchema("claim_admin", ClaimAdminReducer),
   __reducerSchema("connect_agent", ConnectAgentReducer),
   __reducerSchema("create_agent", CreateAgentReducer),
   __reducerSchema("create_org", CreateOrgReducer),
   __reducerSchema("create_project", CreateProjectReducer),
-  __reducerSchema("create_space", CreateSpaceReducer),
   __reducerSchema("delete_agent", DeleteAgentReducer),
   __reducerSchema("delete_builder", DeleteBuilderReducer),
   __reducerSchema("delete_org", DeleteOrgReducer),
-  __reducerSchema("delete_space", DeleteSpaceReducer),
+  __reducerSchema("delete_project", DeleteProjectReducer),
   __reducerSchema("disconnect_agent", DisconnectAgentReducer),
-  __reducerSchema("edit_hub_space", EditHubSpaceReducer),
+  __reducerSchema("edit_project", EditProjectReducer),
   __reducerSchema("edit_space", EditSpaceReducer),
   __reducerSchema("finish_object", FinishObjectReducer),
   __reducerSchema("github_link_builder", GithubLinkBuilderReducer),
-  __reducerSchema("leave_space", LeaveSpaceReducer),
   __reducerSchema("link_space", LinkSpaceReducer),
-  __reducerSchema("measure_next_project", MeasureNextProjectReducer),
-  __reducerSchema("migrate_spaces", MigrateSpacesReducer),
   __reducerSchema("put_chunk", PutChunkReducer),
   __reducerSchema("put_objects", PutObjectsReducer),
   __reducerSchema("record_ref_sync", RecordRefSyncReducer),
   __reducerSchema("register_user", RegisterUserReducer),
-  __reducerSchema("remove_member", RemoveMemberReducer),
+  __reducerSchema("remove_project_member", RemoveProjectMemberReducer),
   __reducerSchema("remove_space_member", RemoveSpaceMemberReducer),
   __reducerSchema("request_sync", RequestSyncReducer),
   __reducerSchema("set_accounts", SetAccountsReducer),
-  __reducerSchema("set_builder", SetBuilderReducer),
   __reducerSchema("set_link_status", SetLinkStatusReducer),
+  __reducerSchema("set_project_builder", SetProjectBuilderReducer),
   __reducerSchema("start_import", StartImportReducer),
   __reducerSchema("unlink_space", UnlinkSpaceReducer),
+  __reducerSchema("unwatch", UnwatchReducer),
   __reducerSchema("update_import", UpdateImportReducer),
   __reducerSchema("update_ref", UpdateRefReducer),
-  __reducerSchema("watch_hub", WatchHubReducer),
+  __reducerSchema("watch_project", WatchProjectReducer),
   __reducerSchema("watch_space", WatchSpaceReducer),
   __reducerSchema("xo_link_agent", XoLinkAgentReducer),
   __reducerSchema("xo_put_record", XoPutRecordReducer),
