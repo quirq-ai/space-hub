@@ -70,7 +70,7 @@ export function guideHome(ctx: GuideContext): string {
 <div class="guide">
 <div><h3>Who can use it</h3><ul>
 <li>Anyone can browse spaces and projects and clone them.</li>
-<li>To create projects or push, you need a builder login. ${github ? 'Sign up with your GitHub account from the CLI: your builder name is your GitHub login.' : 'Register at the top right, or with the CLI.'}</li></ul></div>
+<li>To create projects or push, you need a builder login. ${github ? 'Sign up with your GitHub account from the CLI: your builder name is your GitHub login.' : 'Register on the <a href="/-/signup">sign-up page</a>, or with the CLI.'}</li></ul></div>
 <div><h3>Get started</h3><ol>
 <li>Install the CLI (needs git and Node 22+):${code(cmd.install)}</li>
 ${github ? `<li>Log in to GitHub, then sign up with that account:${code(cmd.gh)}${code(cmd.login)}</li>` : `<li>Log in as a builder:${code(cmd.login)}</li>`}
@@ -111,7 +111,7 @@ export function guidePage(ctx: GuideContext): string {
 ${
   github
     ? `<li><b>Builders</b> can also create projects and orgs, push and import from GitHub. Sign up with your GitHub account: log in to GitHub with ${code(cmd.gh)} then run ${code(cmd.login)} Your builder name, and your personal space, are your GitHub login.</li>`
-    : `<li><b>Builders</b> can also create projects and orgs, push and import from GitHub. Register at the top right, or with ${code(cmd.login)}</li>`
+    : `<li><b>Builders</b> can also create projects and orgs, push and import from GitHub. Register on the <a href="/-/signup">sign-up page</a>, or with ${code(cmd.login)}</li>`
 }
 <li>A space's owners and members push to its projects. To let someone push to one project only, add them as a collaborator: ${code(cmd.collaborator)}</li>
 ${
@@ -123,7 +123,7 @@ ${
 
 <section id="how"><h2>How to use it</h2>
 <h3>In the browser</h3><ol>
-${github ? step('Sign up with the CLI (below), print your token with <code>spacehub auth token</code>, and paste it at <b>Sign in</b>.') : step('Register at the top right, and save the token you are shown.')}
+${github ? step('Sign up with the CLI (below), print your token with <code>spacehub auth token</code>, and paste it at <b>Sign in</b>.') : step('Register on the <a href="/-/signup">sign-up page</a>, and save the token you are shown.')}
 ${step('Click <b>New project</b>. Pick the space, then leave it empty or paste a GitHub URL to import that repository.')}
 ${step('Open a project to browse its files, commits and activity. Imported projects have <b>Sync from GitHub</b>.')}
 </ol>

@@ -378,7 +378,10 @@ and tools. On a phone the sidebar becomes a drawer and the dock a tab bar.
   writes. Agents and people reply by appending a line and pushing; the app
   shows it within seconds. Signed out, everything is readable.
 - **The server-rendered pages** stay at their addresses (tree, blob, raw,
-  commits, commit, refs, activity) and work without JavaScript.
+  commits, commit, refs, activity), work without JavaScript, and wear the
+  app's frame and look (`module/src/style.ts`): the same top bar, sidebar,
+  palette and light or dark theme. So do the guide, the builders pages and
+  the web service's forms (sign in, sign up, new project).
   `?view=code` on `/`, `/<space>` or `/<space>/<project>` shows the module's
   own hub, space and project pages.
 - **How it is served.** The proxy sends those three paths to the web service
@@ -601,7 +604,7 @@ module/src/chat.ts       chat turns from the app, committed to a conversation's 
 module/src/code.ts       the app's code views: branches, trees and files at a ref, history, diffs
 module/src/markdown.ts   safe Markdown for READMEs and .md files
 module/src/diff.ts       line diffs for commit pages
-module/src/style.ts      look and page frame, shared with the web service
+module/src/style.ts      the app's look and page frame for server-rendered pages, shared with the web service
 module/src/guide.ts      the guide's wording, for /-/guide and the home page
 module/src/store.ts      reads objects back out of the tables; who owns or belongs to a space
 module/src/sha1.ts       lets the database verify every object id

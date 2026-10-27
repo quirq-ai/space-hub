@@ -29,7 +29,7 @@
 import { PRESENCE_STALE_SECONDS, inSpace, ownsSpace, readObject, type Db } from './store';
 import { DELETE, INSERT, diffLines, toHunks } from './diff';
 import { renderMarkdown, type Resolve } from './markdown';
-import { esc, navFor, PAGE_CSP, shell } from './style';
+import { esc, navFor, PAGE_CSP, shell, sideFor } from './style';
 import { guideHome, guidePage } from './guide';
 
 export interface UiRequest {
@@ -277,6 +277,8 @@ export class Renderer {
   private refreshing = false;
   // Set by route() for pages the web service keeps live.
   live = false;
+  // Which place of the sidebar the page belongs to (set by route()).
+  current: 'home' | 'guide' | 'builders' | 'me' | '' = '';
 
   constructor(
     private db: Db,
@@ -321,12 +323,13 @@ export class Renderer {
 
   page(title: string, body: string, status = 200): UiResponse {
     const nav = this.base === null ? '' : navFor(this.viewer);
+    const side = this.base === null ? '' : sideFor(this.viewer, this.current);
     // Live pages update themselves; without JavaScript they fall back to
     // reloading while an import runs.
     const live = this.live && this.base !== null;
     const refresh = '<meta http-equiv="refresh" content="4">';
     const head = `${this.refreshing ? (live ? `<noscript>${refresh}</noscript>` : refresh) : ''}${live ? '<script src="/-/live.js" defer></script>' : ''}`;
-    return { status, headers: { 'content-type': 'text/html; charset=utf-8' }, body: shell(title, nav, body, head, this.link('')) };
+    return { status, headers: { 'content-type': 'text/html; charset=utf-8' }, body: shell(title, nav, body, head, this.link(''), side) };
   }
 
   notFound(message: string) {
@@ -1355,6 +1358,7 @@ ${bodyText ? `<pre>${esc(bodyText)}</pre>` : ''}
   route(segs: string[]): UiResponse {
     // The hub's own pages stay still; everything else follows its data.
     this.live = segs[0] !== '-' && segs[2] !== 'raw';
+    this.current = segs.length === 0 ? 'home' : segs[0] === '-' ? (segs[1] === 'guide' ? 'guide' : segs[1] === 'builders' ? 'builders' : '') : segs.length === 1 && segs[0] === this.viewer ? 'me' : '';
     if (segs.length === 0) return this.home();
     if (segs[0] === '-') return this.hubPage(segs.slice(1)) ?? this.notFound(`No page "${segs.join('/')}".`);
     // Old addresses of the hub's pages, unless a space took the name.

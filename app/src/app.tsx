@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Activity, Code2, Folder, FolderGit2, GitBranch, GitCommitHorizontal, Home, Users, User } from "lucide-react";
+import { Activity, BookOpen, Code2, Folder, FolderGit2, GitBranch, GitCommitHorizontal, Home, Users, User } from "lucide-react";
 import { placeUrl, viewUrl, type HubMeta, type Place, type ProjectMeta, type SpaceMeta, type View } from "@/api";
 import { useLive } from "@/hooks/use-live";
 import { recentProjects, rememberProject, useMe } from "@/hooks/use-me";
@@ -39,6 +39,10 @@ export function App() {
   const view = live.data ?? (kept.current?.key === placeKey ? kept.current.view : undefined);
   const meta = view?.meta;
 
+  // The search box of the server-rendered pages links to /#search.
+  useEffect(() => {
+    if (location.hash === "#search") { history.replaceState(null, "", location.pathname); setSearching(true); }
+  }, []);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); setSearching(true); }
@@ -69,6 +73,11 @@ export function App() {
   if (recent.length) sections.push({ title: "Recent", items: recent.map(name => { const [s, p] = name.split("/"); return { key: "r:" + name, label: name, href: placeUrl({ space: s, project: p }), icon: <FolderGit2 size={16} /> }; }) });
   const siblings = route.page === "project" ? space.data?.snapshot.directory.entries : route.page === "space" ? view?.snapshot.directory.entries : undefined;
   if (route.page !== "home" && siblings) sections.push({ title: place.space, items: siblings.slice(0, 14).map(entry => ({ key: "p:" + entry.name, label: entry.name, href: placeUrl({ space: place.space, project: entry.name }), icon: <FolderGit2 size={16} />, active: place.project === entry.name })) });
+  // The hub's own pages, rendered by the server in this same frame.
+  sections.push({ title: "The hub", items: [
+    { key: "guide", label: "Guide", href: "/-/guide", icon: <BookOpen size={16} /> },
+    { key: "builders", label: "Builders", href: "/-/builders", icon: <Users size={16} /> },
+  ] });
 
   // Dock: the places of where you are, then tools.
   let places: DockItem[] = [];

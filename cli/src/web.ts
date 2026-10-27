@@ -21,7 +21,7 @@
 import http from 'node:http';
 import { connectTo, errorMessage, findProject, findUser, quietSdkLogs, snapshot, tables, type Conn } from './conn';
 import { githubLogin, normalizeServer } from './config';
-import { esc, navFor, PAGE_CSP, shell } from '../../module/src/style';
+import { esc, navFor, PAGE_CSP, shell, sideFor } from '../../module/src/style';
 import { Fail, GithubSync, githubApi, githubBuilder as builderOf, githubInfo as infoOf, mirrorProject } from './github';
 import { LiveHub } from './live';
 import { accountsSetting, handleSignIn, signInConfig } from './signin';
@@ -84,7 +84,7 @@ function redirect(res: http.ServerResponse, to: string, cookies: string[] = []) 
 }
 
 function page(title: string, viewer: string | null, body: string) {
-  return shell(title, navFor(viewer), `<div class="narrow">${body}</div>`);
+  return shell(title, navFor(viewer), `<div class="narrow">${body}</div>`, '', '/', sideFor(viewer));
 }
 
 function cookieValue(req: http.IncomingMessage, name: string): string | null {
