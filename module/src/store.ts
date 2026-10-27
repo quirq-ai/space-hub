@@ -24,7 +24,7 @@ export function roleKey(space: string, member: string) {
   return `${space}:${member}`;
 }
 
-// Owners of a space: a personal space's builder, a team space's owner rows,
+// Owners of a space: a personal space's builder, an org's owner rows,
 // an agent's parent's owners. A space without a row yet (before
 // migrateSpaces) is a builder's personal space.
 export function ownsSpace(db: Db, space: string, actor: string | null, depth = 0): boolean {

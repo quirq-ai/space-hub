@@ -5,14 +5,14 @@ Git hosting stored in SpacetimeDB, laid out like GitHub:
 | GitHub | spacehub |
 | --- | --- |
 | user | **builder**: a person's login, with a personal space of the same name |
-| organization | **team space**: a collection of projects with owners and members |
+| organization | **org**: a collection of projects with owners and members |
 | repository | **project**, at `/<space>/<project>` |
-| org member | space member: pushes to every project in the space |
+| org member | org member: pushes to every project in the org |
 | repo collaborator | project collaborator: pushes to one project |
 | (none) | **agent**: a space with an identity of its own, connected to the spaces it works in and launched anywhere |
 
 Every top-level name (`/<name>`) is a **space**: a builder's personal space,
-a team space, or an agent. They all share one set of names, so any
+an org, or an agent. They all share one set of names, so any
 GitHub user or organization can have the same name here. **Builders** also
 means who made a project's code: GitHub accounts are credited for the
 repositories imported from them.
@@ -95,7 +95,7 @@ spacehub auth login            # Signed up on wss://hub.quirq.dev ... as builder
 spacehub auth token            # to sign in on the website too
 ```
 
-The name has to be free on the hub: if a team space or an older builder
+The name has to be free on the hub: if an org or an older builder
 already has it, sign-up stops and says so. Registering a name without GitHub
 (`spacehub auth login --builder <name>`, or the website's form) works only on
 hubs with open sign-up (`SPACEHUB_ACCOUNTS=open`), such as a local
@@ -104,7 +104,7 @@ development server. Agents are unchanged: their owners make them.
 ## Spaces and projects
 
 ```sh
-spacehub space create acme -d "our team"         # a team space; you are its owner
+spacehub space create acme -d "our team"         # an org; you are its owner
 spacehub space member add acme bob               # bob pushes to every acme project (--owner: manages it too)
 spacehub project create acme/site --source . --push
 spacehub project clone acme/site
@@ -115,9 +115,9 @@ spacehub project member add suraj/notes carol    # carol may push to this one pr
 - **Owners** of a space manage it: members, edits, imports, builder credits,
   deleting projects and the space. A personal space's owner is its builder.
 - **Members** push to every project of the space and create projects in it.
-  A member can remove itself; a team keeps at least one owner.
+  A member can remove itself; an org keeps at least one owner.
 - **Collaborators** push to one project.
-- A team space is deleted only when it has no projects left.
+- An org is deleted only when it has no projects left.
 
 Older forms keep working: `space` commands given `space/name`, a bare name
 that is not a space (it means your own project), or run inside a clone act
@@ -132,7 +132,7 @@ project `<agent>/home`, in the xo-agent-template layout (`SOUL.md`,
 `skills/`). Its owners are the owners of the space that owns it.
 
 ```sh
-spacehub agent create scout -d "reads the web"   # owned by your personal space (--in <team> for a team's)
+spacehub agent create scout -d "reads the web"   # owned by your personal space (--in <org> for an org's)
 spacehub agent connect scout acme                # it may push to acme's projects (you own both)
 spacehub agent run scout                         # run it here: ./scout/scout/home, ./scout/acme/<project>, ...
 spacehub agent token scout                       # its token, for its owners (XO Swarm launches with it)
@@ -155,7 +155,7 @@ its owners, who fetch the token from the hub.
 its token to the hub, which keeps it in the private `agent_secret` table.
 Only the agent's owners read it, through the `agent_token` procedure, whose
 answer goes to the caller alone. Reducer arguments never reach other
-clients. An agent identity cannot register as a builder, make team spaces or
+clients. An agent identity cannot register as a builder, make orgs or
 agents, or be connected anywhere without its owners.
 
 **What XO Swarm needs** to launch an agent in a Coworker workspace:
@@ -231,7 +231,7 @@ from GitHub** on a single project follow the same rules.
 
 Several builders and agents can work in one project at the same time.
 
-1. **Give them access.** Put the project in a team space and add everyone
+1. **Give them access.** Put the project in an org and add everyone
    as members, or add collaborators to one project.
 2. **Run autosync in each clone.** `spacehub project sync --watch --auto
    [--interval <seconds>]` (default 3) keeps the clone and its branch on the
@@ -352,8 +352,8 @@ rendered.
 
 | Path | Shows |
 | --- | --- |
-| `/` | All projects, most recently pushed first, each with its size, and what all spaces store together; below them the hub's **Activity** feed (`?page=2` for older); plus who is here now, team spaces (with their sizes) and builders |
-| `/<space>` | A builder's personal space (its projects, and the spaces and projects it belongs to) or a team space (its projects, owners and members, who is here), with what the space stores |
+| `/` | All projects, most recently pushed first, each with its size, and what all spaces store together; below them the hub's **Activity** feed (`?page=2` for older); plus who is here now, orgs (with their sizes) and builders |
+| `/<space>` | A builder's personal space (its projects, and the spaces and projects it belongs to) or an org (its projects, owners and members, who is here), with what the space stores |
 | `/<space>/<project>` | Files at the default branch, each with its last commit; the README rendered as Markdown; clone commands, **Here now**, its space and collaborators, its size, commit, branch and tag counts |
 | `/<space>/<project>/tree/<ref>/<path>` | A folder at a branch, tag or commit, with a branch/tag picker |
 | `/<space>/<project>/blob/<ref>/<path>` | A file. Code has linkable line numbers (`#L12`); Markdown is rendered (`?plain=1` shows the source); images are shown |
@@ -373,7 +373,7 @@ page. That covers:
 
 - builders joining;
 - projects created, edited and deleted;
-- team spaces created, edited and deleted, and their members joining or
+- orgs created, edited and deleted, and members of any space joining or
   leaving;
 - builder credits;
 - collaborators added, removed or leaving;
@@ -394,7 +394,7 @@ branch and tag's latest push. Deleted projects stay in the hub feed.
   GitHub's display name. Importing `anthropics/claude-code` shows "Built by
   Anthropic", linking to `/-/builders/anthropics`.
 - A project a builder pushed is credited to that builder: the personal
-  space's builder, or whoever created it in a team space.
+  space's builder, or whoever created it in an org.
 - An owner can credit a GitHub account by hand, for example for a repo
   pushed from a local clone instead of imported:
   `spacehub project edit <project> --builder anthropics` (or a github.com URL),
@@ -460,7 +460,7 @@ docker run --rm -it -e SPACEHUB_SERVER=wss://hub.example.com \
 | --- | --- |
 | `gh auth login` | `spacehub auth login [--server url]`: with GitHub (a device code on a hub with an OAuth App, else the account gh has logged in here). `--with-token` takes a token from `auth token`; `--builder name` registers a name on hubs with open sign-up (`--agent`, `--username` are aliases) |
 | `gh auth status` / `token` / `logout` | `spacehub auth status` / `token` / `logout --yes` |
-| (delete your account) | `spacehub auth delete --yes`: the builder, its projects and agents, its places in team spaces and its activity history; its name is free again. A team's last owner adds another owner first |
+| (delete your account) | `spacehub auth delete --yes`: the builder, its projects and agents, its places in orgs and its activity history; its name is free again. An org's last owner adds another owner first |
 | `gh repo create name --source . --push` | `spacehub project create [space/]name --source . --push` |
 | `gh repo list [owner]` | `spacehub project list [space]` |
 | `gh repo view [repo]` | `spacehub project view [project]` |
@@ -553,14 +553,14 @@ scripts/                 setup.sh, install-cli.sh, e2e.sh
 
 **Data model**
 
-Stored names predate team spaces: the `space` table holds projects and
+Stored names predate orgs: the `space` table holds projects and
 `space_id` columns hold a project's id, because SpacetimeDB cannot rename
 tables or columns in place. In the code they are called projects.
 
 | Table | Key | Holds |
 | --- | --- | --- |
 | `user` | identity | a builder's name |
-| `hub_space` | name | a top-level space: `personal` (a builder's), `team` or `agent` (with its parent space); display name, description, creator |
+| `hub_space` | name | a top-level space: `personal` (a builder's), `org` or `agent` (with its parent space); display name, description, creator |
 | `space_role` | space + member | a space's owners and members |
 | `space` | `space/project` | a project: its space (`owner`), description, default branch, object counters, timestamps |
 | `space_import` | project | GitHub source, import status |
@@ -611,9 +611,13 @@ the next `client_connected` once its heartbeat is three minutes old, and
 pages and `project who` hide it as soon as it is stale.
 
 **Compatibility.** Reducers that act on one repository keep their names
-from before team spaces (`create_space`, `edit_space`, `delete_space`,
+from before orgs (`create_space`, `edit_space`, `delete_space`,
 `add_member`, ...), with the project's full name as their `space` argument,
 so older CLIs keep pushing, cloning and syncing after an upgrade.
+Orgs were called team spaces until 0.3: `migrate_spaces` rewrites stored
+`team` spaces and their activity to `org` once, and `create_team` and
+`delete_team` are now `create_org` and `delete_org`, so a CLI from before
+needs an update to create or delete orgs.
 
 ## xo
 
@@ -659,11 +663,11 @@ the record's version, and `xo_link_agent`).
   the history elsewhere if that matters. It skips commit hooks.
 - Anyone with a GitHub account can sign up (with `SPACEHUB_ACCOUNTS=open`,
   anyone who can reach the server registers any free name; with
-  `SPACEHUB_ACCOUNTS=xo`, only xo makes builders). Builders can create team
-  spaces and import public GitHub repositories (up to
+  `SPACEHUB_ACCOUNTS=xo`, only xo makes builders). Builders can create orgs
+  and import public GitHub repositories (up to
   `SPACEHUB_IMPORT_MAX_MB` each). Keep that in mind before exposing a server
   publicly.
-- Team space names are not checked against GitHub: a team space can take a
+- Org names are not checked against GitHub: an org can take a
   name that a GitHub user would later want, and that user then cannot sign
   up until the admin frees it.
 - GitHub sign-up sends the token `gh` holds (often with wide scopes) to the

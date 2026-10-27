@@ -419,36 +419,36 @@ else
   check "which leaves too" as gh2 spacehub auth delete --yes
 fi
 
-echo "team spaces"
-TEAM="team$RUN"; CAROL="carol$RUN"; T="$WORK/t"
+echo "orgs"
+ORG="org$RUN"; CAROL="carol$RUN"; T="$WORK/t"
 check "a third builder" as carol spacehub auth login --builder "$CAROL"
-check "create a team space" as alice spacehub space create "$TEAM" -d "e2e team"
-expect_fail "builders and team spaces share names" "taken" as alice spacehub space create "$BOB"
-check "space list shows the team" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub space list | grep -q '^$TEAM  *team'"
+check "create an org" as alice spacehub space create "$ORG" -d "e2e org"
+expect_fail "builders and orgs share names" "taken" as alice spacehub space create "$BOB"
+check "space list shows the org" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub space list | grep -q '^$ORG  *org '"
 check "every builder has a personal space" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub space list $ALICE | grep -q '^$ALICE  *builder'"
 git init -q -b main "$T"; (cd "$T" && echo site >index.html && git add . && commit -m site)
-expect_fail "only members create projects in a team" "permission denied" as bob spacehub project create "$TEAM/site"
-expect_fail "only owners add members" "permission denied" as bob spacehub space member add "$TEAM" "$BOB"
-check "the owner adds a member" as alice spacehub space member add "$TEAM" "$BOB"
-check "member list shows owner and member" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub space member list $TEAM | tr -s ' ' | grep -q '^$BOB member$'"
-check "a member creates a project in the team and pushes" as bob spacehub project create "$TEAM/site" --source "$T" --push
-same "the project lives at <team>/<project>" "$(as bob git -C "$T" ls-remote quirq refs/heads/main | cut -f1)" "$(git -C "$T" rev-parse HEAD)"
-expect_fail "builders outside the team cannot push" "permission denied" \
+expect_fail "only members create projects in an org" "permission denied" as bob spacehub project create "$ORG/site"
+expect_fail "only owners add members" "permission denied" as bob spacehub space member add "$ORG" "$BOB"
+check "the owner adds a member" as alice spacehub space member add "$ORG" "$BOB"
+check "member list shows owner and member" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub space member list $ORG | tr -s ' ' | grep -q '^$BOB member$'"
+check "a member creates a project in the org and pushes" as bob spacehub project create "$ORG/site" --source "$T" --push
+same "the project lives at <org>/<project>" "$(as bob git -C "$T" ls-remote quirq refs/heads/main | cut -f1)" "$(git -C "$T" rev-parse HEAD)"
+expect_fail "builders outside the org cannot push" "permission denied" \
   bash -c "cd '$T' && echo x >>index.html && git -c user.name=e2e -c user.email=e2e@example.com commit -qam x && SPACEHUB_HOME='$WORK/home-carol' git push quirq main"
 git -C "$T" reset -q --hard HEAD~1
-check "space view shows the team" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub space view $TEAM | grep -q 'members   $BOB'"
-page_has "the team page lists its projects" "$TEAM" "site"
-check "and its members" bash -c "curl -sf '$(ui "$TEAM")' | grep -q 'members\"><table><tr><td><a[^>]*><b>$ALICE</b>'"
-page_has "the project names its space" "$TEAM/site" '<span class="pill">team</span>'
-page_has "the project credits the builder who made it" "$TEAM/site" "Built by"
-page_has "team changes appear in the activity" "" "created the team space"
-same "the web form refuses spaces you are not in" "$(form /-/new "space=$TEAM" name=nope | cut -d' ' -f1)" "400"
-expect_fail "a team with projects cannot be deleted" "still has" as alice spacehub space delete "$TEAM" --yes
-check "a member can leave" as bob spacehub space member remove "$TEAM" "$BOB"
+check "space view shows the org" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub space view $ORG | grep -q 'members   $BOB'"
+page_has "the org page lists its projects" "$ORG" "site"
+check "and its members" bash -c "curl -sf '$(ui "$ORG")' | grep -q 'members\"><table><tr><td><a[^>]*><b>$ALICE</b>'"
+page_has "the project names its space" "$ORG/site" '<span class="pill">org</span>'
+page_has "the project credits the builder who made it" "$ORG/site" "Built by"
+page_has "org changes appear in the activity" "" "created the org"
+same "the web form refuses spaces you are not in" "$(form /-/new "space=$ORG" name=nope | cut -d' ' -f1)" "400"
+expect_fail "an org with projects cannot be deleted" "still has" as alice spacehub space delete "$ORG" --yes
+check "a member can leave" as bob spacehub space member remove "$ORG" "$BOB"
 page_has "leaving appears in the activity" "" "left <a"
-check "delete the team's project" as alice spacehub project delete "$TEAM/site" --yes
-check "then the empty team" as alice spacehub space delete "$TEAM" --yes
-status_is "a deleted team is gone" "$TEAM" 404
+check "delete the org's project" as alice spacehub project delete "$ORG/site" --yes
+check "then the empty org" as alice spacehub space delete "$ORG" --yes
+status_is "a deleted org is gone" "$ORG" 404
 
 echo "GitHub links"
 if [[ -n "${SPACEHUB_E2E_SERVER:-}" || "${SPACEHUB_E2E_GITHUB:-}" == 1 ]]; then
@@ -481,7 +481,7 @@ listed() { as alice spacehub project list "$MIRROR" | grep -q "^$MIRROR/$1 "; }
 synced() { as alice spacehub space view "$MIRROR" | grep -q "^github .*(synced"; }
 gh_commit one README.md "one v1"; gh_commit two README.md "two v1"; gh_commit two old.txt "an old branch" old
 gh_list one two
-check "a team space to mirror GitHub into" as alice spacehub space create "$MIRROR"
+check "an org to mirror GitHub into" as alice spacehub space create "$MIRROR"
 expect_fail "only owners link a space" "permission denied" as bob spacehub space link "$MIRROR" "https://github.com/$ORG"
 check "link it to a GitHub organization" as alice spacehub space link "$MIRROR" "https://github.com/$ORG"
 both_listed() { listed one && listed two; }
@@ -621,7 +621,7 @@ kill "$LIVE_PID" 2>/dev/null; wait "$LIVE_PID" 2>/dev/null || true
 
 echo "whole spaces"
 WS="ws$RUN"; WA="$WORK/ws-alice"; WB="$WORK/ws-bob"
-check "a team space with two projects" as alice spacehub space create "$WS"
+check "an org with two projects" as alice spacehub space create "$WS"
 check "and a member" as alice spacehub space member add "$WS" "$BOB"
 for name in one two; do
   git init -q -b main "$WORK/src-$name"; (cd "$WORK/src-$name" && echo "$name" >shared.txt && git add . && commit -m "$name")
@@ -665,21 +665,21 @@ check "space sync once fast-forwards the folder" bash -c "cd '$WB' && SPACEHUB_H
 check "space sync inside one project's clone syncs just that project" bash -c "cd '$WB/three' && SPACEHUB_HOME='$WORK/home-bob' spacehub space sync >/dev/null 2>&1"
 
 echo "agents"
-AG="scout$RUN"; AT="agteam$RUN"; AT2="agmore$RUN"; AW="$WORK/agent-run"
+AG="scout$RUN"; AT="agorg$RUN"; AT2="agmore$RUN"; AW="$WORK/agent-run"
 check "create an agent" as alice spacehub agent create "$AG" -d "e2e agent"
 check "with its definition in <agent>/home" bash -c "SPACEHUB_HOME='$WORK/home-alice' git ls-remote '$HUB/$AG/home' refs/heads/main | grep -q main"
 page_has "in the xo-agent-template layout" "$AG/home" "SOUL.md"
 page_has "the agent has a page" "$AG" "Not running."
 page_has "the builder's page lists it" "$ALICE" ">$AG</b>"
-expect_fail "agents share names with builders and teams" "taken" as alice spacehub agent create "$BOB"
+expect_fail "agents share names with builders and orgs" "taken" as alice spacehub agent create "$BOB"
 expect_fail "only its owners read its token" "permission denied" as bob spacehub agent token "$AG"
 AG_TOKEN="$(as alice spacehub agent token "$AG")"
 same "its owners do" "${AG_TOKEN:0:3}" "eyJ"
-check "a team space for it to work in" as alice spacehub space create "$AT"
+check "an org for it to work in" as alice spacehub space create "$AT"
 git init -q -b main "$WORK/src-work"; (cd "$WORK/src-work" && echo work >notes.txt && git add . && commit -m work)
 as alice spacehub project create "$AT/work" --source "$WORK/src-work" --push >/dev/null 2>&1
 expect_fail "others cannot connect it to their spaces" "permission denied" as bob spacehub agent connect "$AG" "$BOB"
-check "connect it to the team" as alice spacehub agent connect "$AG" "$AT"
+check "connect it to the org" as alice spacehub agent connect "$AG" "$AT"
 check "agent list shows the connection" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub agent list | grep -q '^$AG .*connected to $AT'"
 # As XO Swarm launches it: logged in as the agent itself.
 (env SPACEHUB_TOKEN="$AG_TOKEN" SPACEHUB_HOME="$WORK/home-agent" spacehub agent run "$AG" "$AW" --interval 0.5 --host e2e-host >"$WORK/agent.log" 2>&1) &
@@ -755,20 +755,20 @@ LEAVER="leaver$RUN"; KEEP="keep$RUN"
 check "a builder who will leave" as leaver spacehub auth login --builder "$LEAVER"
 git init -q -b main "$WORK/src-leaver"; (cd "$WORK/src-leaver" && echo bye >bye.txt && git add . && commit -m bye)
 check "with a project" as leaver spacehub project create gone --source "$WORK/src-leaver" --push
-check "and a team space it owns alone" as leaver spacehub space create "$KEEP"
-expect_fail "the last owner of a team cannot leave" "last owner of $KEEP" as leaver spacehub auth delete --yes
+check "and an org it owns alone" as leaver spacehub space create "$KEEP"
+expect_fail "the last owner of an org cannot leave" "last owner of $KEEP" as leaver spacehub auth delete --yes
 check "so it adds another owner" as leaver spacehub space member add "$KEEP" "$ALICE" --owner
 expect_fail "deleting needs --yes, and says what goes" "for good, with 1 projects: gone" as leaver spacehub auth delete
 check "and deletes itself" as leaver spacehub auth delete --yes
 status_is "its space is gone" "$LEAVER" 404
 expect_fail "and so is its project" "does not exist" as alice git ls-remote "$HUB/$LEAVER/gone"
-check "its team stays, with the other owner" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub space member list $KEEP | grep -q '^$ALICE  *owner'"
+check "its org stays, with the other owner" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub space member list $KEEP | grep -q '^$ALICE  *owner'"
 gone_from_feed() { local body; body="$(curl -sf "$(ui "")")" || return 1; ! grep -q "$LEAVER" <<<"$body"; }
 check "nothing on the hub mentions it any more" gone_from_feed
 check "it is logged out" bash -c "SPACEHUB_HOME='$WORK/home-leaver' spacehub auth status | grep -q 'not logged in'"
 check "and its name is free again" as leaver2 spacehub auth login --builder "$LEAVER"
 check "which can leave too" as leaver2 spacehub auth delete --yes
-check "delete the kept team" as alice spacehub space delete "$KEEP" --yes
+check "delete the kept org" as alice spacehub space delete "$KEEP" --yes
 
 echo "clean up"
 expect_fail "delete needs --yes" "--yes" as alice spacehub project delete "$NOTES"

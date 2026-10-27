@@ -40,13 +40,13 @@ import BackfillActivityReducer from "./backfill_activity_reducer";
 import ClaimAdminReducer from "./claim_admin_reducer";
 import ConnectAgentReducer from "./connect_agent_reducer";
 import CreateAgentReducer from "./create_agent_reducer";
+import CreateOrgReducer from "./create_org_reducer";
 import CreateProjectReducer from "./create_project_reducer";
 import CreateSpaceReducer from "./create_space_reducer";
-import CreateTeamReducer from "./create_team_reducer";
 import DeleteAgentReducer from "./delete_agent_reducer";
 import DeleteBuilderReducer from "./delete_builder_reducer";
+import DeleteOrgReducer from "./delete_org_reducer";
 import DeleteSpaceReducer from "./delete_space_reducer";
-import DeleteTeamReducer from "./delete_team_reducer";
 import DisconnectAgentReducer from "./disconnect_agent_reducer";
 import EditHubSpaceReducer from "./edit_hub_space_reducer";
 import EditSpaceReducer from "./edit_space_reducer";
@@ -362,13 +362,13 @@ const reducersSchema = __reducers(
   __reducerSchema("claim_admin", ClaimAdminReducer),
   __reducerSchema("connect_agent", ConnectAgentReducer),
   __reducerSchema("create_agent", CreateAgentReducer),
+  __reducerSchema("create_org", CreateOrgReducer),
   __reducerSchema("create_project", CreateProjectReducer),
   __reducerSchema("create_space", CreateSpaceReducer),
-  __reducerSchema("create_team", CreateTeamReducer),
   __reducerSchema("delete_agent", DeleteAgentReducer),
   __reducerSchema("delete_builder", DeleteBuilderReducer),
+  __reducerSchema("delete_org", DeleteOrgReducer),
   __reducerSchema("delete_space", DeleteSpaceReducer),
-  __reducerSchema("delete_team", DeleteTeamReducer),
   __reducerSchema("disconnect_agent", DisconnectAgentReducer),
   __reducerSchema("edit_hub_space", EditHubSpaceReducer),
   __reducerSchema("edit_space", EditSpaceReducer),

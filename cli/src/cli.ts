@@ -1,6 +1,6 @@
 // spacehub: the client for a spacehub server, shaped like gh. `auth` manages
 // who you are on which server, `space` manages the hub's top-level spaces
-// (builders' personal spaces and team spaces), and `project` (alias `repo`)
+// (builders' personal spaces, orgs and agents), and `project` (alias `repo`)
 // manages the git projects inside them. Moving code is plain git through
 // git-remote-quirq, on a remote always named quirq that points at a quirq URL
 // (quirq://hub.quirq.dev/<space>/<project>).
@@ -21,12 +21,12 @@ import { deviceSignIn } from './devicelogin';
 
 quietSdkLogs();
 
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
 
 const HELP = `spacehub: git hosting on SpacetimeDB, laid out like GitHub
 
   space    a top-level name, like a GitHub user or organization: a builder's
-           personal space, a team space, or an agent
+           personal space, an org (like a GitHub organization), or an agent
   project  a git repository in a space: <space>/<project>
   builder  a person's login (with a personal space of the same name)
   agent    a space with an identity of its own: launched, connected to spaces
@@ -46,14 +46,14 @@ AUTH
   auth token      Print the identity token (log in elsewhere with --with-token)
   auth logout     Forget the token for the current server  [--yes]
   auth delete     Delete this builder from the server: its projects, agents, places in
-                    team spaces and activity history; its name is free again  [--yes]
+                    orgs and activity history; its name is free again  [--yes]
 
 SPACES
-  space create <team> [-d <text>]          Create a team space (you are its owner)
+  space create <org> [-d <text>]           Create an org (you are its owner)
   space list [<builder>]                   List spaces (or the ones a builder belongs to)
   space view <space>                       Kind, owners, members and projects
   space edit <space> --description <text>
-  space delete <team> --yes                Delete an empty team space
+  space delete <org> --yes                 Delete an empty org
   space member add <space> <name> [--owner]   Add a builder as a member (or owner)
   space member remove <space> <name>          (a member can remove itself)
   space member list <space>
@@ -70,7 +70,7 @@ SPACES
 
 AGENTS
   agent create <name> [--in <space>] [-d <text>] [--template <git url>] [--no-home]
-                                    An agent owned by your personal space (or a team you own),
+                                    An agent owned by your personal space (or an org you own),
                                     with its definition in <name>/home (xo-agent-template layout)
   agent list [<space>]                     Agents, where they are connected and where they run
   agent view <agent>
@@ -547,7 +547,7 @@ function authLogout(args: string[]) {
 }
 
 // This builder leaves the hub, with its projects and agents. What the hub
-// would refuse (being the last owner of a team) is read from the hub's rows
+// would refuse (being the last owner of an org) is read from the hub's rows
 // right before the first delete, and the projects and agents to delete are
 // read then too, so nothing is deleted for a builder the hub then keeps.
 async function authDelete(args: string[]) {
@@ -574,7 +574,7 @@ async function authDelete(args: string[]) {
     const list = (items: string[]) => (items.length ? `: ${items.join(', ')}` : '');
     die(
       `this deletes the builder ${name} on ${server} for good, with ${projects.length} projects${list(projects.map(p => p.name))}, ` +
-        `${agents.length} agents${list(agents)}, its places in team spaces and its activity history; re-run with --yes`
+        `${agents.length} agents${list(agents)}, its places in orgs and its activity history; re-run with --yes`
     );
   }
   await refuseLastOwner();
@@ -893,12 +893,12 @@ async function spaceCreate(args: string[]) {
     return projectCreate(args);
   }
   const description = opt(args, '-d', '--description') ?? '';
-  const name = args[0] ?? die('usage: spacehub space create <team> [-d <text>]');
+  const name = args[0] ?? die('usage: spacehub space create <org> [-d <text>]');
   const { conn } = await open();
-  await conn.reducers.createTeam({ name, description });
-  const team = name.toLowerCase();
-  out(`Created team space ${team}`);
-  out(`\n  spacehub space member add ${team} <builder>\n  spacehub project create ${team}/<project> --source . --push`);
+  await conn.reducers.createOrg({ name, description });
+  const org = name.toLowerCase();
+  out(`Created the org ${org}`);
+  out(`\n  spacehub space member add ${org} <builder>\n  spacehub project create ${org}/<project> --source . --push`);
 }
 
 async function spaceList(args: string[]) {
@@ -936,7 +936,7 @@ async function spaceView(args: string[]) {
   out(`${sp.displayName || sp.name}${sp.displayName && sp.displayName !== sp.name ? ` (${sp.name})` : ''}`);
   if (sp.description) out(sp.description);
   out();
-  out(`kind      ${sp.kind === 'personal' ? "a builder's personal space" : sp.kind === 'team' ? 'team space' : sp.kind}`);
+  out(`kind      ${sp.kind === 'personal' ? "a builder's personal space" : sp.kind === 'org' ? 'an org' : sp.kind}`);
   if (sp.kind === 'agent') out(`owned by  ${sp.parent}`);
   out(`created   ${when(sp.createdAt)} by ${sp.createdBy}`);
   const owners = sp.kind === 'personal' ? [sp.name] : roles.filter(r => r.role === 'owner').map(r => r.member);
@@ -964,17 +964,17 @@ async function spaceEdit(args: string[]) {
 }
 
 async function spaceDelete(args: string[]) {
-  const target = await spaceOrProject(firstPositional(args) ?? die('usage: spacehub space delete <team> --yes'));
+  const target = await spaceOrProject(firstPositional(args) ?? die('usage: spacehub space delete <org> --yes'));
   if ('project' in target) return projectDelete(args);
-  if (!bool(args, '--yes', '-y')) die(`this deletes the team space ${target.space}; re-run with --yes`);
+  if (!bool(args, '--yes', '-y')) die(`this deletes the org ${target.space}; re-run with --yes`);
   const { conn } = await open();
-  await conn.reducers.deleteTeam({ space: target.space });
+  await conn.reducers.deleteOrg({ space: target.space });
   out(`Deleted ${target.space}`);
 }
 
 // space member add|remove <space> <name> [--owner], space member list <space>.
 // Given a project (space/name, or one argument inside a clone), these are the
-// project's collaborators, as before team spaces.
+// project's collaborators, as before orgs.
 async function spaceMember(args: string[]) {
   const sub = args[0];
   const owner = args.includes('--owner');
@@ -1118,7 +1118,7 @@ async function spaceWho(args: string[]) {
 
 async function requireAgent(name: string) {
   const sp = await requireHubSpace(name);
-  if (sp.kind !== 'agent') die(`"${name}" is a ${sp.kind === 'personal' ? "builder's" : sp.kind} space, not an agent`);
+  if (sp.kind !== 'agent') die(`"${name}" is ${sp.kind === 'personal' ? "a builder's personal space" : sp.kind === 'org' ? 'an org' : `a ${sp.kind}`}, not an agent`);
   return sp;
 }
 
