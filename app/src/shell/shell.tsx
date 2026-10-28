@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { BookOpen, ChevronDown, Hexagon, LogIn, LogOut, Menu, PanelRight, Plus, Search, User } from "lucide-react";
+import { BookOpen, ChevronDown, LogIn, LogOut, Menu, PanelRight, Plus, Search, User } from "lucide-react";
 import { ThemePicker } from "@/components/theme-picker";
 import { useLoading } from "@/hooks/use-live";
 import { onLink } from "@/router";
-import { Avatar } from "@/ui/primitives";
+import { Avatar, QuirqMark } from "@/ui/primitives";
 
 /** A thin bar across the top while the reader waits for something to load. */
 export function Progress() {
@@ -46,7 +46,7 @@ export function TopBar({ me, signIn, live, onSearch, onMenu, onInspector, inspec
 }) {
   return <header className="topbar">
     <button className="icon-button only-narrow" type="button" aria-label="Open navigation" onClick={onMenu}><Menu size={18} /></button>
-    <a className="logo" href="/" onClick={onLink}><Hexagon size={18} strokeWidth={2} /><span>spacehub</span></a>
+    <a className="logo" href="/" onClick={onLink} aria-label="spacehub home"><QuirqMark /><span>spacehub</span></a>
     <button className="search-trigger" type="button" onClick={onSearch} aria-label="Search spaces, projects and files"><Search size={15} /><span>Search spaces, projects, files</span><kbd>⌘K</kbd></button>
     <span className="topbar-spacer" />
     <span className={`live-pill ${live}`} title={live === "offline" ? "Reconnecting to the hub" : "Changes appear as they happen"}><i />{live === "offline" ? "Reconnecting" : "Live"}</span>

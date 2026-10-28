@@ -20,7 +20,7 @@ a{color:var(--link);text-decoration:none}a:hover{text-decoration:underline}
 svg.ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none;vertical-align:-3px}
 header{grid-area:top;display:flex;align-items:center;gap:10px;padding:0 14px;background:var(--panel);border-bottom:1px solid var(--line);min-width:0}
 header .home{display:flex;align-items:center;gap:8px;color:var(--fg);font-weight:650;letter-spacing:-.2px;padding:4px 6px;border-radius:6px}
-header .home svg{width:18px;height:18px}header .home:hover{text-decoration:none;background:var(--hover)}
+header .home svg.mark{width:22px;height:22px;flex:none}header .home svg.mark rect{fill:var(--fg)}header .home svg.mark path{fill:var(--panel)}header .home:hover{text-decoration:none;background:var(--hover)}
 header .search{display:flex;align-items:center;gap:8px;width:min(420px,40vw);height:32px;margin-left:18px;padding:0 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--faint)}
 header .search:hover{text-decoration:none;border-color:var(--line-strong)}header .search span{flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 kbd{padding:1px 6px;border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;color:var(--faint);font:11px ui-monospace,Menlo,monospace;background:var(--panel)}
@@ -125,7 +125,7 @@ const avatar = (name: string, size: number) => `<img class="av" src="/-/avatar/$
 // sidebar (`side`, '' for none) and <main>, which stays last in <body> for
 // the live pages (cli/src/livepage.ts).
 export function shell(title: string, nav: string, body: string, head = '', home = '/', side = ''): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><script src="/-/app/theme.js"></script>${head}<title>${esc(title)}</title><link rel="icon" href="/-/app/mascot.svg"><style>${CSS}</style></head><body${side ? '' : ' class="no-side"'}><header><a class="home" href="${esc(home)}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${ICONS.hub}</svg>spacehub</a>${nav ? `<a class="search" href="/#search">${icon('search')}<span>Search spaces, projects, files</span><kbd>⌘K</kbd></a>` : ''}<span class="spacer"></span><nav>${nav}</nav></header>${side}<main>${body}</main></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><script src="/-/app/theme.js"></script>${head}<title>${esc(title)}</title><link rel="icon" href="/-/app/quirq-icon.svg"><style>${CSS}</style></head><body${side ? '' : ' class="no-side"'}><header><a class="home" href="${esc(home)}" aria-label="spacehub home"><svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14"/><path transform="translate(15 9) scale(.34)" d="M50 0A50 50 0 0 1 100 50V118A14 14 0 0 1 86 132A14 14 0 0 1 72 118V94.87A50 50 0 1 1 50 0ZM50 33A17 17 0 1 0 50 67A17 17 0 1 0 50 33Z"/></svg>spacehub</a>${nav ? `<a class="search" href="/#search">${icon('search')}<span>Search spaces, projects, files</span><kbd>⌘K</kbd></a>` : ''}<span class="spacer"></span><nav>${nav}</nav></header>${side}<main>${body}</main></body></html>`;
 }
 
 // The top bar's right side for a viewer: a signed-in builder (its name) or anonymous (null).

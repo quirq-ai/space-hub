@@ -73,7 +73,7 @@ function esc(text: string) {
 
 export function appPage(dir: string, title: string) {
   const v = versionOf(dir);
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title><link rel="icon" href="/-/app/mascot.svg"><script src="/-/app/theme.js?v=${v}"></script><link rel="stylesheet" href="/-/app/app.css?v=${v}"></head><body><div id="root"></div><script type="module" src="/-/app/app.js?v=${v}"></script></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title><link rel="icon" href="/-/app/quirq-icon.svg"><script src="/-/app/theme.js?v=${v}"></script><link rel="stylesheet" href="/-/app/app.css?v=${v}"></head><body><div id="root"></div><script type="module" src="/-/app/app.js?v=${v}"></script></body></html>`;
 }
 
 function json(res: http.ServerResponse, status: number, value: unknown, extra: Record<string, string> = {}) {

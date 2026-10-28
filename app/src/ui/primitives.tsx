@@ -58,3 +58,11 @@ export function Empty({ icon, title, children }: { icon: ReactNode; title: strin
 export function ErrorNote({ message, retry }: { message: string; retry?: () => void }) {
   return <div className="error-note" role="alert"><span>{message}</span>{retry && <button type="button" onClick={retry}>Try again</button>}</div>;
 }
+
+/** The quirq mark: the "q" in a rounded square, in the text color, so it inverts with the theme. */
+export function QuirqMark({ size = 22 }: { size?: number }) {
+  return <svg className="quirq-mark" width={size} height={size} viewBox="0 0 64 64" aria-hidden="true">
+    <rect width="64" height="64" rx="14" fill="currentColor" />
+    <path className="quirq-mark-q" transform="translate(15 9) scale(.34)" d="M50 0A50 50 0 0 1 100 50V118A14 14 0 0 1 86 132A14 14 0 0 1 72 118V94.87A50 50 0 1 1 50 0ZM50 33A17 17 0 1 0 50 67A17 17 0 1 0 50 33Z" />
+  </svg>;
+}

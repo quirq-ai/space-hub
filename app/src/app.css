@@ -368,3 +368,7 @@ kbd { padding: 1px 6px; border: 1px solid var(--line); border-bottom-width: 2px;
 .theme-menu legend { padding: 6px 8px 6px; text-transform: none; letter-spacing: 0; font-size: 12px; font-weight: 600; }
 .theme-option { padding: 7px 8px; border-radius: 6px; }
 .avatar-anon { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 50%; background: var(--fill); color: var(--text-2); }
+
+/* The quirq mark: a square in the text color with the "q" cut in the background color. */
+.quirq-mark { flex: none; color: var(--text); }
+.quirq-mark-q { fill: var(--panel); }
