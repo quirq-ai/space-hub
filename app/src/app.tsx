@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Activity, BookOpen, Code2, Folder, FolderGit2, GitBranch, GitCommitHorizontal, Home, Users, User } from "lucide-react";
+import { Activity, BookOpen, Code2, Folder, FolderGit2, GitBranch, GitCommitHorizontal, History, Home, Users, User } from "lucide-react";
 import { placeUrl, viewUrl, type HubMeta, type Place, type ProjectMeta, type SpaceMeta, type View } from "@/api";
 import { useLive } from "@/hooks/use-live";
 import { recentProjects, rememberProject, useMe } from "@/hooks/use-me";
 import { hashOf, useRoute } from "@/router";
-import { Dock, Inspector, Progress, Sidebar, TopBar, type DockItem, type NavSection } from "@/shell/shell";
+import { Dock, Inspector, Progress, Sidebar, TopBar, type DockItem, type SideSection } from "@/shell/shell";
 import { SearchPalette } from "@/shell/search";
 import { Avatar } from "@/ui/primitives";
 import { HomePage } from "@/pages/home";
@@ -15,6 +15,7 @@ import { SECTION_ICONS, SECTION_ORDER } from "@/pages/files";
 const HUB: Place = { space: "", project: "" };
 const SEEN = "spacehub:seen:v1";
 const INSPECTOR = "spacehub:inspector:v1";
+const RAIL = "spacehub:rail:v1";
 
 function readSeen(): Record<string, string> { try { return JSON.parse(localStorage.getItem(SEEN) || "{}") ?? {}; } catch { return {}; } }
 function markSeen(key: string) { try { localStorage.setItem(SEEN, JSON.stringify({ ...readSeen(), [key]: new Date().toISOString() })); } catch { /* Storage may be blocked. */ } }
@@ -30,6 +31,8 @@ export function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(() => { try { return localStorage.getItem(INSPECTOR) !== "closed" && matchMedia("(min-width: 1180px)").matches; } catch { return true; } });
   const [searching, setSearching] = useState(false);
+  const [rail, setRail] = useState(() => { try { return localStorage.getItem(RAIL) === "on"; } catch { return false; } });
+  const toggleRail = () => setRail(on => { try { localStorage.setItem(RAIL, on ? "off" : "on"); } catch { /* Storage may be blocked. */ } return !on; });
   const [seen, setSeen] = useState(readSeen);
 
   // Keep the place's last view while another path of the same place loads, so nothing goes blank.
@@ -63,21 +66,33 @@ export function App() {
   const signIn = `/-/login?next=${encodeURIComponent(location.pathname + location.hash)}`;
   const state = live.error && view ? "offline" : !view ? "loading" : "live";
 
-  // Sidebar: home and you, your spaces, recent projects, then where you are.
-  const sections: NavSection[] = [{ items: [
+  // Sidebar: a space switcher, the main places, short lists of where you are and where you were, and a footer.
+  const kindOf = (name: string) => me.spaces.find(s => s.space === name)?.kind ?? (meta?.level === "space" && meta.name === name ? meta.kind : space.data?.meta.name === name ? space.data.meta.kind : "personal");
+  const switcher = {
+    current: route.page === "home" ? null : { name: place.space, kind: kindOf(place.space), href: placeUrl({ space: place.space, project: "" }) },
+    options: me.spaces.map(s => ({ name: s.space, kind: s.kind, href: placeUrl({ space: s.space, project: "" }) })),
+  };
+  const primary = [
     { key: "home", label: "Home", href: "/", icon: <Home size={16} />, active: route.page === "home" },
     ...(me.name ? [{ key: "me", label: "Your profile", href: placeUrl({ space: me.name, project: "" }), icon: <User size={16} />, active: route.page === "space" && place.space === me.name }] : []),
-  ] }];
-  if (me.spaces.length) sections.push({ title: "Your spaces", items: me.spaces.filter(s => s.space !== me.name).map(s => ({ key: "s:" + s.space, label: s.space, href: placeUrl({ space: s.space, project: "" }), icon: <Avatar name={s.space} size={18} kind={s.kind} />, active: route.page !== "home" && place.space === s.space && route.page === "space" })) });
-  const recent = recentProjects().filter(name => name !== placeKey).slice(0, 5);
-  if (recent.length) sections.push({ title: "Recent", items: recent.map(name => { const [s, p] = name.split("/"); return { key: "r:" + name, label: name, href: placeUrl({ space: s, project: p }), icon: <FolderGit2 size={16} /> }; }) });
+  ];
+  const sideSections: SideSection[] = [];
   const siblings = route.page === "project" ? space.data?.snapshot.directory.entries : route.page === "space" ? view?.snapshot.directory.entries : undefined;
-  if (route.page !== "home" && siblings) sections.push({ title: place.space, items: siblings.slice(0, 14).map(entry => ({ key: "p:" + entry.name, label: entry.name, href: placeUrl({ space: place.space, project: entry.name }), icon: <FolderGit2 size={16} />, active: place.project === entry.name })) });
+  if (route.page !== "home" && siblings) sideSections.push({
+    key: "projects", title: `Projects in ${place.space}`, limit: 6,
+    items: [...siblings].sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt)).map(entry => ({ key: "p:" + entry.name, label: entry.name, href: placeUrl({ space: place.space, project: entry.name }), icon: <FolderGit2 size={16} />, active: place.project === entry.name })),
+  });
+  if (route.page === "home" && me.spaces.length) sideSections.push({
+    key: "spaces", title: "Your spaces", limit: 6,
+    items: me.spaces.map(s => ({ key: "s:" + s.space, label: s.space, href: placeUrl({ space: s.space, project: "" }), icon: <Avatar name={s.space} size={18} kind={s.kind} /> })),
+  });
+  const recent = recentProjects().filter(name => name !== placeKey);
+  if (recent.length) sideSections.push({ key: "recent", title: "Recent", limit: 4, items: recent.map(name => { const [s, p] = name.split("/"); return { key: "r:" + name, label: name, href: placeUrl({ space: s, project: p }), icon: <History size={16} /> }; }) });
   // The hub's own pages, rendered by the server in this same frame.
-  sections.push({ title: "The hub", items: [
+  const footer = [
     { key: "guide", label: "Guide", href: "/-/guide", icon: <BookOpen size={16} /> },
     { key: "builders", label: "Builders", href: "/-/builders", icon: <Users size={16} /> },
-  ] });
+  ];
 
   // Dock: the places of where you are, then tools.
   let places: DockItem[] = [];
@@ -111,10 +126,10 @@ export function App() {
 
   const inspector = meta?.level === "project" ? <ProjectInspector place={place} meta={meta} /> : meta?.level === "space" ? <SpaceInspector name={place.space} meta={meta} /> : meta?.level === "hub" ? <HubInspector meta={meta} /> : null;
 
-  return <div className={`shell${inspectorOpen && inspector ? " with-inspector" : ""}`}>
+  return <div className={`shell${inspectorOpen && inspector ? " with-inspector" : ""}${rail ? " rail" : ""}`}>
     <Progress />
     <TopBar me={me} signIn={signIn} live={state} onSearch={() => setSearching(true)} onMenu={() => setSidebarOpen(true)} onInspector={inspector ? toggleInspector : undefined} inspectorOpen={inspectorOpen} />
-    <Sidebar sections={sections} open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+    <Sidebar switcher={switcher} primary={primary} sections={sideSections} footer={footer} open={sidebarOpen} onClose={() => setSidebarOpen(false)} rail={rail} onRail={toggleRail} onSearch={() => setSearching(true)} />
     <main className="main" id="main">
       <div className="main-scroll">
         {route.page === "home" && <HomePage view={view as View<HubMeta> | undefined} me={me.name} />}

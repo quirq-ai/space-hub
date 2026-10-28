@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { BookOpen, ChevronDown, LogIn, LogOut, Menu, PanelRight, Plus, Search, User } from "lucide-react";
+import { BookOpen, Check, ChevronDown, ChevronRight, ChevronsUpDown, Home, LogIn, LogOut, Menu, PanelLeftClose, PanelLeftOpen, PanelRight, Plus, Search, User } from "lucide-react";
 import { ThemePicker } from "@/components/theme-picker";
 import { useLoading } from "@/hooks/use-live";
 import { onLink } from "@/router";
@@ -57,17 +57,98 @@ export function TopBar({ me, signIn, live, onSearch, onMenu, onInspector, inspec
 }
 
 export type NavItem = { key: string; label: string; href: string; icon: ReactNode; active?: boolean; badge?: string };
-export type NavSection = { title?: string; items: NavItem[] };
+export type SideSection = { key: string; title: string; items: NavItem[]; limit: number; more?: { label: string; href: string } };
+export type SpaceOption = { name: string; kind: string; href: string };
 
-export function Sidebar({ sections, open, onClose }: { sections: NavSection[]; open: boolean; onClose: () => void }) {
+const SIDE = "spacehub:side:v1";
+function readSide(): { collapsed: Record<string, boolean> } { try { return { collapsed: {}, ...JSON.parse(localStorage.getItem(SIDE) || "{}") }; } catch { return { collapsed: {} }; } }
+
+/** Which space you are in, and a menu to jump to any of yours. */
+function SpaceSwitcher({ current, options, rail }: { current: SpaceOption | null; options: SpaceOption[]; rail: boolean }) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: MouseEvent | KeyboardEvent) => {
+      if (event instanceof KeyboardEvent ? event.key === "Escape" : !box.current?.contains(event.target as Node)) setOpen(false);
+    };
+    addEventListener("mousedown", close);
+    addEventListener("keydown", close);
+    return () => { removeEventListener("mousedown", close); removeEventListener("keydown", close); };
+  }, [open]);
+  const label = current ? current.name : "All spaces";
+  return <div className="switcher" ref={box}>
+    <button type="button" className="switcher-button" aria-haspopup="menu" aria-expanded={open} title={rail ? label : undefined} onClick={() => setOpen(value => !value)}>
+      {current ? <Avatar name={current.name} size={24} kind={current.kind} /> : <span className="switcher-all"><Home size={15} /></span>}
+      <span className="switcher-text"><strong>{label}</strong><span>{current ? (current.kind === "org" ? "Org" : current.kind === "agent" ? "Agent" : "Builder") : "This hub"}</span></span>
+      <ChevronsUpDown size={15} className="switcher-chevron" />
+    </button>
+    {open && <div className="menu switcher-menu" role="menu">
+      <a role="menuitem" href="/" onClick={event => { setOpen(false); onLink(event); }} className={!current ? "on" : undefined}><span className="switcher-all small"><Home size={13} /></span>All spaces</a>
+      {options.length > 0 && <div className="menu-title">Your spaces</div>}
+      {options.map(option => <a role="menuitem" key={option.name} href={option.href} onClick={event => { setOpen(false); onLink(event); }} className={current?.name === option.name ? "on" : undefined}>
+        <Avatar name={option.name} size={20} kind={option.kind} />{option.name}{current?.name === option.name && <Check size={14} className="menu-check" />}
+      </a>)}
+    </div>}
+  </div>;
+}
+
+function Item({ item, rail, onClose }: { item: NavItem; rail: boolean; onClose: () => void }) {
+  return <a className={`nav-item${item.active ? " active" : ""}`} href={item.href} onClick={event => { onClose(); onLink(event); }} aria-current={item.active ? "page" : undefined} title={rail ? item.label : undefined}>
+    <span className="nav-icon">{item.icon}</span><span className="nav-label">{item.label}</span>{item.badge && <span className="nav-badge">{item.badge}</span>}
+  </a>;
+}
+
+/**
+ * The sidebar fits the window: a space switcher, the main places, short
+ * collapsible lists (the current space's projects, recent ones) that expand
+ * on request, and a footer pinned to the bottom. It folds into an icon rail.
+ */
+export function Sidebar({ switcher, primary, sections, footer, open, onClose, rail, onRail, onSearch }: {
+  switcher: { current: SpaceOption | null; options: SpaceOption[] }; primary: NavItem[]; sections: SideSection[]; footer: NavItem[];
+  open: boolean; onClose: () => void; rail: boolean; onRail: () => void; onSearch: () => void;
+}) {
+  const [state, setState] = useState(readSide);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const toggle = (key: string) => setState(current => {
+    const next = { ...current, collapsed: { ...current.collapsed, [key]: !current.collapsed[key] } };
+    try { localStorage.setItem(SIDE, JSON.stringify(next)); } catch { /* Storage may be blocked. */ }
+    return next;
+  });
   return <>
     <nav className={`sidebar${open ? " open" : ""}`} aria-label="Navigation">
-      {sections.filter(section => section.items.length).map((section, index) => <div className="nav-section" key={section.title ?? index}>
-        {section.title && <div className="nav-title">{section.title}</div>}
-        {section.items.map(item => <a key={item.key} className={`nav-item${item.active ? " active" : ""}`} href={item.href} onClick={event => { onClose(); onLink(event); }} aria-current={item.active ? "page" : undefined} title={item.label}>
-          <span className="nav-icon">{item.icon}</span><span className="nav-label">{item.label}</span>{item.badge && <span className="nav-badge">{item.badge}</span>}
-        </a>)}
-      </div>)}
+      <SpaceSwitcher current={switcher.current} options={switcher.options} rail={rail} />
+      <div className="nav-group">
+        {primary.slice(0, 1).map(item => <Item key={item.key} item={item} rail={rail} onClose={onClose} />)}
+        <button type="button" className="nav-item" onClick={() => { onClose(); onSearch(); }} title={rail ? "Search" : undefined}><span className="nav-icon"><Search size={16} /></span><span className="nav-label">Search</span><kbd className="nav-kbd">⌘K</kbd></button>
+        {primary.slice(1).map(item => <Item key={item.key} item={item} rail={rail} onClose={onClose} />)}
+      </div>
+      <div className="side-scroll">
+        {sections.filter(section => section.items.length).map(section => {
+          const collapsed = !!state.collapsed[section.key];
+          const all = expanded[section.key];
+          const active = section.items.find(item => item.active);
+          let shown = all ? section.items : section.items.slice(0, section.limit);
+          // The place you are in stays visible even when it is further down the list.
+          if (!all && active && !shown.includes(active)) shown = [...shown.slice(0, section.limit - 1), active];
+          return <div className="nav-section" key={section.key}>
+            <button type="button" className="nav-title" aria-expanded={!collapsed} onClick={() => toggle(section.key)}>
+              <ChevronRight size={12} className={`nav-caret${collapsed ? "" : " open"}`} /><span>{section.title}</span><span className="nav-count">{section.items.length}</span>
+            </button>
+            {!collapsed && <>
+              {shown.map(item => <Item key={item.key} item={item} rail={rail} onClose={onClose} />)}
+              {section.items.length > section.limit && <button type="button" className="nav-more" onClick={() => setExpanded(current => ({ ...current, [section.key]: !all }))}>{all ? "Show fewer" : `Show all ${section.items.length}`}</button>}
+              {section.more && <a className="nav-more" href={section.more.href} onClick={event => { onClose(); onLink(event); }}>{section.more.label}</a>}
+            </>}
+          </div>;
+        })}
+      </div>
+      <div className="side-foot">
+        {footer.map(item => <Item key={item.key} item={item} rail={rail} onClose={onClose} />)}
+        <button type="button" className="nav-item rail-toggle only-wide" onClick={onRail} aria-label={rail ? "Expand the sidebar" : "Collapse the sidebar"} title={rail ? "Expand the sidebar" : "Collapse the sidebar"}>
+          <span className="nav-icon">{rail ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</span><span className="nav-label">Collapse</span>
+        </button>
+      </div>
     </nav>
     {open && <button className="scrim only-narrow" type="button" aria-label="Close navigation" onClick={onClose} />}
   </>;

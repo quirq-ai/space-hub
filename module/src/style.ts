@@ -35,11 +35,14 @@ details.acct .pop{position:absolute;right:0;top:calc(100% + 6px);z-index:20;min-
 .acct-head{display:flex;align-items:center;gap:10px;padding:8px 8px 10px;margin-bottom:4px;border-bottom:1px solid var(--line)}.acct-head span{display:block;color:var(--faint);font-size:12px}
 details.acct .pop a,details.acct .pop button{display:flex;align-items:center;gap:9px;width:100%;padding:7px 8px;border:0;border-radius:6px;background:none;color:var(--fg);font:13px var(--font);text-align:left;cursor:pointer}
 details.acct .pop a:hover,details.acct .pop button:hover{text-decoration:none;background:var(--hover)}
-aside.side{grid-area:side;overflow-y:auto;padding:12px 8px 24px;background:var(--side);border-right:1px solid var(--line)}
+aside.side{grid-area:side;display:flex;flex-direction:column;min-height:0;padding:10px 8px 8px;background:var(--side);border-right:1px solid var(--line)}
 .side-title{padding:6px 10px 4px;color:var(--faint);font-size:11.5px;font-weight:600}
 .side a{display:flex;align-items:center;gap:9px;height:30px;padding:0 10px;border-radius:7px;color:var(--muted);font-size:13px}
 .side a:hover{text-decoration:none;background:var(--hover);color:var(--fg)}.side a.on{background:var(--selected);color:var(--fg);font-weight:550}
-.side .group{margin-bottom:14px}
+.side .group{display:grid;gap:1px}.side .grow{flex:1}.side .foot{display:grid;gap:1px;padding-top:6px;border-top:1px solid var(--line)}
+.side .hub{display:flex;align-items:center;gap:9px;padding:6px 8px;margin-bottom:8px;border-radius:9px;color:var(--fg);line-height:1.25}.side .hub:hover{background:var(--panel);text-decoration:none}
+.side .hub b{display:block;font-size:13px}.side .hub span{display:block;color:var(--faint);font-size:11.5px}.side .hub i{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:7px;background:var(--fill);color:var(--muted)}
+.side .group{padding-bottom:8px;border-bottom:1px solid var(--line)}.side kbd{margin-left:auto;font-size:10.5px;padding:0 5px}
 main{grid-area:main;overflow-y:auto;padding:22px max(36px,calc((100% - 1060px) / 2)) 48px;min-width:0}
 h1{font-size:22px;font-weight:650;letter-spacing:-.4px;line-height:1.25;margin:0 0 4px;word-break:break-word}h1 b{font-weight:650}
 h2{font-size:15px;font-weight:600;margin:0 0 8px}
@@ -135,11 +138,12 @@ export function navFor(viewer: string | null): string {
   return `<details class="acct"><summary aria-label="Account">${avatar(viewer, 26)}${icon('down')}</summary><div class="pop"><div class="acct-head">${avatar(viewer, 32)}<div><b>${esc(viewer)}</b><span>Signed in</span></div></div><a href="/${me}">${icon('user')}Your profile</a><a href="/-/new">${icon('plus')}New project</a><a href="/-/guide">${icon('guide')}Guide</a><form method="post" action="/-/logout"><button type="submit">${icon('out')}Sign out</button></form></div></details>`;
 }
 
-// The sidebar of the server-rendered pages: the app's places, with `current` marked.
+// The sidebar of the server-rendered pages, built like the app's: where you
+// are, the main places, and the hub's pages pinned to the bottom.
 export function sideFor(viewer: string | null, current: 'home' | 'guide' | 'builders' | 'me' | '' = ''): string {
-  const item = (key: string, href: string, label: string, iconName: string) => `<a href="${href}"${key === current ? ' class="on" aria-current="page"' : ''}>${icon(iconName)}${esc(label)}</a>`;
+  const item = (key: string, href: string, label: string, iconName: string, extra = '') => `<a href="${href}"${key === current ? ' class="on" aria-current="page"' : ''}>${icon(iconName)}${esc(label)}${extra}</a>`;
   const mine = viewer ? item('me', `/${encodeURIComponent(viewer)}`, 'Your profile', 'user') : '';
-  return `<aside class="side" aria-label="Navigation"><div class="group">${item('home', '/', 'Home', 'home')}${mine}</div><div class="side-title">The hub</div><div class="group">${item('guide', '/-/guide', 'Guide', 'guide')}${item('builders', '/-/builders', 'Builders', 'builders')}</div></aside>`;
+  return `<aside class="side" aria-label="Navigation"><a class="hub" href="/"><i>${icon('home')}</i><span><b>All spaces</b><span>This hub</span></span></a><div class="group">${item('home', '/', 'Home', 'home')}${item('', '/#search', 'Search', 'search', '<kbd>⌘K</kbd>')}${mine}</div><div class="grow"></div><div class="foot">${item('guide', '/-/guide', 'Guide', 'guide')}${item('builders', '/-/builders', 'Builders', 'builders')}</div></aside>`;
 }
 
 // Scripts and connections only to this site: /-/live.js and its stream.
