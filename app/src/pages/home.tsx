@@ -1,7 +1,7 @@
-import { Building2, FolderGit2, Plus } from "lucide-react";
+import { Building2, FolderGit2, Plus, Rocket } from "lucide-react";
 import { placeUrl, size, type HubMeta, type View } from "@/api";
 import { onLink } from "@/router";
-import { Ago, Avatar, SkeletonRows } from "@/ui/primitives";
+import { Ago, Avatar, AvatarStack, CommandTabs, Popover, SkeletonRows } from "@/ui/primitives";
 import { ActivityList, PageHeader } from "./common";
 
 export function HomePage({ view, me }: { view: View<HubMeta> | undefined; me: string | null }) {
@@ -10,7 +10,12 @@ export function HomePage({ view, me }: { view: View<HubMeta> | undefined; me: st
   const recent = view.meta.allProjects.slice(0, 8);
   return <div className="page">
     <PageHeader title="spacehub" subtitle={`${view.meta.spaces} spaces · ${view.meta.projects} projects · ${size(view.meta.bytes)} stored`}
-      actions={me ? <a className="button" href="/-/new"><Plus size={15} />New project</a> : <a className="button" href="/-/guide">How it works</a>} />
+      actions={me ? <a className="button" href="/-/new"><Plus size={15} />New project</a> : <Popover label="Get started" icon={<Rocket size={15} />}>
+        <div className="popover-title">Push your first project</div>
+        <CommandTabs tabs={[{ label: "spacehub", lines: ["spacehub auth login", "spacehub project create notes --source . --push"] }]} note={<>Install the CLI with <code>scripts/install-cli.sh</code> from quirq-ai/space-hub. <a href="/-/guide">Read the guide</a>.</>} />
+      </Popover>}>
+      {view.meta.here.length > 0 && <div className="meta-strip"><span className="strip-here" title={view.meta.here.map(who => `${who.agent}${who.project ? ` · ${who.project}` : ""}`).join("\n")}><i className="online-dot" />{new Set(view.meta.here.map(who => who.agent)).size} connected now</span><AvatarStack names={[...new Set(view.meta.here.map(who => who.agent))]} max={8} size={20} /></div>}
+    </PageHeader>
     <div className="home-grid">
       <section>
         <h2 className="section-title">Spaces</h2>

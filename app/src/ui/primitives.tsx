@@ -1,5 +1,5 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { Check, Copy } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Check, ChevronDown, Copy } from "lucide-react";
 import { Blobatar } from "@blobatar/react";
 import { ago, avatarUrl } from "@/api";
 import { onLink } from "@/router";
@@ -65,4 +65,34 @@ export function QuirqMark({ size = 22 }: { size?: number }) {
     <rect width="64" height="64" rx="14" fill="currentColor" />
     <path className="quirq-mark-q" transform="translate(15 9) scale(.34)" d="M50 0A50 50 0 0 1 100 50V118A14 14 0 0 1 86 132A14 14 0 0 1 72 118V94.87A50 50 0 1 1 50 0ZM50 33A17 17 0 1 0 50 67A17 17 0 1 0 50 33Z" />
   </svg>;
+}
+
+/** A button that opens a small panel below it; Escape or a click outside closes it. */
+export function Popover({ label, icon, children, width = 440, primary = false }: { label: string; icon?: ReactNode; children: ReactNode; width?: number; primary?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: MouseEvent | KeyboardEvent) => {
+      if (event instanceof KeyboardEvent ? event.key === "Escape" : !box.current?.contains(event.target as Node)) setOpen(false);
+    };
+    addEventListener("mousedown", close);
+    addEventListener("keydown", close);
+    return () => { removeEventListener("mousedown", close); removeEventListener("keydown", close); };
+  }, [open]);
+  return <div className="popover-anchor" ref={box}>
+    <button type="button" className={`button${primary ? " primary" : ""}`} aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(value => !value)}>{icon}{label}<ChevronDown size={14} /></button>
+    {open && <div className="popover" role="dialog" aria-label={label} style={{ width: `min(${width}px, calc(100vw - 32px))` }}>{children}</div>}
+  </div>;
+}
+
+/** Commands to work on a place, in tabs, each wrapping rather than scrolling, with a copy button. */
+export function CommandTabs({ tabs, note }: { tabs: { label: string; lines: string[] }[]; note?: ReactNode }) {
+  const [current, setCurrent] = useState(0);
+  const shown = tabs[Math.min(current, tabs.length - 1)];
+  return <div className="command-tabs">
+    {tabs.length > 1 && <div className="segmented" role="tablist">{tabs.map((tab, i) => <button key={tab.label} type="button" role="tab" aria-selected={i === current} className={i === current ? "on" : undefined} onClick={() => setCurrent(i)}>{tab.label}</button>)}</div>}
+    {shown.lines.map(line => <div className="command" key={line}><code>{line}</code><CopyButton text={line} label="Copy command" /></div>)}
+    {note && <p className="command-note">{note}</p>}
+  </div>;
 }

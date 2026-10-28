@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { BookOpen, Check, ChevronDown, ChevronRight, ChevronsUpDown, Home, LogIn, LogOut, Menu, PanelLeftClose, PanelLeftOpen, PanelRight, Plus, Search, User } from "lucide-react";
+import { BookOpen, Check, ChevronDown, ChevronRight, ChevronsUpDown, Home, LogIn, LogOut, Menu, PanelLeftClose, PanelLeftOpen, Plus, Search, User } from "lucide-react";
 import { ThemePicker } from "@/components/theme-picker";
 import { useLoading } from "@/hooks/use-live";
 import { onLink } from "@/router";
@@ -41,8 +41,8 @@ function UserMenu({ name }: { name: string }) {
   </div>;
 }
 
-export function TopBar({ me, signIn, live, onSearch, onMenu, onInspector, inspectorOpen }: {
-  me: { checked: boolean; name: string | null }; signIn: string; live: "live" | "offline" | "loading"; onSearch: () => void; onMenu: () => void; onInspector?: () => void; inspectorOpen: boolean;
+export function TopBar({ me, signIn, live, onSearch, onMenu }: {
+  me: { checked: boolean; name: string | null }; signIn: string; live: "live" | "offline" | "loading"; onSearch: () => void; onMenu: () => void;
 }) {
   return <header className="topbar">
     <button className="icon-button only-narrow" type="button" aria-label="Open navigation" onClick={onMenu}><Menu size={18} /></button>
@@ -51,7 +51,6 @@ export function TopBar({ me, signIn, live, onSearch, onMenu, onInspector, inspec
     <span className="topbar-spacer" />
     <span className={`live-pill ${live}`} title={live === "offline" ? "Reconnecting to the hub" : "Changes appear as they happen"}><i />{live === "offline" ? "Reconnecting" : "Live"}</span>
     <ThemePicker />
-    {onInspector && <button className={`icon-button only-wide${inspectorOpen ? " active" : ""}`} type="button" aria-label={inspectorOpen ? "Hide details" : "Show details"} aria-pressed={inspectorOpen} onClick={onInspector}><PanelRight size={17} /></button>}
     {!me.checked ? <span className="user-placeholder" aria-hidden="true" /> : me.name ? <UserMenu name={me.name} /> : <a className="button" href={signIn}><LogIn size={15} />Sign in</a>}
   </header>;
 }
@@ -163,15 +162,4 @@ export function Dock({ places, tools }: { places: DockItem[]; tools: DockItem[] 
     <span className="dock-icon">{entry.icon}</span><span className="dock-label">{entry.label}</span>{entry.fresh && <span className="dock-fresh" title="Changed since you last looked" />}
   </a>;
   return <nav className="dock" aria-label="Dock">{places.map(item)}{places.length > 0 && tools.length > 0 && <span className="dock-gap" aria-hidden="true" />}{tools.map(item)}</nav>;
-}
-
-export function Inspector({ open, onClose, children }: { open: boolean; onClose: () => void; children: ReactNode }) {
-  return <>
-    <aside className={`inspector${open ? " open" : ""}`} aria-label="Details">{children}</aside>
-    {open && <button className="scrim only-medium" type="button" aria-label="Close details" onClick={onClose} />}
-  </>;
-}
-
-export function InspectorSection({ title, children, action }: { title: string; children: ReactNode; action?: ReactNode }) {
-  return <section className="inspector-section"><div className="inspector-title"><h3>{title}</h3>{action}</div>{children}</section>;
 }

@@ -1,8 +1,7 @@
-import { FolderGit2, Github } from "lucide-react";
-import { placeUrl, size, type HubMeta, type Place, type ProjectMeta, type SpaceMeta, type View } from "@/api";
+import { Download, FolderGit2, GitBranch, HardDrive } from "lucide-react";
+import { placeUrl, size, type Place, type ProjectMeta, type View } from "@/api";
 import { hashOf, onLink, type Route } from "@/router";
-import { InspectorSection } from "@/shell/shell";
-import { Ago, Avatar, AvatarStack, CopyButton, ErrorNote, PersonLink, Skeleton } from "@/ui/primitives";
+import { Ago, Avatar, AvatarStack, CommandTabs, ErrorNote, Popover, Skeleton } from "@/ui/primitives";
 import { ActivityList, HereNow, PageHeader, People, Tabs } from "./common";
 import { BranchesTab, CodeTab, CommitTab, CommitsTab } from "./code";
 import { FilesTab } from "./files";
@@ -21,8 +20,10 @@ export function ProjectPage({ route, view, error, me, signIn, refresh }: { route
       crumbs={[{ label: place.space, href: placeUrl({ space: place.space, project: "" }) }]}
       leading={<span className="project-mark"><FolderGit2 size={22} /></span>}
       title={place.project}
-      subtitle={meta ? meta.description || (meta.head ? <>Updated <Ago iso={meta.head.time} /> by {meta.head.author}</> : "Nothing pushed yet") : <Skeleton width={220} />}
-      actions={meta && meta.here.length > 0 ? <span className="here-badge" title="Connected now"><AvatarStack names={[...new Set(meta.here.map(who => who.agent))]} /><span>{meta.here.length} here</span></span> : undefined} />
+      subtitle={meta ? meta.description || undefined : <Skeleton width={220} />}
+      actions={meta ? <Popover label="Clone" icon={<Download size={15} />}><CloneProject place={place} /></Popover> : undefined}>
+      {meta ? <ProjectStrip place={place} meta={meta} /> : <div className="meta-strip"><Skeleton width={360} height={14} /></div>}
+    </PageHeader>
     <Tabs active={tab} tabs={[
       { key: "files", label: "Files", href: base + "#" + hashOf("files") },
       { key: "code", label: "Code", href: base + "#" + hashOf("code") },
@@ -48,46 +49,29 @@ export function ProjectPage({ route, view, error, me, signIn, refresh }: { route
   </div>;
 }
 
-function Facts({ rows }: { rows: [string, React.ReactNode][] }) {
-  return <dl className="facts">{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>;
+const MODES: Record<string, string> = { watch: "watching", sync: "syncing", autosync: "editing", agent: "running", app: "in the app" };
+
+/** The project's facts in one line under its name: branch, size, last change, people, who is here. */
+function ProjectStrip({ place, meta }: { place: Place; meta: ProjectMeta }) {
+  const people = [...new Set([...meta.owners, ...meta.members, ...meta.collaborators])];
+  const here = [...new Set(meta.here.map(who => who.agent))];
+  return <div className="meta-strip">
+    <a href={placeUrl(place, hashOf("branches"))} onClick={onLink} title="Default branch"><GitBranch size={14} />{meta.defaultBranch}</a>
+    <span title="Stored on the hub"><HardDrive size={14} />{size(meta.bytes)}</span>
+    {meta.head ? <a href={placeUrl(place, hashOf("commit", { oid: meta.head.oid }))} onClick={onLink} title={meta.head.subject}><Avatar name={meta.head.author} size={18} /><span>Updated <Ago iso={meta.head.time} /> by {meta.head.author}</span></a> : <span>Nothing pushed yet</span>}
+    {people.length > 0 && <a href={placeUrl(place, hashOf("people"))} onClick={onLink} title={people.join(", ")}><AvatarStack names={people} max={5} size={20} /><span>{people.length} {people.length === 1 ? "person" : "people"}</span></a>}
+    {here.length > 0 && <span className="strip-here" title={meta.here.map(who => `${who.agent} · ${MODES[who.mode] ?? who.mode}`).join("\n")}><i className="online-dot" />{here.length} here now</span>}
+  </div>;
 }
 
-function Clone({ lines }: { lines: string[] }) {
-  return <div className="clone">{lines.map(line => <div className="clone-line" key={line}><code>{line}</code><CopyButton text={line} label="Copy command" /></div>)}</div>;
-}
-
-export function ProjectInspector({ place, meta }: { place: Place; meta: ProjectMeta }) {
-  const host = location.host;
+/** How to get the project onto a machine: spacehub or plain git. */
+function CloneProject({ place }: { place: Place }) {
+  const name = `${place.space}/${place.project}`;
   return <>
-    <InspectorSection title="About"><p className="inspector-text">{meta.description || "No description."}</p>
-      <Facts rows={[["Branch", meta.defaultBranch], ["Stored", size(meta.bytes)], ["Space", <a href={placeUrl({ space: place.space, project: "" })} onClick={onLink}>{place.space}</a>]]} /></InspectorSection>
-    {meta.head && <InspectorSection title="Last change"><a className="last-change" href={placeUrl(place, hashOf("commit", { oid: meta.head.oid }))} onClick={onLink}>
-      <Avatar name={meta.head.author} size={22} /><span><strong>{meta.head.subject}</strong><span className="quiet">{meta.head.author} · <Ago iso={meta.head.time} /></span></span></a></InspectorSection>}
-    <InspectorSection title={`Here now${meta.here.length ? ` · ${meta.here.length}` : ""}`}><HereNow here={meta.here} /></InspectorSection>
-    <InspectorSection title="People">{[...meta.owners, ...meta.members, ...meta.collaborators].length ? <AvatarStack names={[...new Set([...meta.owners, ...meta.members, ...meta.collaborators])]} max={8} size={26} /> : <p className="quiet">Nobody yet.</p>}</InspectorSection>
-    <InspectorSection title="Work on it"><Clone lines={[`spacehub project clone ${place.space}/${place.project}`, `git clone -o quirq quirq://${host}/${place.space}/${place.project}`]} />
-      <p className="quiet small">Keep a clone in step with <code>spacehub project sync --watch --auto</code>.</p></InspectorSection>
-  </>;
-}
-
-export function SpaceInspector({ name, meta }: { name: string; meta: SpaceMeta }) {
-  return <>
-    <InspectorSection title="About"><Facts rows={[
-      ["Kind", meta.kind === "personal" ? "Builder" : meta.kind === "org" ? "Org" : `Agent of ${meta.parent}`],
-      ["Projects", String(meta.projects)], ["Stored", size(meta.bytes)], ["Joined", <Ago iso={meta.createdAt} />],
-      ...(meta.githubLogin ? [["GitHub", <a href={`https://github.com/${meta.githubLogin}`} target="_blank" rel="noreferrer"><Github size={13} /> {meta.githubLogin}</a>] as [string, React.ReactNode]] : []),
-    ]} /></InspectorSection>
-    <InspectorSection title={`Here now${meta.here.length ? ` · ${meta.here.length}` : ""}`}><HereNow here={meta.here} /></InspectorSection>
-    {meta.kind !== "personal" && <InspectorSection title="Owners"><ul className="people-list">{meta.owners.map(owner => <li key={owner}><PersonLink name={owner} /></li>)}</ul></InspectorSection>}
-    {meta.members.length > 0 && <InspectorSection title="Members"><AvatarStack names={meta.members} max={10} size={26} /></InspectorSection>}
-    <InspectorSection title="Work on it"><Clone lines={[`spacehub space clone ${name}`]} /></InspectorSection>
-  </>;
-}
-
-export function HubInspector({ meta }: { meta: HubMeta }) {
-  return <>
-    <InspectorSection title="This hub"><Facts rows={[["Address", location.host], ["Spaces", String(meta.spaces)], ["Projects", String(meta.projects)], ["Stored", size(meta.bytes)]]} /></InspectorSection>
-    <InspectorSection title={`Here now${meta.here.length ? ` · ${meta.here.length}` : ""}`}><HereNow here={meta.here} /></InspectorSection>
-    <InspectorSection title="Get started"><Clone lines={["spacehub auth login", "spacehub project create notes --source . --push"]} /><p className="quiet small"><a href="/-/guide">Read the guide</a> for everything else.</p></InspectorSection>
+    <div className="popover-title">Clone {name}</div>
+    <CommandTabs tabs={[
+      { label: "spacehub", lines: [`spacehub project clone ${name}`] },
+      { label: "git", lines: [`git clone -o quirq quirq://${location.host}/${name}`] },
+    ]} note={<>Then keep it in step as you and others edit: <code>spacehub project sync --watch --auto</code></>} />
   </>;
 }

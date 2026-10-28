@@ -1,7 +1,7 @@
-import { Bot, Building2, FolderGit2, Github, Plus, User } from "lucide-react";
+import { Bot, Building2, Download, FolderGit2, Github, Plus, User } from "lucide-react";
 import { kindLabel, placeUrl, size, type SpaceMeta, type View } from "@/api";
 import { hashOf, onLink } from "@/router";
-import { Ago, Avatar, Empty, SkeletonRows } from "@/ui/primitives";
+import { Ago, Avatar, CommandTabs, Empty, Popover, SkeletonRows } from "@/ui/primitives";
 import { ActivityList, HereNow, PageHeader, People, Tabs } from "./common";
 
 const KIND_ICON = { personal: <User size={13} />, org: <Building2 size={13} />, agent: <Bot size={13} /> } as Record<string, React.ReactNode>;
@@ -18,12 +18,16 @@ export function SpacePage({ name, tab, view, error, me }: { name: string; tab: "
       leading={<Avatar name={name} size={72} kind={meta.kind} />}
       title={<>{meta.displayName}<span className="kind-badge">{KIND_ICON[meta.kind]}{kindLabel(meta.kind)}</span></>}
       subtitle={meta.description || (meta.kind === "agent" ? `An agent of ${meta.parent}` : meta.kind === "org" ? "An org on this hub" : `@${name}`)}
-      actions={me && (meta.owners.includes(me) || meta.members.includes(me)) ? <a className="button" href="/-/new"><Plus size={15} />New project</a> : undefined}>
+      actions={<>
+        <Popover label="Clone" icon={<Download size={15} />}><div className="popover-title">Clone every project of {name}</div><CommandTabs tabs={[{ label: "spacehub", lines: [`spacehub space clone ${name}`] }]} note={<>Then keep them all in step: <code>spacehub space sync --watch --auto</code></>} /></Popover>
+        {me && (meta.owners.includes(me) || meta.members.includes(me)) && <a className="button" href="/-/new"><Plus size={15} />New project</a>}
+      </>}>
       <div className="profile-facts">
         <span><FolderGit2 size={14} />{meta.projects} {meta.projects === 1 ? "project" : "projects"}</span>
         <span>{size(meta.bytes)} stored</span>
         <span>Joined <Ago iso={meta.createdAt} /></span>
         {meta.githubLogin && <a href={meta.github || `https://github.com/${meta.githubLogin}`} target="_blank" rel="noreferrer"><Github size={14} />{meta.githubLogin}</a>}
+        {meta.here.length > 0 && <a className="strip-here" href={base + "#" + hashOf("people")} onClick={onLink} title={meta.here.map(who => who.agent).join(", ")}><i className="online-dot" />{new Set(meta.here.map(who => who.agent)).size} here now</a>}
       </div>
       {(meta.memberOf.length > 0 || meta.agents.length > 0) && <div className="profile-links">
         {meta.memberOf.map(role => <a key={role.space} className="chip-link" href={placeUrl({ space: role.space, project: "" })} onClick={onLink}><Avatar name={role.space} size={18} kind={role.kind} />{role.space}{role.role === "owner" && <span className="quiet">owner</span>}</a>)}

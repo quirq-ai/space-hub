@@ -4,17 +4,16 @@ import { placeUrl, viewUrl, type HubMeta, type Place, type ProjectMeta, type Spa
 import { useLive } from "@/hooks/use-live";
 import { recentProjects, rememberProject, useMe } from "@/hooks/use-me";
 import { hashOf, useRoute } from "@/router";
-import { Dock, Inspector, Progress, Sidebar, TopBar, type DockItem, type SideSection } from "@/shell/shell";
+import { Dock, Progress, Sidebar, TopBar, type DockItem, type SideSection } from "@/shell/shell";
 import { SearchPalette } from "@/shell/search";
 import { Avatar } from "@/ui/primitives";
 import { HomePage } from "@/pages/home";
 import { SpacePage } from "@/pages/space";
-import { HubInspector, ProjectInspector, ProjectPage, SpaceInspector } from "@/pages/project";
+import { ProjectPage } from "@/pages/project";
 import { SECTION_ICONS, SECTION_ORDER } from "@/pages/files";
 
 const HUB: Place = { space: "", project: "" };
 const SEEN = "spacehub:seen:v1";
-const INSPECTOR = "spacehub:inspector:v1";
 const RAIL = "spacehub:rail:v1";
 
 function readSeen(): Record<string, string> { try { return JSON.parse(localStorage.getItem(SEEN) || "{}") ?? {}; } catch { return {}; } }
@@ -29,7 +28,6 @@ export function App() {
   // A project's space, for the sidebar's list of its sibling projects.
   const space = useLive<View<SpaceMeta>>(route.page === "project" ? viewUrl({ space: place.space, project: "" }) : undefined, 30_000);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [inspectorOpen, setInspectorOpen] = useState(() => { try { return localStorage.getItem(INSPECTOR) !== "closed" && matchMedia("(min-width: 1180px)").matches; } catch { return true; } });
   const [searching, setSearching] = useState(false);
   const [rail, setRail] = useState(() => { try { return localStorage.getItem(RAIL) === "on"; } catch { return false; } });
   const toggleRail = () => setRail(on => { try { localStorage.setItem(RAIL, on ? "off" : "on"); } catch { /* Storage may be blocked. */ } return !on; });
@@ -61,7 +59,6 @@ export function App() {
   useEffect(() => {
     document.title = route.page === "home" ? "spacehub" : `${route.page === "project" ? placeKey : place.space} · spacehub`;
   }, [route.page, placeKey, place.space]);
-  const toggleInspector = () => setInspectorOpen(open => { try { localStorage.setItem(INSPECTOR, open ? "closed" : "open"); } catch { /* Storage may be blocked. */ } return !open; });
 
   const signIn = `/-/login?next=${encodeURIComponent(location.pathname + location.hash)}`;
   const state = live.error && view ? "offline" : !view ? "loading" : "live";
@@ -124,11 +121,9 @@ export function App() {
       .map(entry => ({ key: entry.name, label: entry.name, href: placeUrl({ space: entry.name, project: "" }), icon: <Avatar name={entry.name} size={30} kind={entry.detail?.startsWith("org") ? "org" : entry.detail?.startsWith("agent") ? "agent" : "personal"} />, fresh: !!seen[entry.name] && entry.modifiedAt > seen[entry.name] }));
   }
 
-  const inspector = meta?.level === "project" ? <ProjectInspector place={place} meta={meta} /> : meta?.level === "space" ? <SpaceInspector name={place.space} meta={meta} /> : meta?.level === "hub" ? <HubInspector meta={meta} /> : null;
-
-  return <div className={`shell${inspectorOpen && inspector ? " with-inspector" : ""}${rail ? " rail" : ""}`}>
+  return <div className={`shell${rail ? " rail" : ""}`}>
     <Progress />
-    <TopBar me={me} signIn={signIn} live={state} onSearch={() => setSearching(true)} onMenu={() => setSidebarOpen(true)} onInspector={inspector ? toggleInspector : undefined} inspectorOpen={inspectorOpen} />
+    <TopBar me={me} signIn={signIn} live={state} onSearch={() => setSearching(true)} onMenu={() => setSidebarOpen(true)} />
     <Sidebar switcher={switcher} primary={primary} sections={sideSections} footer={footer} open={sidebarOpen} onClose={() => setSidebarOpen(false)} rail={rail} onRail={toggleRail} onSearch={() => setSearching(true)} />
     <main className="main" id="main">
       <div className="main-scroll">
@@ -138,7 +133,6 @@ export function App() {
       </div>
       <Dock places={places} tools={tools} />
     </main>
-    {inspector && <Inspector open={inspectorOpen} onClose={toggleInspector}>{inspector}</Inspector>}
     {searching && <SearchPalette place={place} onClose={() => setSearching(false)} />}
   </div>;
 }
