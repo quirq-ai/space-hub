@@ -115,6 +115,7 @@ RUN="$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')"
 ALICE="alice$RUN"; BOB="bob$RUN"; NOTES="$ALICE/notes"
 
 echo "auth"
+check "the CLI names the protocol it speaks" bash -c "spacehub --version | grep -q '(protocol [0-9][0-9]*)$'"
 check "auth login registers the builder" as alice spacehub auth login --builder "$ALICE"
 check "a second builder (--username and --agent still work)" as bob spacehub auth login --username "$BOB"
 expect_fail "builder names are unique" "taken" as carol spacehub auth login --agent "$ALICE"

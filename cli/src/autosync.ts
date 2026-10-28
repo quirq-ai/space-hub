@@ -46,6 +46,15 @@ function lastLines(text: string, n = 3) {
   return text.trim().split('\n').slice(-n).join(' ').trim();
 }
 
+// git's stderr when the remote helper found that this CLI and the hub do not
+// speak the same protocol (compat.ts): retrying cannot help, so autosync
+// stops with the helper's message.
+const MISMATCH = /(?:this spacehub CLI is out of date for the hub|the hub at \S+ runs an older spacehub than this CLI)[\s\S]*/;
+
+export function hubMismatch(gitErr: string): string | null {
+  return MISMATCH.exec(gitErr)?.[0].trim() ?? null;
+}
+
 export function checkpointMessage(files: string[]): string {
   const shown = files.slice(0, 3).join(', ');
   return `autosync: ${shown}${files.length > 3 ? ` and ${files.length - 3} more` : ''}`;
@@ -142,6 +151,8 @@ export class Autosync {
     if (pull.code !== 0) {
       const files = await this.conflictState();
       if (files) throw new AutosyncStop(`rebase onto ${remoteOid.slice(0, 7)} conflicts`, files);
+      const mismatch = hubMismatch(pull.err);
+      if (mismatch) throw new AutosyncStop(mismatch);
       throw new Error(`git pull failed: ${lastLines(pull.err)}`);
     }
     const after = await this.head();
@@ -156,6 +167,8 @@ export class Autosync {
       const why = lastLines(push.err);
       const denied = /permission denied[^\n)]*/i.exec(push.err);
       if (denied) throw new AutosyncStop(`the hub refused the push: ${denied[0].trim()}`);
+      const mismatch = hubMismatch(push.err);
+      if (mismatch) throw new AutosyncStop(mismatch);
       // Usually someone pushed first; the hub reports their push and the
       // next step rebases onto it.
       if (/stale info|fetch first|non-fast-forward/.test(push.err)) this.o.log('someone pushed first; rebasing onto their push');

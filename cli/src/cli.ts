@@ -10,7 +10,7 @@ import path from 'node:path';
 import readline from 'node:readline/promises';
 import { configFile, githubLogin, loadConfig, removeToken, saveSettings, saveToken } from './config';
 import os from 'node:os';
-import { connect, connectTo, errorMessage, findSpace, findProject, findUser, listRefs, projectsIn, quietSdkLogs, snapshot, spaceRoles, tables, type Conn } from './conn';
+import { connect, connectTo, errorMessage, findSpace, findProject, findUser, listRefs, projectsIn, PROTOCOL, quietSdkLogs, snapshot, spaceRoles, tables, type Conn } from './conn';
 import { AgentRun } from './agentrun';
 import { agentTemplate } from './agenttemplate';
 import { Autosync, AutosyncLoop, AutosyncStop, conflictHelp, UNFINISHED, unfinishedWork } from './autosync';
@@ -1265,7 +1265,7 @@ async function main() {
   const sub = args.shift();
 
   if (!group || group === 'help' || group === '--help' || group === '-h') return out(HELP);
-  if (group === '--version' || group === 'version') return out(`spacehub ${VERSION}`);
+  if (group === '--version' || group === 'version') return out(`spacehub ${VERSION} (protocol ${PROTOCOL})`);
 
   if (group === 'auth') {
     switch (sub) {

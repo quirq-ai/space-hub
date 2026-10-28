@@ -54,6 +54,12 @@ export const ChatTurnIn = __t.object("ChatTurnIn", {
 });
 export type ChatTurnIn = __Infer<typeof ChatTurnIn>;
 
+export const ClientProtocol = __t.object("ClientProtocol", {
+  current: __t.u32(),
+  oldest: __t.u32(),
+});
+export type ClientProtocol = __Infer<typeof ClientProtocol>;
+
 export const GitObject = __t.object("GitObject", {
   id: __t.u64(),
   key: __t.string(),
