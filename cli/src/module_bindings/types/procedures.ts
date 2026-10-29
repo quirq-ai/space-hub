@@ -7,7 +7,10 @@ import { type Infer as __Infer } from "spacetimedb";
 
 // Import all procedure arg schemas
 import * as AgentTokenProcedure from "../agent_token_procedure";
+import * as ClientProtocolProcedure from "../client_protocol_procedure";
 
 export type AgentTokenArgs = __Infer<typeof AgentTokenProcedure.params>;
 export type AgentTokenResult = __Infer<typeof AgentTokenProcedure.returnType>;
+export type ClientProtocolArgs = __Infer<typeof ClientProtocolProcedure.params>;
+export type ClientProtocolResult = __Infer<typeof ClientProtocolProcedure.returnType>;
 

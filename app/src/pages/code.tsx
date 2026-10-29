@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, Code2, File, FileText, Folder, GitBranch, GitCommitHorizontal, Link2, Tag } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { remarkHtmlAsText } from "@/lib/markdown";
 import { codeUrl, placeUrl, rawUrl, size, type CodeBlob, type CodeTree, type CommitDetail, type CommitSummary, type Commits, type Place, type Refs } from "@/api";
 import { useLive } from "@/hooks/use-live";
 import { hashOf, navigate, onLink } from "@/router";
@@ -70,7 +71,7 @@ export function CodeTab({ place, ref, path, defaultBranch }: { place: Place; ref
         })}</tbody></table> : <Empty icon={<Folder size={20} />} title="Empty folder" />}
       </div>
       {data.readme && <div className="panel readme"><div className="panel-head"><FileText size={15} /><strong>{data.readme.name}</strong></div>
-        <div className="markdown">{/\.txt$/i.test(data.readme.name) ? <pre>{data.readme.content}</pre> : <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>{data.readme.content}</ReactMarkdown>}</div></div>}
+        <div className="markdown">{/\.txt$/i.test(data.readme.name) ? <pre>{data.readme.content}</pre> : <ReactMarkdown remarkPlugins={[remarkGfm, remarkHtmlAsText]} skipHtml>{data.readme.content}</ReactMarkdown>}</div></div>}
     </>}
     {data?.kind === "blob" && <div className="panel">
       <div className="panel-head">
@@ -83,7 +84,7 @@ export function CodeTab({ place, ref, path, defaultBranch }: { place: Place; ref
       {IMAGES.test(path) ? <div className="image-box"><img src={rawUrl(place, current, path)} alt={path} /></div>
         : data.binary ? <Empty icon={<File size={20} />} title="Binary file"><p>It can't be shown as text. <a href={rawUrl(place, current, path)}>Download it</a>.</p></Empty>
         : data.text === null ? <Empty icon={<File size={20} />} title="Large file"><p>Over 1 MB. <a href={rawUrl(place, current, path)}>Open it raw</a>.</p></Empty>
-        : /\.(md|markdown)$/i.test(path) && markdown ? <div className="markdown padded"><ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>{data.text}</ReactMarkdown></div>
+        : /\.(md|markdown)$/i.test(path) && markdown ? <div className="markdown padded"><ReactMarkdown remarkPlugins={[remarkGfm, remarkHtmlAsText]} skipHtml>{data.text}</ReactMarkdown></div>
         : <CodeLines text={data.text} />}
     </div>}
   </div>;

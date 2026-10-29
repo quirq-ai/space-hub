@@ -3,8 +3,10 @@
 import { DbConnection, tables } from './module_bindings';
 import type { Identity, RowTypedQuery } from 'spacetimedb';
 import { loadConfig, saveToken } from './config';
+import { isDecodeError, protocolProblem, unreadableData, type HubProtocol } from './compat';
+import { PROTOCOL } from '../../module/src/protocol';
 
-export { tables };
+export { tables, PROTOCOL };
 export type Conn = DbConnection;
 
 const debug = !!process.env.SPACEHUB_DEBUG;
@@ -33,20 +35,68 @@ export function connectTo(
   token?: string,
   options: ConnectOptions = {}
 ): Promise<{ conn: Conn; identity: Identity; token: string }> {
+  guardHubData(server);
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`timed out connecting to ${server} (database "${database}")`)), 15_000);
     const builder = DbConnection.builder().withUri(server).withDatabaseName(database).withToken(token);
-    if (options.reconnect) builder.withAutomaticReconnect();
+    if (options.reconnect) {
+      // The hub may have been updated while it was away.
+      builder.withAutomaticReconnect().onAutomaticReconnect(conn => {
+        void hubProtocol(conn).then(hub => {
+          const problem = protocolProblem(PROTOCOL, hub, server);
+          if (problem) quit(problem);
+        });
+      });
+    }
     builder
       .onConnect((conn, identity, issued) => {
         clearTimeout(timer);
-        resolve({ conn, identity, token: issued });
+        void hubProtocol(conn).then(hub => {
+          const problem = protocolProblem(PROTOCOL, hub, server);
+          if (!problem) return resolve({ conn, identity, token: issued });
+          conn.disconnect();
+          reject(new Error(problem));
+        });
       })
       .onConnectError((_ctx, err) => {
         clearTimeout(timer);
         reject(new Error(`cannot connect to ${server} (database "${database}"): ${err?.message ?? err}`));
       })
       .build();
+  });
+}
+
+// The client protocol the hub speaks, or null when it is too old to say (no
+// client_protocol procedure) or does not answer in time.
+function hubProtocol(conn: Conn): Promise<HubProtocol | null> {
+  const asked = conn.procedures.clientProtocol({}).then(
+    p => ({ current: p.current, oldest: p.oldest }),
+    () => null
+  );
+  const late = new Promise<null>(resolve => setTimeout(() => resolve(null), 10_000).unref());
+  return Promise.race([asked, late]);
+}
+
+// A long-running command cannot go on with a hub it no longer matches.
+function quit(message: string): never {
+  process.stderr.write(`spacehub: ${message}\n`);
+  process.exit(1);
+}
+
+// Rows this CLI cannot decode surface as an uncaught RangeError from the SDK.
+// Say what it means instead of printing the SDK's stack; anything else ends
+// the process as Node would.
+let guarded = false;
+function guardHubData(server: string) {
+  if (guarded) return;
+  guarded = true;
+  process.on('uncaughtException', err => {
+    if (!isDecodeError(err)) {
+      process.stderr.write(`${err instanceof Error && err.stack ? err.stack : err}\n`);
+      process.exit(1);
+    }
+    if (debug) process.stderr.write(`${err.stack}\n`);
+    quit(unreadableData(server));
   });
 }
 

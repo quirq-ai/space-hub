@@ -528,6 +528,20 @@ docker run --rm -it -e SPACEHUB_SERVER=wss://hub.example.com \
   -v spacehub-home:/home/node/.spacehub spacehub auth status
 ```
 
+**Keep it current.** The CLI and the hub must speak the same client
+protocol (`spacehub --version` shows the CLI's). Every command checks when it
+connects, and a long-running one (autosync, `space sync`, `agent run`) checks
+again when it reconnects after the hub was redeployed. On a mismatch the
+command stops and says which side to update; an out-of-date CLI gets this,
+and the saved login stays:
+
+```sh
+d="$(mktemp -d)" && git clone -q --depth 1 https://github.com/quirq-ai/space-hub "$d" && "$d/scripts/install-cli.sh"
+```
+
+A hub from before the check (no `client_protocol` procedure) is trusted, as
+before.
+
 ### gh to spacehub
 
 | gh | spacehub |
@@ -581,13 +595,18 @@ spacetime start                           # terminal 1
 scripts/setup.sh                          # terminal 2: build, publish "spacehub" to the local server
 export PATH="$PWD/cli/bin:$PATH"          # or scripts/install-cli.sh
 spacehub auth login --server ws://127.0.0.1:3000 --builder <name>
-scripts/e2e.sh                            # 344 checks against a throwaway in-memory server and a stand-in GitHub
+scripts/e2e.sh                            # 345 checks against a throwaway in-memory server and a stand-in GitHub
 SPACEHUB_E2E_GITHUB=1 scripts/e2e.sh      # also imports a small public GitHub repository
 SPACEHUB_E2E_SERVER=ws://127.0.0.1:3000 scripts/e2e.sh   # against a running server, e.g. the Docker one
 ```
 
 After changing the module, regenerate the client bindings with
-`cd cli && npm run generate`. Unit tests need no server: `cd module && npm
+`cd cli && npm run generate`. `cd cli && npm test` then asks you to decide
+on the client protocol: if CLIs built before the change break (a table,
+column, reducer or procedure they use is renamed, removed or changes type, or
+a table gains a column), bump `PROTOCOL` and `OLDEST_PROTOCOL` in
+`module/src/protocol.ts`; either way, set `BINDINGS_HASH` there to the hash
+the test prints. Unit tests need no server: `cd module && npm
 test` runs the reducers in SpacetimeDB's in-process harness, and `cd cli &&
 npm test` runs the xo API against a stand-in database, and autosync and the
 GitHub sync's rules against plain git repositories.
@@ -613,9 +632,11 @@ module/src/style.ts      the app's look and page frame for server-rendered pages
 module/src/guide.ts      the guide's wording, for /-/guide and the home page
 module/src/store.ts      reads objects back out of the tables; who owns or belongs to a space
 module/src/sha1.ts       lets the database verify every object id
+module/src/protocol.ts   the client protocol CLIs must speak; when to bump it
 cli/src/cli.ts           spacehub (auth, space, project)
 cli/src/remote.ts        git-remote-quirq (and git-remote-spacehub, for older clones)
 cli/src/url.ts           quirq:// URLs
+cli/src/compat.ts        does this CLI match the hub: the protocol check and its messages
 cli/src/xo.ts            xo.quirq.dev's API: xo's per-user records and builders
 cli/src/git.ts           git plumbing: rev-list, cat-file, packfile writer
 cli/src/web.ts           web service: sign in/up, create and import projects
@@ -703,6 +724,13 @@ project are named for it and take its full name as `project`
 `start_import`, and so on. Reducers for a space take `space`: `edit_space`,
 `watch_space`, `add_space_member`, `create_org`, `link_space`. A CLI from
 before 0.4 cannot talk to this hub (its reducers are gone); update it.
+
+**Client protocol.** On every connect the client calls the
+`client_protocol` procedure, which answers with the protocol the hub speaks
+and the oldest client protocol it still serves (`module/src/protocol.ts`).
+A client outside that range stops before it subscribes to anything, with a
+message that says which side to update. The procedure's name and shape never
+change, so every client version can ask.
 
 ## xo
 

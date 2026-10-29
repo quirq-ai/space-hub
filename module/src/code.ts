@@ -15,7 +15,7 @@ import { NotFound, Renderer, type Change, type Commit } from './ui';
 const PAGE_SIZE = 30;
 const HISTORY_SCAN = 5000;
 const MAX_SHOWN_BYTES = 1024 * 1024;
-const README_BYTES = 256 * 1024;
+export const README_BYTES = 256 * 1024;
 const DIFF_FILES = 300;
 const DIFF_MAX_BYTES = 256 * 1024;
 const DIFF_MAX_ROWS = 4000;

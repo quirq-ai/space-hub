@@ -37,6 +37,7 @@ import { CHUNK_SIZE, PRESENCE_STALE_SECONDS, commitParents, inSpace, memberKey, 
 import { renderUi } from './ui';
 import { parseQuery, renderApi } from './workspace';
 import { appendTurns } from './chat';
+import { OLDEST_PROTOCOL, PROTOCOL } from './protocol';
 
 const MAX_OBJECT_SIZE = 100 * 1024 * 1024;
 // Fetch windows are cut on `pos`, a running total of row weights per project.
@@ -1160,6 +1161,15 @@ export const agentToken = spacetimedb.procedure({ agent: t.string() }, t.string(
     if (!ownsSpace(db, name, me)) throw new SenderError(`permission denied: only the owners of "${name}" read its token`);
     return db.agentSecret.name.find(name)?.token ?? '';
   })
+);
+
+// The client protocol this hub speaks (protocol.ts). Clients ask on connect,
+// so an out-of-date CLI says so instead of failing on a table it cannot read.
+// Keep this procedure's name and shape as they are: every CLI version calls it.
+export const clientProtocol = spacetimedb.procedure(
+  {},
+  t.object('ClientProtocol', { current: t.u32(), oldest: t.u32() }),
+  () => ({ current: PROTOCOL, oldest: OLDEST_PROTOCOL })
 );
 
 // ---------------------------------------------------------------- GitHub links
