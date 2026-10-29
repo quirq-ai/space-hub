@@ -9,7 +9,8 @@ import type { Place } from "@/api";
 export type Route =
   | { page: "home" }
   | { page: "space"; place: Place; tab: "projects" | "agents" | "activity" | "people" }
-  | { page: "project"; place: Place; tab: "files"; path: string }
+  // as=folder shows a folder as files even when it is a channel or a list of channels.
+  | { page: "project"; place: Place; tab: "files"; path: string; as: string }
   | { page: "project"; place: Place; tab: "code"; ref: string; path: string }
   | { page: "project"; place: Place; tab: "commits"; ref: string; path: string; num: number }
   | { page: "project"; place: Place; tab: "commit"; oid: string }
@@ -29,7 +30,7 @@ export function parseRoute(pathname: string, hash: string): Route {
     case "commits": return { page: "project", place, tab: "commits", ref: params.get("ref") ?? "", path: params.get("path") ?? "", num: Number(params.get("page") ?? 1) || 1 };
     case "commit": return { page: "project", place, tab: "commit", oid: params.get("oid") ?? "" };
     case "deps": case "branches": case "activity": case "people": return { page: "project", place, tab };
-    default: return { page: "project", place, tab: "files", path: params.get("path") ?? "" };
+    default: return { page: "project", place, tab: "files", path: params.get("path") ?? "", as: params.get("as") ?? "" };
   }
 }
 

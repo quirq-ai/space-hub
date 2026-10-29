@@ -5,7 +5,7 @@ import { Ago, Avatar, AvatarStack, CommandTabs, ErrorNote, Popover, Skeleton } f
 import { ActivityList, HereNow, PageHeader, People, Tabs } from "./common";
 import { BranchesTab, CodeTab, CommitTab, CommitsTab } from "./code";
 import { DepsTab } from "./deps";
-import { FilesTab } from "./files";
+import { FilesTab, isChannel } from "./files";
 
 type ProjectRoute = Extract<Route, { page: "project" }>;
 
@@ -16,7 +16,8 @@ export function ProjectPage({ route, view, error, me, signIn, refresh }: { route
   const tab = route.tab === "commit" ? "commits" : route.tab;
   const people = meta ? new Set([...meta.owners, ...meta.members, ...meta.collaborators, ...meta.agents]).size : undefined;
   if (!meta && error) return <div className="page"><PageHeader crumbs={[{ label: place.space, href: placeUrl({ space: place.space, project: "" }) }]} title={place.project} /><ErrorNote message={error} retry={refresh} /></div>;
-  return <div className={`page${route.tab === "files" && view?.snapshot.file?.format === "json" ? " page-chat" : ""}`}>
+  const chatty = route.tab === "files" && view && (view.snapshot.file?.format === "json" || (!view.snapshot.file && route.as !== "folder" && isChannel(view.snapshot)));
+  return <div className={`page${chatty ? " page-chat" : ""}`}>
     <PageHeader
       crumbs={[{ label: place.space, href: placeUrl({ space: place.space, project: "" }) }]}
       leading={<span className="project-mark"><FolderGit2 size={22} /></span>}
@@ -34,7 +35,7 @@ export function ProjectPage({ route, view, error, me, signIn, refresh }: { route
       { key: "activity", label: "Activity", href: base + "#" + hashOf("activity") },
       { key: "people", label: "People", href: base + "#" + hashOf("people"), count: people },
     ]} />
-    {route.tab === "files" && <FilesTab place={place} path={route.path} view={view} error={error} me={me} signIn={signIn} refresh={refresh} />}
+    {route.tab === "files" && <FilesTab place={place} path={route.path} as={route.as} view={view} error={error} me={me} signIn={signIn} refresh={refresh} />}
     {meta && route.tab === "code" && <CodeTab place={place} ref={route.ref} path={route.path} defaultBranch={meta.defaultBranch} />}
     {meta && route.tab === "commits" && <CommitsTab place={place} ref={route.ref} path={route.path} num={route.num} defaultBranch={meta.defaultBranch} />}
     {route.tab === "commit" && <CommitTab place={place} oid={route.oid} />}

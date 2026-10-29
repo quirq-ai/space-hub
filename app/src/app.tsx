@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { Activity, BookOpen, Bot, Code2, Folder, FolderGit2, GitBranch, GitCommitHorizontal, History, Home, Users, User } from "lucide-react";
+import { Activity, BookOpen, Bot, Code2, Hash, Folder, FolderGit2, GitBranch, GitCommitHorizontal, History, Home, Users, User } from "lucide-react";
 import { placeUrl, viewUrl, type HubMeta, type Place, type ProjectMeta, type SpaceMeta, type View } from "@/api";
 import { useLive } from "@/hooks/use-live";
+import { channelSeenKey, ChannelsContext, useChannels } from "@/hooks/use-channels";
+import { channelCards, channelOf } from "@/lib/channels";
 import { recentProjects, rememberProject, useMe } from "@/hooks/use-me";
 import { hashOf, useRoute } from "@/router";
 import { Dock, Inspector, Progress, Sidebar, TopBar, type DockItem, type SideSection } from "@/shell/shell";
@@ -45,6 +47,18 @@ export function App() {
   const view = live.data ?? (kept.current?.key === placeKey ? kept.current.view : undefined);
   const meta = view?.meta;
 
+  // Inside a project's Chat folder, its channels: in the sidebar like a chat app's, and on the folder's own page.
+  const chatRoot = route.page === "project" ? view?.snapshot.roots.find(root => root.name.toLowerCase() === "chat")?.path : undefined;
+  const inChat = !!chatRoot && route.page === "project" && route.tab === "files" && (filesPath === chatRoot || filesPath.startsWith(chatRoot + "/"));
+  const channels = useChannels(place, inChat ? chatRoot : undefined);
+  const activeChannel = channels ? channelOf(channels.root, filesPath) : undefined;
+  const activeLast = activeChannel ? channels?.last[activeChannel]?.time ?? "" : "";
+  useEffect(() => {
+    if (!activeChannel) return;
+    markSeen(channelSeenKey(place, activeChannel));
+    setSeen(readSeen());
+  }, [activeChannel, activeLast, place.space, place.project]);
+
   // The search box of the server-rendered pages links to /#search.
   useEffect(() => {
     if (location.hash === "#search") { history.replaceState(null, "", location.pathname); setSearching(true); }
@@ -79,6 +93,18 @@ export function App() {
     ...(me.name ? [{ key: "me", label: "Your profile", href: placeUrl({ space: me.name, project: "" }), icon: <User size={16} />, active: route.page === "space" && place.space === me.name }] : []),
   ];
   const sideSections: SideSection[] = [];
+  if (channels && meta?.level === "project") {
+    const seenHere = Object.fromEntries(Object.entries(seen).filter(([key]) => key.startsWith(channelSeenKey(place, ""))).map(([key, at]) => [key.slice(channelSeenKey(place, "").length), at]));
+    const cards = channelCards(channels.entries, { agents: meta.agents, people: [...meta.owners, ...meta.members, ...meta.collaborators], last: channels.last, seen: seenHere, me: me.name });
+    const item = (card: typeof cards[number]) => ({
+      key: "c:" + card.entry.path, label: card.entry.name, href: placeUrl(place, hashOf("files", { path: card.entry.path })), active: activeChannel === card.entry.path, fresh: card.unread, dim: card.done,
+      icon: card.kind === "channel" ? <Hash size={16} /> : <Avatar name={card.entry.name} size={18} kind={card.kind === "agent" ? "agent" : undefined} />,
+    });
+    const all = { label: "All channels", href: placeUrl(place, hashOf("files", { path: channels.root })) };
+    sideSections.push({ key: "channels", title: "Channels", limit: 8, items: cards.filter(card => card.kind !== "agent").map(item), more: all });
+    const agents = cards.filter(card => card.kind === "agent");
+    if (agents.length) sideSections.push({ key: "agents", title: "Agents", limit: 6, items: agents.map(item) });
+  }
   const siblings = route.page === "project" ? space.data?.snapshot.directory.entries : route.page === "space" ? view?.snapshot.directory.entries : undefined;
   if (route.page !== "home" && siblings) sideSections.push({
     key: "projects", title: `Projects in ${place.space}`, limit: 6,
@@ -137,7 +163,7 @@ export function App() {
       <div className="main-scroll">
         {route.page === "home" && <HomePage view={view as View<HubMeta> | undefined} me={me.name} activityOpen={activityOpen} onActivity={toggleActivity} />}
         {route.page === "space" && <SpacePage name={place.space} tab={route.tab} view={view as View<SpaceMeta> | undefined} error={live.error} me={me.name} />}
-        {route.page === "project" && <ProjectPage route={route} view={view as View<ProjectMeta> | undefined} error={live.error} me={me.name} signIn={signIn} refresh={live.refresh} />}
+        {route.page === "project" && <ChannelsContext.Provider value={channels}><ProjectPage route={route} view={view as View<ProjectMeta> | undefined} error={live.error} me={me.name} signIn={signIn} refresh={live.refresh} /></ChannelsContext.Provider>}
       </div>
       <Dock places={places} tools={tools} />
     </main>

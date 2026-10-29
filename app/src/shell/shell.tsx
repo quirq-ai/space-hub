@@ -55,7 +55,7 @@ export function TopBar({ me, signIn, live, onSearch, onMenu }: {
   </header>;
 }
 
-export type NavItem = { key: string; label: string; href: string; icon: ReactNode; active?: boolean; badge?: string };
+export type NavItem = { key: string; label: string; href: string; icon: ReactNode; active?: boolean; badge?: string; fresh?: boolean; dim?: boolean };
 export type SideSection = { key: string; title: string; items: NavItem[]; limit: number; more?: { label: string; href: string } };
 export type SpaceOption = { name: string; kind: string; href: string };
 
@@ -93,8 +93,8 @@ function SpaceSwitcher({ current, options, rail }: { current: SpaceOption | null
 }
 
 function Item({ item, rail, onClose }: { item: NavItem; rail: boolean; onClose: () => void }) {
-  return <a className={`nav-item${item.active ? " active" : ""}`} href={item.href} onClick={event => { onClose(); onLink(event); }} aria-current={item.active ? "page" : undefined} title={rail ? item.label : undefined}>
-    <span className="nav-icon">{item.icon}</span><span className="nav-label">{item.label}</span>{item.badge && <span className="nav-badge">{item.badge}</span>}
+  return <a className={`nav-item${item.active ? " active" : ""}${item.dim ? " dim" : ""}`} href={item.href} onClick={event => { onClose(); onLink(event); }} aria-current={item.active ? "page" : undefined} title={rail ? item.label : undefined}>
+    <span className="nav-icon">{item.icon}</span><span className="nav-label">{item.label}</span>{item.badge && <span className="nav-badge">{item.badge}</span>}{item.fresh && <i className="unread-dot" title="New since you last looked" />}
   </a>;
 }
 
