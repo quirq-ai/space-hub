@@ -98,22 +98,26 @@ details.menu .pop{position:absolute;z-index:10;top:calc(100% + 6px);left:0;min-w
 .img{padding:24px;text-align:center;background:var(--bg)}.img img{max-width:100%}
 .guide-box{padding:18px 22px;margin-bottom:24px}.guide-lead{margin:0;font-size:15px;flex:1;min-width:240px;color:var(--muted)}
 .guide-head{display:flex;gap:12px 24px;align-items:flex-start;flex-wrap:wrap;margin:0 0 14px}
-.guide-page{max-width:1000px}.guide-page>h1{margin:0}.guide-page>.desc{font-size:15px;margin:6px 0 0;max-width:680px}
-.glance{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin:18px 0 0}.glance div{padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}.glance b,.words b{display:block;font-weight:600;margin:0 0 2px}.glance span,.words span{color:var(--muted);font-size:13px;line-height:1.55}
-.guide-layout{display:grid;grid-template-columns:168px minmax(0,1fr);gap:28px;margin:22px 0 0;align-items:start}
-.guide-layout .toc{position:sticky;top:0;display:flex;flex-direction:column;gap:2px;padding:4px 0}.toc a{padding:5px 10px;border-radius:6px;font-size:13px;color:var(--muted)}.toc a:hover{text-decoration:none;background:var(--hover);color:var(--fg)}
-.guide-body section{margin:0 0 16px;padding:20px 24px;border:1px solid var(--line);border-radius:12px;background:var(--panel);scroll-margin-top:12px}
-.guide-body h2{font-size:17px;font-weight:650;margin:0 0 6px}.guide-body p{line-height:1.65;margin:8px 0}.guide-body .lede{color:var(--muted);margin:0 0 16px}
-.steps{list-style:none;counter-reset:step;margin:0;padding:0}.steps>li{position:relative;counter-increment:step;padding:0 0 18px 42px}
-.steps>li::before{content:counter(step);position:absolute;left:0;top:0;width:26px;height:26px;border-radius:50%;background:var(--accent-soft);color:var(--accent);font:600 12.5px var(--font);display:grid;place-items:center}
-.steps>li::after{content:"";position:absolute;left:12.5px;top:32px;bottom:6px;width:1px;background:var(--line)}.steps>li:last-child{padding-bottom:4px}.steps>li:last-child::after{display:none}
-.steps h3{font-size:14.5px;font-weight:600;margin:3px 0 2px}.steps p{margin:0 0 4px;color:var(--muted)}
-.done{margin:4px 0 0!important;padding:10px 14px;border-radius:8px;background:var(--addbg);color:var(--fg)}
-.words{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px}.words div{padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--bg)}.words.two{grid-template-columns:repeat(auto-fit,minmax(260px,1fr));margin:0 0 12px}
-.faq details{border-top:1px solid var(--line);padding:10px 0}.faq details:first-child{border-top:0;padding-top:2px}.faq summary{cursor:pointer;font-weight:600}.faq summary:hover{color:var(--accent)}.faq details p{color:var(--muted)}
-.cmd{position:relative;margin:6px 0 10px}.cmd .clone{margin:0;padding:9px 12px;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12.5px;line-height:1.6}.cmd.copyable .clone{padding-right:76px}
-.copy{position:absolute;top:5px;right:5px;display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 9px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--muted);font:500 12px var(--font);cursor:pointer}.copy:hover{color:var(--fg);border-color:var(--line-strong)}.copy.done{color:var(--A);border-color:var(--A)}.copy svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
-@media (max-width:860px){.guide-layout{grid-template-columns:minmax(0,1fr);gap:14px}.guide-layout .toc{position:static;flex-direction:row;flex-wrap:wrap;gap:6px}.toc a{border:1px solid var(--line);border-radius:20px;padding:3px 12px;background:var(--panel);color:var(--fg)}.guide-body section{padding:16px}}
+/* The app's page pieces, as app/src/app.css draws them, for pages built like the app's (the guide). */
+.page-title h1{margin:0}.page-title p{margin:3px 0 0;color:var(--muted)}
+.section-title{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px;margin:22px 0 10px;font-size:13px;font-weight:600;color:var(--muted)}.section-title>span{font-weight:400;font-size:12.5px;color:var(--faint)}
+.rows{list-style:none;margin:0;padding:0;border:1px solid var(--line);border-radius:12px;background:var(--panel);overflow:hidden}.rows>li+li{border-top:1px solid var(--line)}
+.card-grid{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px}
+.card{display:flex;align-items:flex-start;gap:12px;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+.card-icon{flex:none;display:grid;place-items:center;width:36px;height:36px;border-radius:10px;background:var(--fill);color:var(--muted)}
+.card-text{display:grid;gap:2px;min-width:0}.card-text strong{font-weight:550}.card-text span{color:var(--muted);font-size:12px;line-height:1.5}
+.command{display:flex;align-items:flex-start;gap:6px;padding:7px 6px 7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+.command code{flex:1;min-width:0;padding:4px 0;font:12px/1.5 ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere;user-select:all;background:none}
+.icon-button{flex:none;display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border:0;border-radius:7px;background:none;color:var(--muted);cursor:pointer}.icon-button:hover{background:var(--hover);color:var(--fg)}.icon-button.done{color:var(--A)}
+.icon-button svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+/* The guide: steps and questions are rows. */
+.guide-page .tabs{margin:14px 0 18px}.guide-page section{scroll-margin-top:12px}
+.guide-page :is(.step-main>span,.card-text span,.section-title>span,.faq-body p) code{padding:1px 5px;border-radius:4px;background:var(--fill);font-size:11.5px}
+.steps{counter-reset:step}.step{counter-increment:step;display:flex;gap:12px;padding:11px 14px}
+.step::before{content:counter(step);flex:none;display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--accent-soft);color:var(--accent);font:600 12px var(--font)}
+.step-main{display:grid;gap:3px;flex:1;min-width:0}.step-main strong{font-weight:550;line-height:24px}.step-main>span{color:var(--muted);font-size:12.5px;line-height:1.55}.step-main .command{margin-top:5px}
+.faq summary{padding:11px 14px;cursor:pointer;font-weight:550}.faq summary:hover{background:var(--hover)}
+.faq-body{padding:0 14px 12px}.faq-body p{margin:0 0 8px;color:var(--muted);font-size:12.5px;line-height:1.55}
 .guide{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.7fr) minmax(0,1fr);gap:12px 28px}@media (max-width:980px){.guide{grid-template-columns:minmax(0,1fr)}}
 .guide h3{font-size:13px;font-weight:600;margin:0 0 6px}.guide ul,.guide ol{margin:0;padding-left:18px}.guide li{margin:0 0 6px}.guide p{margin:6px 0 0}.guide .clone{margin:4px 0 6px;white-space:pre-wrap;overflow-wrap:anywhere}
 @media (max-width:760px){body{grid-template:"top" 52px "main" minmax(0,1fr)/minmax(0,1fr)}aside.side{display:none}header .search{width:auto;margin-left:auto}header .search span,header .search kbd,header .spacer{display:none}main{padding:16px 16px 32px}.narrow{padding:18px}}
