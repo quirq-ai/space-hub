@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { History, Users } from "lucide-react";
 import { activityLine, type ActivityItem, type Here } from "@/api";
 import { onLink } from "@/router";
@@ -28,9 +28,14 @@ export function Tabs({ tabs, active }: { tabs: Tab[]; active: string }) {
 
 export function ActivityList({ items, empty = "Nothing has happened here yet.", compact = false }: { items: ActivityItem[]; empty?: string; compact?: boolean }) {
   if (!items.length) return <Empty icon={<History size={20} />} title="No activity yet"><p>{empty}</p></Empty>;
+  // Keyed by the row, not its position, so a new row mounts at the top instead of every row changing its text.
+  const seen = new Map<string, number>();
   return <ol className={`activity${compact ? " compact" : ""}`}>{items.map((item, index) => {
     const line = activityLine(item);
-    return <li key={index}>
+    const row = `${item.at} ${item.agent} ${item.kind} ${item.path} ${item.subject}`;
+    const copies = seen.get(row) ?? 0;
+    seen.set(row, copies + 1);
+    return <li key={`${row} ${copies}`} style={{ "--i": index } as CSSProperties}>
       <Avatar name={item.agent || "hub"} size={compact ? 20 : 28} />
       <div className="activity-body">
         <div className="activity-line"><a className="strong" href={"/" + encodeURIComponent(item.agent)} onClick={onLink}>{item.agent || "someone"}</a> {line.verb} {line.href ? <a href={line.href} onClick={onLink}>{line.where}</a> : <span>{line.where}</span>}</div>
