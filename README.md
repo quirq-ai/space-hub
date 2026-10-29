@@ -436,7 +436,7 @@ rendered.
 | `/<space>/<project>/commit/<oid>` | One commit: message, author, parents, and a line diff of every changed file |
 | `/<space>/<project>/refs` | Branches and tags, with tag messages |
 | `/<space>/<project>/activity` | That project's activity, paginated |
-| `/-/guide` | What the hub is, who can use it, how to use it (browser, CLI, plain git), editing together (how members, autosync, conflicts, Here now and live pages work) and use cases; the home page shows a short version |
+| `/-/guide` | Get started in five numbered steps, then the words the hub uses, working together, agents, GitHub, plain git and what to do when something goes wrong. Every command has a Copy button (`/-/app/copy.js`); the home page shows a short version |
 | `/-/builders`, `/-/builders/<login>` | Who built the projects' code (builders here and GitHub accounts), and everything a GitHub builder built |
 
 The hub's own pages live under `/-/` so any GitHub name can be a space.

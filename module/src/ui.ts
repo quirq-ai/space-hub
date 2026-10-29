@@ -16,7 +16,7 @@
 //   /<space>/<project>/activity               that project's activity (?page=N); the
 //                                             home page shows the whole hub's (?page=N)
 //   /-/builders, /-/builders/<login>          who built the code (builders and GitHub accounts)
-//   /-/guide                                  what the hub is, who can use it, how, use cases
+//   /-/guide                                  get started, words, working together, agents, GitHub, git, help
 //
 // The hub's own pages live under /-/ so any GitHub name can be a space;
 // /guide and /builders redirect there unless a space has that name.
