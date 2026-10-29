@@ -13,7 +13,7 @@ export type Route =
   | { page: "project"; place: Place; tab: "code"; ref: string; path: string }
   | { page: "project"; place: Place; tab: "commits"; ref: string; path: string; num: number }
   | { page: "project"; place: Place; tab: "commit"; oid: string }
-  | { page: "project"; place: Place; tab: "branches" | "activity" | "people" };
+  | { page: "project"; place: Place; tab: "deps" | "branches" | "activity" | "people" };
 
 function decode(part: string) { try { return decodeURIComponent(part); } catch { return part; } }
 
@@ -28,7 +28,7 @@ export function parseRoute(pathname: string, hash: string): Route {
     case "code": return { page: "project", place, tab: "code", ref: params.get("ref") ?? "", path: params.get("path") ?? "" };
     case "commits": return { page: "project", place, tab: "commits", ref: params.get("ref") ?? "", path: params.get("path") ?? "", num: Number(params.get("page") ?? 1) || 1 };
     case "commit": return { page: "project", place, tab: "commit", oid: params.get("oid") ?? "" };
-    case "branches": case "activity": case "people": return { page: "project", place, tab };
+    case "deps": case "branches": case "activity": case "people": return { page: "project", place, tab };
     default: return { page: "project", place, tab: "files", path: params.get("path") ?? "" };
   }
 }

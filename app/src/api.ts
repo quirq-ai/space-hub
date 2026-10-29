@@ -1,10 +1,11 @@
 import type { WorkspaceSnapshot } from "@/lib/types";
+import { hashOf } from "@/router";
 
 /** Where the page is: the hub (no space), a space, or a project. */
 export type Place = { space: string; project: string };
 
 export type Here = { agent: string; mode: string; project: string };
-export type ActivityItem = { at: string; agent: string; kind: string; path: string; subject: string; text: string; count: number };
+export type ActivityItem = { at: string; agent: string; kind: string; path: string; subject: string; text: string; count: number; oid: string };
 export type Membership = { space: string; kind: string; role: string };
 export type AgentInfo = { name: string; description: string; parent: string; owned: boolean; connected: boolean; spaces: string[]; running: { host: string; since: string }[] };
 export type ProjectCard = { fullName: string; description: string; pushedAt: string };
@@ -17,7 +18,7 @@ export type SpaceMeta = {
 };
 export type ProjectMeta = {
   level: "project"; fullName: string; space: string; name: string; description: string; defaultBranch: string; bytes: number;
-  head: { oid: string; subject: string; author: string; time: string } | null; canWrite: boolean; owners: string[]; members: string[]; agents: string[];
+  head: { oid: string; subject: string; author: string; time: string } | null; deps: number; canWrite: boolean; owners: string[]; members: string[]; agents: string[];
   collaborators: string[]; here: Here[]; activity: ActivityItem[];
 };
 export type Meta = HubMeta | SpaceMeta | ProjectMeta;
@@ -34,6 +35,12 @@ export type DiffLine = [kind: " " | "+" | "-", before: number | null, after: num
 export type DiffFile = { status: "A" | "D" | "M"; path: string; adds: number; dels: number; note?: string; hunks?: { header: string; lines: DiffLine[] }[] };
 export type CommitDetail = { oid: string; subject: string; body: string; author: { name: string; time: string }; committer: { name: string; time: string }; parents: string[]; files: DiffFile[]; truncated: boolean };
 export type Files = { ref: string; paths: string[]; truncated: boolean };
+export type PinCommit = { oid: string; subject: string; author: string; time: string };
+export type Dep = {
+  path: string; url: string; pin: string; github: string; project: string; defaultBranch: string;
+  status: "current" | "behind" | "elsewhere" | "missing" | "external" | "invalid"; behind: number; pinned: PinCommit | null; head: PinCommit | null;
+};
+export type Deps = { ref: string; path: string; found: boolean; valid: boolean; deps: Dep[] };
 
 function query(params: Record<string, string | number | undefined>) {
   const search = new URLSearchParams();
@@ -47,7 +54,7 @@ export function viewUrl(place: Place, path = ""): string {
 }
 
 /** A project's code views. */
-export function codeUrl(place: Place, view: "refs" | "tree" | "commits" | "commit" | "files", params: { ref?: string; path?: string; page?: number; oid?: string } = {}): string {
+export function codeUrl(place: Place, view: "refs" | "tree" | "commits" | "commit" | "files" | "deps", params: { ref?: string; path?: string; page?: number; oid?: string } = {}): string {
   return "/-/api/view" + query({ space: place.space, project: place.project, view, ...params });
 }
 
@@ -96,12 +103,42 @@ const VERBS: Record<string, string> = {
   builder_set: "credited a builder for", builder_cleared: "cleared the builder of",
 };
 
-/** One activity row: who, what, where, and a link target when there is one. */
-export function activityLine(item: ActivityItem): { verb: string; where: string; detail: string; href: string } {
+/** One activity row: who, what, where, and link targets when there are some (the place, and the commit pushed). */
+export function activityLine(item: ActivityItem): { verb: string; where: string; detail: string; href: string; commit: string } {
   const verb = VERBS[item.kind] ?? item.kind.replace(/_/g, " ");
   const branch = item.subject.replace(/^refs\/(heads|tags)\//, "");
   const [space, project] = item.path.split("/");
   const href = project ? placeUrl({ space, project }) : space ? placeUrl({ space, project: "" }) : "";
   const commits = item.kind === "ref_updated" && item.count > 1 ? ` · ${item.count} commits` : "";
-  return { verb, where: item.path || item.subject, detail: (item.kind.startsWith("ref_") ? branch + (item.text ? " · " + item.text : "") : item.text) + commits, href };
+  const commit = project && item.oid && PUSHES.has(item.kind) ? placeUrl({ space, project }, hashOf("commit", { oid: item.oid })) : "";
+  return { verb, where: item.path || item.subject, detail: (item.kind.startsWith("ref_") ? branch + (item.text ? " · " + item.text : "") : item.text) + commits, href, commit };
+}
+
+const PUSHES = new Set(["ref_created", "ref_updated", "ref_forced"]);
+const GROUP_GAP_MS = 15 * 60_000;
+
+/**
+ * Pushes to one branch of one project, each within minutes of the next, as
+ * one entry: a chat turn and the autosync after it, or a run of small
+ * commits, read as one thing that happened. Items are newest first.
+ */
+export function groupActivity(items: ActivityItem[]): ActivityItem[][] {
+  const groups: ActivityItem[][] = [];
+  for (const item of items) {
+    const group = groups[groups.length - 1];
+    const last = group?.[group.length - 1];
+    const joins = last && item.kind === "ref_updated" && last.kind === "ref_updated" && item.path === last.path && item.subject === last.subject
+      && Math.abs(Date.parse(last.at) - Date.parse(item.at)) <= GROUP_GAP_MS;
+    if (joins) group.push(item);
+    else groups.push([item]);
+  }
+  return groups;
+}
+
+/** The files a push changed, when its subject is one the hub writes: a chat turn, or autosync. */
+export function pushedFiles(subject: string): string[] | null {
+  const chat = /^chat: \d+ messages? in (.+)$/.exec(subject);
+  if (chat) return [chat[1]];
+  const sync = /^autosync: (.+?)(?: and \d+ more)?$/.exec(subject);
+  return sync ? sync[1].split(", ") : null;
 }

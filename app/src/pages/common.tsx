@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
 import { History, Users } from "lucide-react";
-import { activityLine, type ActivityItem, type Here } from "@/api";
-import { onLink } from "@/router";
-import { Ago, Avatar, Empty, PersonLink } from "@/ui/primitives";
+import { activityLine, groupActivity, placeUrl, pushedFiles, type ActivityItem, type Here } from "@/api";
+import { hashOf, onLink } from "@/router";
+import { Ago, Avatar, AvatarStack, Empty, PersonLink } from "@/ui/primitives";
 
 export function PageHeader({ crumbs, title, subtitle, leading, actions, children }: {
   crumbs?: { label: string; href: string }[]; title: ReactNode; subtitle?: ReactNode; leading?: ReactNode; actions?: ReactNode; children?: ReactNode;
@@ -28,17 +28,52 @@ export function Tabs({ tabs, active }: { tabs: Tab[]; active: string }) {
 
 export function ActivityList({ items, empty = "Nothing has happened here yet.", compact = false }: { items: ActivityItem[]; empty?: string; compact?: boolean }) {
   if (!items.length) return <Empty icon={<History size={20} />} title="No activity yet"><p>{empty}</p></Empty>;
-  return <ol className={`activity${compact ? " compact" : ""}`}>{items.map((item, index) => {
-    const line = activityLine(item);
-    return <li key={index}>
-      <Avatar name={item.agent || "hub"} size={compact ? 20 : 28} />
-      <div className="activity-body">
-        <div className="activity-line"><a className="strong" href={"/" + encodeURIComponent(item.agent)} onClick={onLink}>{item.agent || "someone"}</a> {line.verb} {line.href ? <a href={line.href} onClick={onLink}>{line.where}</a> : <span>{line.where}</span>}</div>
-        {line.detail && <div className="activity-detail">{line.detail}</div>}
-      </div>
-      <span className="activity-time"><Ago iso={item.at} /></span>
-    </li>;
-  })}</ol>;
+  return <ol className={`activity${compact ? " compact" : ""}`}>{groupActivity(items).map((group, index) => group.length > 1
+    ? <PushGroup key={index} group={group} compact={compact} />
+    : <ActivityRow key={index} item={group[0]} compact={compact} />)}</ol>;
+}
+
+function ActivityRow({ item, compact }: { item: ActivityItem; compact: boolean }) {
+  const line = activityLine(item);
+  return <li>
+    <Avatar name={item.agent || "hub"} size={compact ? 20 : 28} />
+    <div className="activity-body">
+      <div className="activity-line"><a className="strong" href={"/" + encodeURIComponent(item.agent)} onClick={onLink}>{item.agent || "someone"}</a> {line.verb} {line.href ? <a href={line.href} onClick={onLink}>{line.where}</a> : <span>{line.where}</span>}</div>
+      {line.detail && <div className="activity-detail">{line.commit ? <a href={line.commit} onClick={onLink}>{line.detail}</a> : line.detail}</div>}
+    </div>
+    <span className="activity-time"><Ago iso={item.at} /></span>
+  </li>;
+}
+
+const names = (list: string[]) => list.length <= 2 ? list.join(" and ") : `${list.slice(0, 2).join(", ")} and ${list.length - 2} more`;
+
+/** Pushes minutes apart to one branch, as one line: who, how many commits, and what they touched. */
+function PushGroup({ group, compact }: { group: ActivityItem[]; compact: boolean }) {
+  const newest = group[0];
+  const line = activityLine(newest);
+  const people = [...new Set(group.map(item => item.agent || "someone"))];
+  const commits = group.reduce((sum, item) => sum + Math.max(item.count, 1), 0);
+  const [space, project] = newest.path.split("/");
+  const branch = newest.subject.replace(/^refs\/(heads|tags)\//, "");
+  // Chat turns and autosync name the files they changed; a conversation's log opens with its conversation.
+  const touched = group.map(item => pushedFiles(item.text));
+  const files = touched.every(Boolean) ? [...new Set(touched.flat().map(path => path!.replace(/\.log\.jsonl$/i, ".json")))] : [];
+  // Otherwise the newest commit someone wrote a message for says the most.
+  const written = group.find((item, i) => !touched[i]) ?? newest;
+  const writtenHref = activityLine(written).commit;
+  return <li>
+    <AvatarStack names={people} max={3} size={compact ? 20 : 28} />
+    <div className="activity-body">
+      <div className="activity-line">{people.map((name, i) => <span key={name}>{i > 0 && (i === people.length - 1 ? " and " : ", ")}<a className="strong" href={"/" + encodeURIComponent(name)} onClick={onLink}>{name}</a></span>).slice(0, 3)}{people.length > 3 && ` and ${people.length - 3} more`} pushed {commits} commits to {line.href ? <a href={line.href} onClick={onLink}>{line.where}</a> : <span>{line.where}</span>}</div>
+      <div className="activity-detail">{branch} · {files.length && project
+        ? files.slice(0, 3).map((path, i) => <span key={path}>{i > 0 && ", "}<a href={placeUrl({ space, project }, hashOf("files", { path }))} onClick={onLink}>{path}</a></span>)
+        : <>{writtenHref ? <a href={writtenHref} onClick={onLink}>{written.text}</a> : written.text} <span className="quiet">and {group.length - 1} more</span></>}{files.length > 3 && ` and ${files.length - 3} more`}</div>
+      <details className="activity-more"><summary>{group.length} pushes by {names(people)}</summary>
+        <ol>{group.map((item, i) => { const one = activityLine(item); return <li key={i}><Avatar name={item.agent || "hub"} size={16} /><span className="activity-detail">{one.commit ? <a href={one.commit} onClick={onLink}>{item.text || one.detail}</a> : item.text || one.detail}</span><span className="activity-time"><Ago iso={item.at} /></span></li>; })}</ol>
+      </details>
+    </div>
+    <span className="activity-time"><Ago iso={newest.at} /></span>
+  </li>;
 }
 
 const MODES: Record<string, string> = { watch: "watching", sync: "syncing", autosync: "editing", agent: "running", app: "in the app" };

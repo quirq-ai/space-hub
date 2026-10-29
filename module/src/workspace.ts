@@ -14,12 +14,19 @@
 // is current. Writes go through the append_chat reducer (chat.ts).
 import { PRESENCE_STALE_SECONDS, inSpace, objectKey, readObject, refKey, type Db } from './store';
 import { Sha1 } from './sha1';
-import { CodeError, commitView, commitsView, filesView, refsView, treeView } from './code';
+import { CodeError, README_BYTES, commitView, commitsView, filesView, refsView, treeView } from './code';
+import { DEPS_FILE, depsText, depsView, parseDeps } from './deps';
 
 export const MAX_TEXT_BYTES = 2 * 1024 * 1024;
 export const MAX_PREVIEW_BYTES = 20 * 1024 * 1024;
 export const MAX_DIRECTORY_ENTRIES = 2000;
 const ACTIVITY_SHOWN = 30;
+/** Folders summarized from their READMEs, at most, in one listing. */
+const SUMMARIZED_FOLDERS = 200;
+const SUMMARY_BYTES = 64 * 1024;
+/** The documents shown under a project's root listing, in this order; any other folder shows its README. */
+const ROOT_DOCS = ['readme', 'agents', 'project', 'contributing', 'work_items'];
+const DOC_NAME = /^([a-z_]+?)(?:\.(?:md|markdown|txt))?$/i;
 
 const OMITTED_NAMES = new Set(['node_modules']);
 const TEXT_EXTENSIONS = new Set([
@@ -44,8 +51,19 @@ export interface Entry {
   extension: string;
   size: number;
   modifiedAt: string;
-  /** A short line shown instead of "Folder" for spaces and projects. */
+  /** A short line shown instead of "Folder": for spaces and projects, and for folders with a README. */
   detail?: string;
+  /** From a folder's README, its "## Status", "## Owner" and "## Output format" sections. */
+  status?: string;
+  owner?: string;
+  outputFormat?: string;
+}
+
+/** A Markdown document of a folder, shown under its listing. */
+export interface Doc {
+  name: string;
+  path: string;
+  content: string;
 }
 
 export interface FileView extends Entry {
@@ -60,7 +78,7 @@ export interface Snapshot {
   rootName: string;
   rootId: string;
   roots: Entry[];
-  directory: { path: string; name: string; entries: Entry[] };
+  directory: { path: string; name: string; entries: Entry[]; docs?: Doc[] };
   file?: FileView;
   revision: string;
 }
@@ -84,6 +102,8 @@ export interface ActivityItem {
   subject: string;
   text: string;
   count: number;
+  /** The commit or tag the event points at, when there is one. */
+  oid: string;
 }
 
 export interface ProjectCard {
@@ -144,6 +164,8 @@ export type Meta =
       defaultBranch: string;
       bytes: number;
       head: { oid: string; subject: string; author: string; time: string } | null;
+      /** Repositories pinned by the DEPS file at the root (deps.ts); 0 without one. */
+      deps: number;
       canWrite: boolean;
       owners: string[];
       members: string[];
@@ -279,6 +301,7 @@ export function compareEntries(left: Entry, right: Entry) {
 }
 
 export function fileFormat(entry: Entry): FileView['format'] {
+  if (entry.path === DEPS_FILE) return 'json';
   if (['jsonl', 'ndjson'].includes(entry.extension)) return 'jsonl';
   if (entry.extension === 'url') return 'url';
   if (entry.extension === 'json') return 'json';
@@ -311,10 +334,96 @@ function fileView(entry: Entry, read: () => Uint8Array): FileView {
     try {
       return { ...view, content, data: JSON.parse(content) as unknown };
     } catch {
+      // A DEPS file need not be JSON; then it is plain text.
+      if (entry.extension !== 'json') return { ...view, format: 'text', content };
       return { ...view, content, error: 'This JSON is not valid yet. The original file contents are shown below.' };
     }
   }
   return { ...view, content };
+}
+
+// ---------------------------------------------------------------- folder READMEs
+
+export interface Summary {
+  title: string;
+  line: string;
+  status: string;
+  owner: string;
+  outputFormat: string;
+}
+
+/** Markdown on one line as plain text: no links, code marks, bold, bullets or quotes. */
+function plainLine(line: string, max: number) {
+  const text = line
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/`([^`]*)`/g, '$1')
+    .replace(/\*\*|__/g, '')
+    .replace(/^(?:[-*+]|\d+\.)\s+/, '')
+    .replace(/^>\s?/, '')
+    .trim();
+  return text.length > max ? text.slice(0, max - 1).trimEnd() + '…' : text;
+}
+
+/**
+ * What a README says about its folder: its "# Title", its first line of
+ * text, and the first line under "## Status", "## Owner" and "## Output
+ * format" (the sections quirq's channels use; other READMEs rarely have them).
+ */
+export function summarize(markdown: string): Summary {
+  const out: Summary = { title: '', line: '', status: '', owner: '', outputFormat: '' };
+  const fields: Record<string, 'status' | 'owner' | 'outputFormat'> = { status: 'status', owner: 'owner', 'output format': 'outputFormat' };
+  let fence = false;
+  let field: 'status' | 'owner' | 'outputFormat' | undefined;
+  for (const raw of markdown.split('\n')) {
+    const line = raw.trim();
+    if (/^(```|~~~)/.test(line)) fence = !fence;
+    if (fence || /^(```|~~~)/.test(line) || !line || /^(\||<!--|---+$|===+$)/.test(line)) continue;
+    const heading = /^(#{1,6})\s+(.*?)\s*#*$/.exec(line);
+    if (heading) {
+      if (heading[1].length === 1 && !out.title) out.title = plainLine(heading[2], 80);
+      field = heading[1].length === 2 ? fields[heading[2].toLowerCase()] : undefined;
+      continue;
+    }
+    if (field) {
+      if (!out[field]) out[field] = plainLine(line, 40);
+    } else if (!out.line) out.line = plainLine(line, 160);
+  }
+  return out;
+}
+
+const looseName = (name: string) => name.toLowerCase().replace(/[-_\s]+/g, ' ').trim();
+
+function readText(db: Db, project: Project, oid: string, limit: number): string | null {
+  const size = Number(db.gitObject.key.find(objectKey(project.id, oid))?.size ?? 0n);
+  if (size > limit) return null;
+  const object = readObject(db, project.id, oid);
+  return object && object.kind === 'blob' ? utf8(object.data) : null;
+}
+
+const readmeOf = (tree: TreeEntry[]) => tree.find(entry => isFileMode(entry.mode) && DOC_NAME.exec(entry.name)?.[1].toLowerCase() === 'readme');
+
+/** A folder's row, with its README's title and first line instead of "Folder", and its labels. */
+function folderSummary(db: Db, project: Project, name: string, oid: string): Pick<Entry, 'detail' | 'status' | 'owner' | 'outputFormat'> {
+  const readme = readmeOf(treeOf(db, project, oid));
+  const text = readme ? readText(db, project, readme.oid, SUMMARY_BYTES) : null;
+  if (!text) return {};
+  const { title, line, status, owner, outputFormat } = summarize(text);
+  const named = title && looseName(title) !== looseName(name) ? title : '';
+  const detail = [named, line].filter(Boolean).join(' · ');
+  return { ...(detail ? { detail } : {}), ...(status ? { status } : {}), ...(owner ? { owner } : {}), ...(outputFormat ? { outputFormat } : {}) };
+}
+
+/** The documents shown under a folder: its README, and at the root the workspace's guides too. */
+function docsOf(db: Db, project: Project, tree: TreeEntry[], base: string): Doc[] {
+  const wanted = base ? ['readme'] : ROOT_DOCS;
+  const found = new Map<string, Doc>();
+  for (const entry of tree) {
+    const kind = DOC_NAME.exec(entry.name)?.[1].toLowerCase() ?? '';
+    if (!isFileMode(entry.mode) || !wanted.includes(kind) || found.has(kind)) continue;
+    const content = readText(db, project, entry.oid, README_BYTES);
+    if (content !== null) found.set(kind, { name: entry.name, path: base ? `${base}/${entry.name}` : entry.name, content });
+  }
+  return wanted.flatMap(kind => found.get(kind) ?? []);
 }
 
 // ---------------------------------------------------------------- levels
@@ -347,7 +456,7 @@ function here(db: Db, now: number, keep: (row: { space: string; projectId: bigin
 
 function activity(db: Db, keep: (row: { path: string; projectId: bigint }) => boolean): ActivityItem[] {
   const rows = [...db.activity.iter()].filter(keep).sort((a, b) => (a.id < b.id ? 1 : -1)).slice(0, ACTIVITY_SHOWN);
-  return rows.map(row => ({ at: iso(row.at), agent: row.agent, kind: row.kind, path: row.path, subject: row.subject, text: row.text, count: row.count }));
+  return rows.map(row => ({ at: iso(row.at), agent: row.agent, kind: row.kind, path: row.path, subject: row.subject, text: row.text, count: row.count, oid: row.oid }));
 }
 
 function finish(snapshot: Omit<Snapshot, 'revision'>, meta: Meta) {
@@ -502,33 +611,40 @@ function projectLevel(db: Db, project: Project, requested: string, viewer: strin
   const isFile = at.kind === 'file';
   const parent = relative.includes('/') ? relative.slice(0, relative.lastIndexOf('/')) : '';
   const directoryPath = isFile ? parent : relative;
-  const list = (tree: { mode: string; name: string; oid: string }[], base: string) => {
+  const list = (tree: TreeEntry[], base: string, summaries: boolean) => {
     const visible = tree.filter(entry => isVisibleName(entry.name) && (isDirectoryMode(entry.mode) || isFileMode(entry.mode)));
     if (visible.length > MAX_DIRECTORY_ENTRIES) throw new ApiError(`This folder contains more than ${MAX_DIRECTORY_ENTRIES} entries.`, 413);
+    const summarized = summaries && visible.filter(entry => isDirectoryMode(entry.mode)).length <= SUMMARIZED_FOLDERS;
     return visible
       .map(entry => isDirectoryMode(entry.mode)
-        ? entryOf(base ? `${base}/${entry.name}` : entry.name, 'directory', 0, time)
+        ? { ...entryOf(base ? `${base}/${entry.name}` : entry.name, 'directory', 0, time), ...(summarized ? folderSummary(db, project, entry.name, entry.oid) : {}) }
         : entryOf(base ? `${base}/${entry.name}` : entry.name, 'file', Number(db.gitObject.key.find(objectKey(project.id, entry.oid))?.size ?? 0n), time))
       .sort(compareEntries);
   };
-  const rootEntries = list(treeOf(db, project, commit?.tree ?? ''), '');
-  const directory = directoryPath === '' ? rootEntries : (() => {
+  const rootTree = treeOf(db, project, commit?.tree ?? '');
+  const directoryTree = directoryPath === '' ? rootTree : (() => {
     const dir = locate(db, project, commit?.tree ?? '', directoryPath);
     if (dir.kind !== 'directory') throw notFound();
-    return list(dir.tree, directoryPath);
+    return dir.tree;
   })();
+  // Summaries and documents only for the folder being looked at, not for the file beside them.
+  const directory = list(directoryTree, directoryPath, !isFile);
+  const rootEntries = directoryPath === '' ? directory : list(rootTree, '', false);
+  const docs = isFile ? [] : docsOf(db, project, directoryTree, directoryPath);
   let file: FileView | undefined;
   if (at.kind === 'file') {
     const size = Number(db.gitObject.key.find(objectKey(project.id, at.oid))?.size ?? 0n);
     file = fileView(entryOf(relative, 'file', size, time), () => objectOf(db, project, at.oid, 'blob'));
   }
+  const depsSource = depsText(db, project, rootTree);
+  const deps = depsSource === null ? 0 : parseDeps(depsSource)?.length ?? 0;
   const canWrite = !!viewer && (inSpace(db, project.owner, viewer) || !!db.projectMember.key.find(`${project.id}:${viewer}`));
   return finish(
     {
       rootName: project.name,
       rootId: rootId(project.fullName),
       roots: rootEntries.filter(entry => entry.kind === 'directory'),
-      directory: { path: directoryPath, name: directoryPath ? directoryPath.split('/').pop()! : project.name, entries: directory },
+      directory: { path: directoryPath, name: directoryPath ? directoryPath.split('/').pop()! : project.name, entries: directory, ...(docs.length ? { docs } : {}) },
       ...(file ? { file } : {}),
     },
     {
@@ -540,6 +656,7 @@ function projectLevel(db: Db, project: Project, requested: string, viewer: strin
       defaultBranch: project.defaultBranch,
       bytes: bytesOf(db, project.id),
       head: commit ? { oid: head, subject: commit.subject, author: commit.author, time } : null,
+      deps,
       canWrite,
       ...projectPeople(db, project),
       here: here(db, now, row => row.projectId === project.id),
@@ -596,6 +713,7 @@ export function codeView(db: Db, req: ApiRequest): unknown {
       case 'commits': return commitsView(db, row, ref, path, Number(req.query.get('page') ?? 1), req.now);
       case 'commit': return commitView(db, row, req.query.get('oid') ?? '', req.now);
       case 'files': return filesView(db, row, ref, req.now);
+      case 'deps': return depsView(db, row, req.now);
       default: throw new ApiError('Unknown view.', 400);
     }
   } catch (error) {
