@@ -16,7 +16,10 @@ export function HomePage({ view, me, activityOpen, onActivity }: { view: View<Hu
       .map((stat, i) => <Fragment key={stat}>{i > 0 && " "}<span className="stat">{i > 0 && "· "}{stat}</span></Fragment>)}
       actions={<>{activity}{me ? <a className="button" href="/-/new"><Plus size={15} />New project</a> : <Popover label="Get started" icon={<Rocket size={15} />}>
         <div className="popover-title">Push your first project</div>
-        <CommandTabs tabs={[{ label: "spacehub", lines: ["spacehub auth login", "spacehub project create notes --source . --push"] }]} note={<>Install the CLI with <code>scripts/install-cli.sh</code> from quirq-ai/space-hub. <a href="/-/guide">Read the guide</a>.</>} />
+        <CommandTabs tabs={[
+          { label: "spacehub", lines: ["spacehub auth login", "spacehub project create notes --source . --push"] },
+          { label: "xo", lines: ['pip install "quirq-xo @ git+https://github.com/quirq-ai/xo"', "xo login", "spacehub project create notes --source . --push"] },
+        ]} note={<>Both need the hub's CLI: <code>scripts/install-cli.sh</code> from quirq-ai/space-hub. xo is XO's command line; <code>xo login</code> signs you in to XO and this hub. <a href="/-/guide">Read the guide</a>.</>} />
       </Popover>}</>}>
       {view.meta.here.length > 0 && <div className="meta-strip"><span className="strip-here" title={view.meta.here.map(who => `${who.agent}${who.project ? ` · ${who.project}` : ""}`).join("\n")}><i className="online-dot" />{new Set(view.meta.here.map(who => who.agent)).size} connected now</span><AvatarStack names={[...new Set(view.meta.here.map(who => who.agent))]} max={8} size={20} /></div>}
     </PageHeader>

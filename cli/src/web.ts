@@ -22,6 +22,7 @@ import http from 'node:http';
 import { connectTo, errorMessage, findProject, findUser, quietSdkLogs, snapshot, tables, type Conn } from './conn';
 import { githubLogin, normalizeServer } from './config';
 import { esc, navFor, PAGE_CSP, shell, sideFor } from '../../module/src/style';
+import { signInWays, type Hub } from '../../module/src/howto';
 import { Fail, GithubSync, githubApi, githubBuilder as builderOf, githubInfo as infoOf, mirrorProject } from './github';
 import { LiveHub } from './live';
 import { accountsSetting, handleSignIn, signInConfig } from './signin';
@@ -83,8 +84,9 @@ function redirect(res: http.ServerResponse, to: string, cookies: string[] = []) 
   res.end();
 }
 
-function page(title: string, viewer: string | null, body: string) {
-  return shell(title, navFor(viewer), `<div class="narrow">${body}</div>`, '', '/', sideFor(viewer));
+// A form page in a narrow card; wide pages (the sign-in steps) use the page's width, like the guide.
+function page(title: string, viewer: string | null, body: string, wide = false) {
+  return shell(title, navFor(viewer), wide ? `<div class="wide-page">${body}</div>` : `<div class="narrow">${body}</div>`, '', '/', sideFor(viewer));
 }
 
 function cookieValue(req: http.IncomingMessage, name: string): string | null {
@@ -221,17 +223,21 @@ function pump() {
 
 // ---------------------------------------------------------------- pages
 
-function loginPage(viewer: string | null, error = '', next = '/') {
+// Sign in: the ways to get a token from the terminal (howto.ts), then the
+// form that takes it.
+function loginPage(viewer: string | null, hub: Hub, error = '', next = '/') {
   return page(
     'Sign in · spacehub',
     viewer,
-    `<h1><b>Sign in</b></h1>
-<p class="desc">spacehub has no passwords: a builder signs in with an identity token. Print it with <code>spacehub auth token</code> on a machine where you are logged in, or register.</p>
+    `<div class="page-title"><h1>Sign in</h1><p>There are no passwords here. Sign in once from your terminal, then paste your token to use this site.</p></div>
 ${error ? `<div class="banner err">${esc(error)}</div>` : ''}
-<form method="post" action="/-/login"><input type="hidden" name="next" value="${esc(next)}">
+${signInWays(hub, true)}
+<h2 class="section-title">Paste your token</h2>
+<form class="signin-form" method="post" action="/-/login"><input type="hidden" name="next" value="${esc(next)}">
 <label for="token">Identity token</label><textarea id="token" name="token" required spellcheck="false" autocomplete="off"></textarea>
 <p><button class="btn primary" type="submit">Sign in</button></p></form>
-<p class="muted">New here? <a href="/-/signup">Register</a>.</p>`
+${hub.accounts === 'open' ? '<p class="muted">New here? <a href="/-/signup">Register</a>.</p>' : ''}`,
+    true
   );
 }
 
@@ -249,21 +255,15 @@ ${error ? `<div class="banner err">${esc(error)}</div>` : ''}
   );
 }
 
-// On a hub where builders sign up with GitHub, they do it from the CLI.
-function githubSignupPage(viewer: string | null, server: string, error = '') {
-  const step = (text: string, command: string) => `<li>${text}<code class="clone">${esc(command)}</code></li>`;
+// On a hub where builders sign up with GitHub (or xo), they do it from the terminal.
+function terminalSignupPage(viewer: string | null, hub: Hub, error = '') {
   return page(
     'Sign up · spacehub',
     viewer,
-    `<h1><b>Sign up with GitHub</b></h1>
-<p class="desc">Builders on this hub sign up with their GitHub account, from the CLI. Your builder name, and your personal space, are your GitHub login. There is no password: run the same login again on any machine to get your builder back.</p>
+    `<div class="page-title"><h1>Sign up</h1><p>Builders on this hub sign up from the terminal. There is no password: run the same login on any machine to get your builder back.</p></div>
 ${error ? `<div class="banner err">${esc(error)}</div>` : ''}
-<ol>
-${step('Install the CLI (needs git and Node 22+):', 'git clone https://github.com/quirq-ai/space-hub && ./space-hub/scripts/install-cli.sh')}
-${step('Log in to GitHub with the GitHub CLI:', 'gh auth login')}
-${step('Sign up (the hub asks GitHub who you are):', `spacehub auth login --server ${server}`)}
-${step('To use this site too, print your token and paste it at <a href="/-/login">Sign in</a>:', 'spacehub auth token')}
-</ol>`
+${signInWays(hub, true).replace('Paste it below.', 'Paste it at <a href="/-/login">Sign in</a> to use this site too.')}`,
+    true
   );
 }
 
@@ -275,6 +275,11 @@ async function accountsMode() {
   } catch {
     return 'open';
   }
+}
+
+// This hub as the sign-in pages describe it.
+async function hubOf(req: http.IncomingMessage): Promise<Hub> {
+  return { server: serverOf(req), host: req.headers.host ?? 'localhost', accounts: await accountsMode() };
 }
 
 // This hub's websocket address, as the browser reached it.
@@ -334,26 +339,27 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
 
   if (route === '/-/login') {
     const session = await sessionOf(req);
-    if (req.method === 'GET') return send(res, 200, loginPage(session?.username ?? null, '', localPath(url.searchParams.get('next'))));
+    if (req.method === 'GET') return send(res, 200, loginPage(session?.username ?? null, await hubOf(req), '', localPath(url.searchParams.get('next'))));
     const form = await readForm(req);
     const token = (form.get('token') ?? '').trim();
     const next = localPath(form.get('next'));
-    if (!token) return send(res, 400, loginPage(null, 'Paste your identity token.', next));
+    if (!token) return send(res, 400, loginPage(null, await hubOf(req), 'Paste your identity token.', next));
     let username: string | null = null;
     try {
       username = (await withConn(token, (conn, identity) => findUser(conn, identity)))?.username ?? null;
     } catch {
-      return send(res, 400, loginPage(null, 'That token is not valid on this server.', next));
+      return send(res, 400, loginPage(null, await hubOf(req), 'That token is not valid on this server.', next));
     }
-    if (!username) return send(res, 400, loginPage(null, 'That identity has no builder name yet. Register instead.', next));
+    if (!username) return send(res, 400, loginPage(null, await hubOf(req), 'That identity has no builder yet. Log in from the terminal first, as above.', next));
     return redirect(res, next, sessionCookies(req, token, username));
   }
 
   if (route === '/-/signup') {
     const session = await sessionOf(req);
-    if ((await accountsMode()) === 'github') {
-      const error = req.method === 'POST' ? 'Builders on this hub sign up with GitHub, from the CLI.' : '';
-      return send(res, error ? 400 : 200, githubSignupPage(session?.username ?? null, serverOf(req), error));
+    const hub = await hubOf(req);
+    if (hub.accounts !== 'open') {
+      const error = req.method === 'POST' ? 'Builders on this hub sign up from the terminal.' : '';
+      return send(res, error ? 400 : 200, terminalSignupPage(session?.username ?? null, hub, error));
     }
     if (req.method === 'GET') return send(res, 200, signupPage(session?.username ?? null));
     const form = await readForm(req);

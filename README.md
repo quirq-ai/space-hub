@@ -499,8 +499,13 @@ name.
   from the CLI. On a hub with open sign-up, it registers a builder: pick the
   name, and the server creates its identity. The token is shown once. It is
   the login, and the CLI can use it too (`spacehub auth login --with-token`).
-- **Sign in** (`/-/login`) takes an existing token, for example from
-  `spacehub auth token`.
+- **Sign in** (`/-/login`) shows the ways to get a token from the terminal,
+  side by side, then takes it. Each way installs the CLI, logs in and ends
+  with `spacehub auth token`: with GitHub (`spacehub auth login`) and, on
+  hub.quirq.dev, with xo, XO's command line (`pip install "quirq-xo @
+  git+https://github.com/quirq-ai/xo"`, then `xo login`, which signs you in to
+  XO and hands your builder, named after your xo username, to spacehub). The
+  steps come from `module/src/howto.ts`, which the guide uses too.
 - **New project** (`/-/new`) creates an empty project in your personal space
   or a space you belong to, or imports a public GitHub repository. Paste
   `https://github.com/owner/repo`, and the server clones it with all

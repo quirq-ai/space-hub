@@ -459,7 +459,10 @@ else
   admin_call set_accounts '"github"' || fail "switch to GitHub sign-up"
   expect_fail "with GitHub sign-up on, names cannot be registered" "sign up with GitHub" as gh3 spacehub auth login --builder "plain$RUN"
   page_has "the guide says how to sign up" "-/guide" "gh auth login"
-  same "the sign-up page points to the CLI" "$(curl -s "$WEB/-/signup" | grep -c 'Sign up with GitHub')" "1"
+  same "the sign-up page points to the CLI" "$(curl -s "$WEB/-/signup" | grep -c 'section-title">With GitHub')" "1"
+  same "so does the sign-in page, above the token form" "$(curl -s "$WEB/-/login" | grep -c 'section-title">With GitHub')" "1"
+  same "on hub.quirq.dev they offer xo too" "$(curl -s -H 'Host: hub.quirq.dev' "$WEB/-/login" | grep -c 'section-title">With xo')" "1"
+  same "other hubs leave xo out" "$(curl -s "$WEB/-/login" | grep -c 'xo login')" "0"
   same "the sign-up form is refused" "$(form /-/signup "username=plain$RUN" | cut -d' ' -f1)" "400"
   admin_call set_accounts '"open"' || fail "switch back to open sign-up"
   check "a GitHub builder can leave" as gh1 spacehub auth delete --yes

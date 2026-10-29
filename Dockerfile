@@ -39,10 +39,12 @@ COPY cli/package.json cli/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY cli/tsconfig.json ./
 COPY cli/src ./src
-# The web service shares the UI's stylesheet with the module, and every
-# client checks the hub's protocol against the module's (cli/test/dockerfile.test.ts).
+# The web service shares the UI's stylesheet and the sign-in steps with the
+# module, and every client checks the hub's protocol against the module's
+# (cli/test/dockerfile.test.ts).
 COPY module/src/style.ts /src/module/src/style.ts
 COPY module/src/protocol.ts /src/module/src/protocol.ts
+COPY module/src/howto.ts /src/module/src/howto.ts
 RUN npm run build
 
 # The hub's app (open-chat's interface), served by the web service at /.
