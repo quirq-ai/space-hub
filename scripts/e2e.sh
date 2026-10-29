@@ -250,11 +250,10 @@ same "fetch without a fetch record still works" "$(git rev-parse quirq/main)" "$
 echo "web UI"
 page_has "home has the short guide" "" "Get started"
 page_has "home links to the full guide" "" "Read the guide"
-page_has "guide: what it is" "-/guide" 'id="what"'
-page_has "guide: who can use it" "-/guide" 'id="who"'
-page_has "guide: how to use it" "-/guide" 'id="how"'
-page_has "guide: use cases" "-/guide" 'id="use-cases"'
-page_has "guide: editing together" "-/guide" 'id="together"'
+for section in start words together agents github git help; do page_has "guide: section $section" "-/guide" "id=\"$section\""; done
+page_has "guide: getting started is numbered steps" "-/guide" '<ol class="steps">'
+page_has "guide: commands are copyable blocks" "-/guide" '<div class="cmd"><code class="clone">'
+page_has "guide: pages load the copy script" "-/guide" '/-/app/copy.js'
 status_is "the old guide address redirects" "guide" 301
 page_has "home lists the space" "" "$NOTES"
 page_has "owner page lists the space" "$ALICE" "notes"

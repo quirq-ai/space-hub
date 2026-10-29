@@ -1,10 +1,16 @@
-// The hub's guide: what it is, who can use it, how to use it, use cases.
-// One source for both the full page (/-/guide) and the short version at the
-// top of the home page. Keep it plain and short; the README has the rest.
+// The hub's guide: get started in five steps, the words it uses, then one
+// section per thing people do (work together, agents, GitHub, plain git) and
+// what to do when something goes wrong. One source for both the full page
+// (/-/guide) and the short version at the top of the module's home page. Keep
+// it plain and short; the README has the rest.
+//
+// Every command sits in a .cmd block; /-/app/copy.js adds a Copy button to
+// each (the page's CSP allows same-origin scripts only), and without
+// JavaScript the command is still selectable in one click.
 //
 // HUB is the remote name and URL scheme git uses (quirq, quirq://<host>/<space>/<project>).
-// The sign-up wording follows the hub's accounts setting: open (register a
-// name) or github (sign up with GitHub from the CLI).
+// The sign-in wording follows the hub's accounts setting: open (register a
+// name) or github (sign in with GitHub from the CLI).
 // TODO: on a hub whose accounts are xo (SPACEHUB_ACCOUNTS=xo), builders come from xo login instead.
 import { esc } from './style';
 
@@ -12,6 +18,8 @@ const HUB = {
   cli: 'spacehub',
   remote: 'quirq',
   source: 'https://github.com/quirq-ai/space-hub',
+  // The hub the CLI talks to when no --server is given.
+  defaultHost: 'hub.quirq.dev',
   // The git URL of a project: it names the hub, so it works whichever hub the CLI is logged in to.
   url: (host: string, project: string) => `quirq://${host}/${project}`,
 };
@@ -23,157 +31,171 @@ export interface GuideContext {
   accounts: string; // "open", "github" or "xo" (hub_state)
 }
 
-const code = (text: string) => `<code class="clone">${esc(text)}</code>`;
+// One or more command lines, copied together.
+const cmd = (...lines: string[]) => `<div class="cmd"><code class="clone">${esc(lines.join('\n'))}</code></div>`;
 
 function commands(ctx: GuideContext) {
   const c = HUB.cli;
+  const server = ctx.host === HUB.defaultHost ? '' : ` --server ${ctx.server}`;
   return {
-    install: `git clone ${HUB.source} && ./space-hub/scripts/install-cli.sh`,
-    login: ctx.accounts === 'github' ? `${c} auth login --server ${ctx.server}` : `${c} auth login --server ${ctx.server} --builder <name>`,
+    install: `d="$(mktemp -d)" && git clone -q --depth 1 ${HUB.source} "$d" && "$d/scripts/install-cli.sh"`,
+    login: ctx.accounts === 'github' ? `${c} auth login${server}` : `${c} auth login${server} --builder <name>`,
     gh: 'gh auth login',
     create: `${c} project create <name> --source . --push`,
+    clone: `${c} project clone <you>/<name>`,
+    autosync: `${c} project sync --watch --auto`,
     org: `${c} space create <org>`,
     orgMember: `${c} space member add <org> <builder>`,
-    orgProject: `${c} project create <org>/<name> --source . --push`,
-    clone: `${c} project clone <space>/<project>`,
-    sync: `${c} project sync --watch`,
-    watch: `${c} project watch <space>/<project> --exec "<command>"`,
     collaborator: `${c} project member add <space>/<project> <builder>`,
+    orgProject: `${c} project create <org>/<name> --source . --push`,
+    orgClone: `${c} project clone <org>/<name>`,
+    who: `${c} project who <org>/<name>`,
+    spaceClone: `${c} space clone <org>`,
+    spaceSync: `${c} space sync --watch --auto`,
+    agentCreate: `${c} agent create <agent> -d "what it does"`,
+    agentConnect: `${c} agent connect <agent> <space>`,
+    agentRun: `${c} agent run <agent>`,
+    agentToken: `${c} agent token <agent>`,
+    watch: `${c} project watch <space>/<project> --exec "<command>"`,
     link: `${c} space link <space> https://github.com/<account>`,
-    spaceClone: `${c} space clone <space>`,
-    agentCreate: `${c} agent create <name>`,
-    agentConnect: `${c} agent connect <name> <space>`,
-    agentRun: `${c} agent run <name>`,
-    spaceSync: `cd <space> && ${c} space sync --watch --auto`,
-    autosync: `${c} project sync --watch --auto`,
-    who: `${c} project who <space>/<project>`,
-    members: `${c} space member list <org>`,
-    leave: `${c} space member remove <org> <your name>`,
-    interval: `${c} project sync --watch --auto --interval 10`,
-    resolve: 'git add <files> && git rebase --continue',
-    gitRebase: `git pull --rebase ${HUB.remote} main && git push ${HUB.remote} main`,
-    token: `${c} auth token`,
     gitClone: `git clone -o ${HUB.remote} ${HUB.url(ctx.host, '<space>/<project>')}`,
     gitPush: `git push ${HUB.remote} main`,
     gitPull: `git pull ${HUB.remote} main`,
+    resolve: 'git add <files> && git rebase --continue',
+    ignored: 'git check-ignore -v <file>',
+    token: `${c} auth token`,
   };
 }
 
 const LEAD =
-  'spacehub keeps git projects that people and AI agents share, grouped into spaces like GitHub organizations. Push with plain git, and every connected copy gets the change within seconds.';
+  'spacehub keeps git projects that people and AI agents share. Push with plain git, and every connected copy gets the change within seconds.';
 
-// The short version for the home page.
+// The short version for the module's home page.
 export function guideHome(ctx: GuideContext): string {
-  const cmd = commands(ctx);
+  const c = commands(ctx);
   const github = ctx.accounts === 'github';
   return `<div class="box guide-box"><div class="guide-head"><p class="guide-lead">${esc(LEAD)}</p><a class="btn" href="${esc(ctx.link('-/guide'))}">Read the guide</a></div>
 <div class="guide">
 <div><h3>Who can use it</h3><ul>
 <li>Anyone can browse spaces and projects and clone them.</li>
-<li>To create projects or push, you need a builder login. ${github ? 'Sign up with your GitHub account from the CLI: your builder name is your GitHub login.' : 'Register on the <a href="/-/signup">sign-up page</a>, or with the CLI.'}</li></ul></div>
+<li>To create projects or push, you need a builder login. ${github ? 'Sign in with your GitHub account from the CLI: your builder name is your GitHub login.' : 'Register on the <a href="/-/signup">sign-up page</a>, or with the CLI.'}</li></ul></div>
 <div><h3>Get started</h3><ol>
-<li>Install the CLI (needs git and Node 22+):${code(cmd.install)}</li>
-${github ? `<li>Log in to GitHub, then sign up with that account:${code(cmd.gh)}${code(cmd.login)}</li>` : `<li>Log in as a builder:${code(cmd.login)}</li>`}
-<li>Share a repo (run inside it):${code(cmd.create)}</li></ol></div>
+<li>Install the CLI (needs git and Node 22+):${cmd(c.install)}</li>
+<li>Sign in:${cmd(c.login)}</li>
+<li>Share a repo (run inside it):${cmd(c.create)}</li></ol></div>
 <div><h3>Use cases</h3><ul>
 <li>Keep one repo the same on your laptop, cloud machines and AI agents.</li>
 <li>Hand work between people and agents in seconds.</li>
-<li>Work in one project with others at the same time: see <a href="${esc(ctx.link('-/guide'))}#together">Edit together</a>.</li>
+<li>Work in one project with others at the same time: see <a href="${esc(ctx.link('-/guide'))}#together">Work together</a>.</li>
 <li>Mirror GitHub repos or whole organizations here and keep them updated.</li></ul></div>
 </div></div>`;
 }
 
+// A numbered step: a title, what it does, and the commands to run.
+const step = (title: string, text: string, ...blocks: string[]) => `<li><h3>${title}</h3>${text ? `<p>${text}</p>` : ''}${blocks.join('')}</li>`;
+
 // The full guide page.
 export function guidePage(ctx: GuideContext): string {
-  const cmd = commands(ctx);
+  const c = commands(ctx);
   const github = ctx.accounts === 'github';
-  const step = (text: string, command?: string) => `<li>${text}${command ? code(command) : ''}</li>`;
+  const signIn = github
+    ? step(
+        'Sign in with GitHub',
+        `Your builder name, and your personal space, are your GitHub login. If it asks you to log in to GitHub first, run <code>${esc(c.gh)}</code> and try again.`,
+        cmd(c.login)
+      )
+    : step('Pick a builder name', 'It becomes your personal space. The CLI saves your token: there is no password.', cmd(c.login));
+  const sections = [
+    ['start', 'Get started'],
+    ['words', 'Words to know'],
+    ['together', 'Work together'],
+    ['agents', 'Agents'],
+    ['github', 'GitHub'],
+    ['git', 'Plain git'],
+    ['help', 'If something goes wrong'],
+  ];
   return `<div class="guide-page">
 <h1><b>Guide</b></h1>
 <p class="desc">${esc(LEAD)}</p>
-<nav class="toc"><a href="#what">What it is</a><a href="#who">Who can use it</a><a href="#how">How to use it</a><a href="#together">Edit together</a><a href="#use-cases">Use cases</a></nav>
+<div class="glance">
+<div><b>Laid out like GitHub</b><span>Spaces hold projects, the way accounts hold repositories.</span></div>
+<div><b>Plain git</b><span>Push and pull through the <code>${HUB.remote}</code> remote. <code>origin</code> stays yours.</span></div>
+<div><b>Live</b><span>Every connected copy, person or agent, gets each push within seconds.</span></div>
+</div>
+<div class="guide-layout">
+<nav class="toc" aria-label="On this page">${sections.map(([id, label]) => `<a href="#${id}">${label}</a>`).join('')}</nav>
+<div class="guide-body">
 
-<section id="what"><h2>What it is</h2>
-<p>A hub for git repositories, laid out like GitHub. You use plain git to push and pull. The hub tells every connected copy about each push as it happens, so machines, people and AI agents stay on the same code.</p>
-<dl class="terms">
-<dt>Space</dt><dd>A name at the top of the hub, <code>/&lt;space&gt;</code>, like a GitHub user or organization. A builder's personal space has the builder's name; an org groups projects for several builders; an agent is a space too.</dd>
-<dt>Org</dt><dd>A space for several builders, like a GitHub organization. Its owners manage it, and its members push to all of its projects.</dd>
-<dt>Project</dt><dd>A git repository in a space, <code>/&lt;space&gt;/&lt;project&gt;</code>, like a GitHub repository.</dd>
-<dt>Builder</dt><dd>A person with a login here. Builders also means who made a project's code: GitHub accounts show as builders for the repos imported from them.</dd>
-<dt>Agent</dt><dd>A space of its own with its own identity: its definition lives in <code>&lt;agent&gt;/home</code>, it is connected to the spaces it works in, and it runs anywhere with <code>spacehub agent run</code> (XO Swarm launches it the same way).</dd>
-<dt>Member</dt><dd>Belongs to an org and pushes to all of its projects. Owners also manage the org.</dd>
-<dt>Collaborator</dt><dd>May push to one project outside their own spaces.</dd>
-<dt>Activity</dt><dd>The log of every change on the hub: pushes, new projects and spaces, imports and edits.</dd>
-</dl></section>
-
-<section id="who"><h2>Who can use it</h2><ul>
-<li><b>Anyone</b> who can open this page can browse every space and project, read the activity and clone any project.</li>
-${
-  github
-    ? `<li><b>Builders</b> can also create projects and orgs, push and import from GitHub. Sign up with your GitHub account: log in to GitHub with ${code(cmd.gh)} then run ${code(cmd.login)} Your builder name, and your personal space, are your GitHub login.</li>`
-    : `<li><b>Builders</b> can also create projects and orgs, push and import from GitHub. Register on the <a href="/-/signup">sign-up page</a>, or with ${code(cmd.login)}</li>`
-}
-<li>A space's owners and members push to its projects. To let someone push to one project only, add them as a collaborator: ${code(cmd.collaborator)}</li>
-${
-  github
-    ? `<li>A login has no password: GitHub vouches for you. Run <code>spacehub auth login</code> on any machine to sign in again. To sign in on this site, print your token with ${code(cmd.token)} and paste it at <b>Sign in</b>.</li>`
-    : `<li>A login has no password: its token is the key. Save it when you register, or print it later with ${code(cmd.token)}</li>`
-}
-</ul></section>
-
-<section id="how"><h2>How to use it</h2>
-<h3>In the browser</h3><ol>
-${github ? step('Sign up with the CLI (below), print your token with <code>spacehub auth token</code>, and paste it at <b>Sign in</b>.') : step('Register on the <a href="/-/signup">sign-up page</a>, and save the token you are shown.')}
-${step('Click <b>New project</b>. Pick the space, then leave it empty or paste a GitHub URL to import that repository.')}
-${step('Open a project to browse its files, commits and activity. Imported projects have <b>Sync from GitHub</b>.')}
+<section id="start"><h2>Get started</h2>
+<p class="lede">Five steps, a couple of minutes. You need git and Node 22 or newer.</p>
+<ol class="steps">
+${step('Install the CLI', `It puts <code>${HUB.cli}</code> and git's <code>${HUB.remote}</code> helper on your PATH. Run it again any time to update.`, cmd(c.install))}
+${signIn}
+${step('Share a repo', `Run it inside the repo. Its page here is <code>/&lt;you&gt;/&lt;name&gt;</code>.`, cmd('cd path/to/your-repo', c.create))}
+${step('Get it on another machine', 'A laptop, a cloud machine or an agent: sign in there too, then clone.', cmd(c.clone))}
+${step('Keep every copy in sync', 'Run it inside each clone and leave it running. Every few seconds it commits your changes, new files included, takes in everyone else\'s pushes and pushes yours.', cmd(c.autosync))}
 </ol>
-<h3>With the CLI</h3><ol>
-${step('Install it (needs git and Node 22+):', cmd.install)}
-${github ? `${step('Log in to GitHub, then sign up with that account (your builder name is your GitHub login):', cmd.gh)}${code(cmd.login)}` : step('Log in as a builder:', cmd.login)}
-${step('Share a repo (run inside it):', cmd.create)}
-${step('Make an org, add people, and share a repo into it:', cmd.org)}${code(cmd.orgMember)}${code(cmd.orgProject)}
-${step("Mirror a GitHub user's or organization's public repositories into a space:", cmd.link)}
-${step('Clone every project of a space into one folder, and keep them all current:', cmd.spaceClone)}${code(cmd.spaceSync)}
-${step('Make an agent, let it work in a space, and run it:', cmd.agentCreate)}${code(cmd.agentConnect)}${code(cmd.agentRun)}
-${step('Get a project:', cmd.clone)}
-${step('Stay in sync (inside a clone):', cmd.sync)}
-${step('Run a command on every push:', cmd.watch)}
-${step('Edit together: commit, rebase and push every few seconds (inside a clone):', cmd.autosync)}
-${step('See who is connected to a project:', cmd.who)}
-</ol>
-<h3>With plain git</h3><p>After installing the CLI, git understands the hub's addresses. The hub's remote is called <code>${esc(HUB.remote)}</code>, so <code>origin</code> stays free for GitHub.</p>
-${code(cmd.gitClone)}${code(cmd.gitPush)}${code(cmd.gitPull)}
+<p class="done">That's it: an edit on any machine reaches the others within seconds.</p>
 </section>
 
-<section id="together"><h2>Edit together</h2>
-<p>Several builders and agents can work in one project at the same time. Each works in its own clone, and the hub keeps the clones the same within seconds.</p>
-<h3>Set it up</h3><ol>
-${step('Put the project in an org and add everyone as members:', cmd.orgMember)}
-${step('Each one clones the project:', cmd.clone)}
-${step('Each one starts autosync inside the clone and leaves it running:', cmd.autosync)}
-${step('Edit files as usual. To see who else is working right now:', cmd.who)}
-</ol>
-<h3>How it works</h3><ul>
-<li><b>Members.</b> A space's owners and members push to every project in it. Only owners change its settings and members, import, or delete. Members are listed on the space page and with ${code(cmd.members)} A member can leave with ${code(cmd.leave)}</li>
-<li><b>Autosync.</b> Every few seconds, autosync commits your changes as one <code>autosync: &lt;files&gt;</code> commit and pushes it. When someone else pushes, the hub tells your autosync at once: it rebases your commits on top of theirs and pushes. Edits to different files never need a manual pull. To commit less often: ${code(cmd.interval)}</li>
-<li><b>Conflicts.</b> If you and someone else change the same lines, your autosync stops and lists the files. The rebase is paused, with git's conflict markers in those files. Fix them, then run ${code(cmd.resolve)} or <code>git rebase --abort</code> to keep your commits as they were, and start autosync again. Everyone else keeps going.</li>
-<li><b>A whole space at once.</b> ${code(cmd.spaceClone)} puts every project in one folder, and ${code(cmd.spaceSync)} runs autosync in all of them, cloning new projects as they appear. A conflict pauses only its project; the others carry on.</li>
-<li><b>Here now.</b> Every running autosync, sync or watch tells the hub which project (or whole space) and branch it follows. The project page lists them under <b>Here now</b>, the home page shows everyone on the hub, and they disappear when the command stops.</li>
-<li><b>Live pages.</b> The home page, space pages and project pages update by themselves: new commits, activity, members and who is here appear without a reload. The green <b>live</b> dot at the top right shows a page is following the hub.</li>
-</ul>
-<h3>Without autosync</h3><p>Members can also use plain git, pulling before they push:</p>${code(cmd.gitRebase)}
-<p><code>project sync --watch</code> on its own only fast-forwards, for copies you read but do not edit.</p>
+<section id="words"><h2>Words to know</h2>
+<div class="words">
+<div><b>Space</b><span>A name at the top of the hub, <code>/&lt;space&gt;</code>: a builder's personal space, an org or an agent.</span></div>
+<div><b>Project</b><span>A git repository in a space, <code>/&lt;space&gt;/&lt;project&gt;</code>.</span></div>
+<div><b>Org</b><span>A space for a team. Its members push to all of its projects; its owners manage it.</span></div>
+<div><b>Builder</b><span>A person with a login. ${github ? 'The name is their GitHub login.' : 'The name is the one they registered.'}</span></div>
+<div><b>Agent</b><span>A space with its own identity. Its instructions and memory live in <code>&lt;agent&gt;/home</code>.</span></div>
+<div><b>Activity</b><span>Every change on the hub, newest first: pushes, new projects, members and imports.</span></div>
+</div>
 </section>
 
-<section id="use-cases"><h2>Use cases</h2>
-<div class="cases">
-<div class="case"><h3>One repo on every machine</h3><p>Create the project once, clone it on each laptop, cloud machine or agent, and keep each copy current.</p>${code(cmd.clone)}${code(cmd.sync)}</div>
-<div class="case"><h3>Hand work to an agent</h3><p>The agent waits for your push and starts on it right away. Its push comes back to you the same way.</p>${code(cmd.watch)}</div>
-<div class="case"><h3>Edit together</h3><p>Add the others to an org. Each runs autosync in a clone, and every edit reaches the others within seconds. The project page shows who is here now.</p>${code(cmd.orgMember)}${code(cmd.autosync)}</div>
-<div class="case"><h3>Mirror a GitHub repo</h3><p>Click <b>New project</b> and paste the GitHub URL. Use <b>Sync from GitHub</b> on the project to pull later changes.</p></div>
-<div class="case"><h3>Agents that work in your spaces</h3><p>An agent is a space with its own identity. Its definition (soul, identity, memory, skills) is a project, it is connected to the spaces it may work in, and <code>agent run</code> keeps all of it in one folder, pushing as the agent. XO Swarm launches it the same way.</p>${code(cmd.agentCreate)}${code(cmd.agentConnect)}${code(cmd.agentRun)}</div>
-<div class="case"><h3>Mirror a whole GitHub organization</h3><p>Link a space to it: every public repository becomes a project with the same name, kept in step. Work done here is never overwritten; a branch GitHub moved another way is kept and marked <b>diverged</b>.</p>${code(cmd.link)}</div>
-<div class="case"><h3>Follow the work</h3><p>The <b>Activity</b> feed on the home page and on each project shows every push, import and change, newest first.</p></div>
-</div></section>
+<section id="together"><h2>Work together</h2>
+<p class="lede">Several people and agents can edit one project at the same time. Each works in their own clone; autosync keeps the clones the same.</p>
+<ol class="steps">
+${step('Make an org', 'You become its owner.', cmd(c.org))}
+${step('Add people', `Members push to every project of the org. To let someone push to one project only, make them a collaborator: <code>${esc(c.collaborator)}</code>`, cmd(c.orgMember))}
+${step('Put a project in it', 'Run it inside the repo.', cmd(c.orgProject))}
+${step('Everyone clones it and starts autosync', 'Edits to different files never need a manual pull.', cmd(c.orgClone, `cd <name> && ${c.autosync}`))}
+</ol>
+<p>See who is working right now, here or on the project's page:</p>${cmd(c.who)}
+<p>Work on every project of the org at once: one folder, one command, and new projects appear by themselves.</p>${cmd(c.spaceClone, `cd <org> && ${c.spaceSync}`)}
+</section>
+
+<section id="agents"><h2>Agents</h2>
+<p class="lede">An agent works in your spaces under its own name: its commits and pushes are credited to it.</p>
+<ol class="steps">
+${step('Create it', 'Its home project holds its instructions, memory and skills.', cmd(c.agentCreate))}
+${step('Let it work in a space', 'You must own both.', cmd(c.agentConnect))}
+${step('Run it', 'On any machine. It keeps its home and every connected space in one folder, in sync.', cmd(c.agentRun))}
+</ol>
+<p>To launch it somewhere else, such as XO Swarm, give it its token:</p>${cmd(c.agentToken)}
+<p>Hand work over: run a command every time a project gets a push.</p>${cmd(c.watch)}
+</section>
+
+<section id="github"><h2>GitHub</h2>
+<div class="words two">
+<div><b>Import one repo</b><span>Click <b>New project</b> and paste the GitHub URL. <b>Sync from GitHub</b> on the project pulls later changes.</span></div>
+<div><b>Mirror a whole account</b><span>Every public repository becomes a project with the same name, kept in step every hour. Work done here is never overwritten.</span></div>
+</div>
+${cmd(c.link)}
+</section>
+
+<section id="git"><h2>Plain git</h2>
+<p class="lede">Once the CLI is installed, git understands the hub's addresses. The hub's remote is called <code>${HUB.remote}</code>, so <code>origin</code> stays free for GitHub.</p>
+${cmd(c.gitClone)}${cmd(c.gitPush)}${cmd(c.gitPull)}
+</section>
+
+<section id="help"><h2>If something goes wrong</h2>
+<div class="faq">
+<details><summary>The CLI says it is out of date</summary><p>The hub was updated. Run the install command again; your login stays.</p>${cmd(c.install)}</details>
+<details><summary>Autosync stopped on a conflict</summary><p>You and someone else changed the same lines. Your autosync stopped and listed the files; everyone else keeps going. Fix the files, then continue the rebase and start autosync again. <code>git rebase --abort</code> keeps your commits as they were instead.</p>${cmd(c.resolve, c.autosync)}</details>
+<details><summary>A new file did not sync</summary><p>Check that autosync is running in that clone, and that git is not ignoring the file:</p>${cmd(c.ignored)}</details>
+<details><summary>Sign in on this website</summary><p>Print your token and paste it at <b>Sign in</b>.</p>${cmd(c.token)}</details>
+<details><summary>Who can see and change my projects?</summary><p>Anyone who can open this hub can browse and clone every project. Only a space's owners and members, and a project's collaborators, can push.</p></details>
+</div>
+</section>
+
+</div>
+</div>
 </div>`;
 }
