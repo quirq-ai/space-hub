@@ -110,6 +110,16 @@ describe('workspace API', () => {
     expect(view({ space: 'quirq', project: 'quirq' }, 'bob').meta).toMatchObject({ canWrite: false });
   });
 
+  it('counts every activity event, the humans and the agents on the hub', () => {
+    const { db, call, alice, view } = hub();
+    const id = (n: number) => n.toString(16).padStart(64, '0');
+    call(alice, mod.createAgent, { name: 'scout', parent: 'quirq', identity: id(1), token: 'one', description: '' });
+    const meta = view({}).meta as Extract<Meta, { level: 'hub' }>;
+    expect(meta.events).toBe([...db.activity.iter()].length);
+    expect(meta.events).toBeGreaterThan(5);
+    expect(meta).toMatchObject({ humans: 2, agents: 1, spaces: 4 });
+  });
+
   it('opens files the way open-chat does and refuses what it must not show', () => {
     const { view } = hub();
     const chat = view({ space: 'quirq', project: 'quirq', path: 'Chat/index.json' }).snapshot;
