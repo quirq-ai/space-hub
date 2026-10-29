@@ -12,8 +12,10 @@ type Conversation = { title?: unknown; subtitle?: unknown; messages: Record<stri
 const text = (value: unknown) => (typeof value === "string" ? value : "");
 
 /** A conversation file and its saved log, as a thread of people and agents, with a composer for members. */
-export function ChatView({ place, path, data, repliesPath, logExists, me, canWrite, signIn, onSaved, onOpen }: {
+export function ChatView({ place, path, data, repliesPath, logExists, me, canWrite, signIn, onSaved, onOpen, head = true, placeholder = "Write a message" }: {
   place: Place; path: string; data: Conversation; repliesPath: string | undefined; logExists: boolean; me: string | null; canWrite: boolean; signIn: string; onSaved: () => void; onOpen: (path: string) => void;
+  /** A channel page shows its own header instead of the conversation's. */
+  head?: boolean; placeholder?: string;
 }) {
   const blocked = !me ? "signin" : !canWrite ? "member" : undefined;
   const chat = useChat(place, path, repliesPath, blocked ? "blocked" : undefined, logExists, onSaved, me ?? undefined);
@@ -38,10 +40,10 @@ export function ChatView({ place, path, data, repliesPath, logExists, me, canWri
   }, [chat.draft]);
 
   return <div className="chat">
-    <div className="chat-head">
+    {head && <div className="chat-head">
       <div><h2>{text(data.title) || path.split("/").pop()}</h2>{text(data.subtitle) && <p>{text(data.subtitle)}</p>}</div>
       {people.length > 0 && <AvatarStack names={people} />}
-    </div>
+    </div>}
     <ol className="thread">
       {all.map((message, index) => {
         const previous = all[index - 1];
@@ -68,7 +70,7 @@ export function ChatView({ place, path, data, repliesPath, logExists, me, canWri
         {!added.length && chat.suggestions.length > 0 && <div className="suggestions">{chat.suggestions.map(item => <button key={item.label} type="button" disabled={!chat.ready || chat.pending} onClick={() => chat.send(item.prompt)}>{item.label}</button>)}</div>}
         <form className="composer" onSubmit={event => { event.preventDefault(); chat.send(); }}>
           <Avatar name={me!} size={28} />
-          <textarea ref={input} rows={1} maxLength={MAX_MESSAGE_LENGTH} aria-label={`Message ${place.space}/${place.project}`} placeholder={chat.ready ? "Write a message" : "Connecting…"} value={chat.draft}
+          <textarea ref={input} rows={1} maxLength={MAX_MESSAGE_LENGTH} aria-label={`Message ${place.space}/${place.project}`} placeholder={chat.ready ? placeholder : "Connecting…"} value={chat.draft}
             onChange={event => chat.setDraft(event.target.value)}
             onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} />
           {chat.pending ? <button type="button" className="send stop" aria-label="Stop the sample reply" onClick={chat.stop}><Square size={13} fill="currentColor" /></button>

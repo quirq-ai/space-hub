@@ -382,6 +382,18 @@ dock a tab bar.
   (so two writers never race). That is the format open-chat's own hub backend
   writes. Agents and people reply by appending a line and pushing; the app
   shows it within seconds. Signed out, everything is readable.
+- **Channels.** A folder laid out as channels (quirq's `Chat/`: each
+  `<channel>/` has a README with `## Input` and `## Output format`, a
+  `chat.json` and its log, `inputs/`, `output/` and sub-channels) reads like
+  a chat app. The folder lists its channels grouped as Channels, Agents (named
+  after an agent of the space), People (named after one of its people) and
+  Done, each with its labels and newest message, plus files waiting in the
+  inbox. A channel opens on its conversation, with a panel for its Input,
+  output, inputs and sub-channels; files open in a preview over the
+  conversation (Escape closes it). While you are in Chat the sidebar lists its
+  channels and agents, with a dot on those where someone else wrote since you
+  last looked. **Files** shows any of these as a plain folder (`as=folder` in
+  the hash). `cd app && npm test` checks how channels are recognized.
 - **The server-rendered pages** stay at their addresses (tree, blob, raw,
   commits, commit, refs, activity), work without JavaScript, and wear the
   app's frame and look (`module/src/style.ts`): the same top bar, sidebar,

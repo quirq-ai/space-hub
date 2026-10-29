@@ -8,6 +8,9 @@ import { placeUrl, rawUrl, size, type Place, type ProjectMeta, type View } from 
 import { hashOf, navigate, onLink } from "@/router";
 import { Ago, Avatar, Empty, ErrorNote, SkeletonRows, SkeletonText } from "@/ui/primitives";
 import { ChatView } from "./chat";
+import { ChannelList, ChannelPage } from "./channels";
+import { channelConversation, listsChannels } from "@/lib/channels";
+import type { WorkspaceSnapshot } from "@/lib/types";
 
 export const SECTION_ICONS = new Map<string, LucideIcon>([
   ["chat", MessageCircle], ["activity", PanelsTopLeft], ["insights", Lightbulb], ["vision", SquareCheck],
@@ -22,7 +25,13 @@ export function entryIcon(entry: Entry): LucideIcon {
   return /md|txt|pdf/.test(entry.extension) ? FileText : File;
 }
 
-const filesHref = (place: Place, path: string) => placeUrl(place, hashOf("files", { path }));
+const filesHref = (place: Place, path: string, as?: string) => placeUrl(place, hashOf("files", { path, as }));
+const readmeOf = (snapshot: WorkspaceSnapshot) => snapshot.directory.docs?.find(doc => /^readme/i.test(doc.name));
+
+/** A folder shown as a channel: a README with an Input or Output format, and a conversation. */
+export function isChannel(snapshot: WorkspaceSnapshot): boolean {
+  return !snapshot.file && !!channelConversation(snapshot.directory.entries, readmeOf(snapshot)?.content);
+}
 
 /** Where you are inside the project: its name, then each folder, then the file. */
 function FileCrumbs({ place, path }: { place: Place; path: string }) {
@@ -61,8 +70,8 @@ function Docs({ docs, open }: { docs: Doc[]; open: (path: string) => void }) {
 }
 
 /** The project as open-chat shows it: folders as places, files rendered as conversations, documents, data and feeds. */
-export function FilesTab({ place, path, view, error, me, signIn, refresh }: {
-  place: Place; path: string; view: View<ProjectMeta> | undefined; error: string; me: string | null; signIn: string; refresh: () => void;
+export function FilesTab({ place, path, as, view, error, me, signIn, refresh }: {
+  place: Place; path: string; as: string; view: View<ProjectMeta> | undefined; error: string; me: string | null; signIn: string; refresh: () => void;
 }) {
   const snapshot = view?.snapshot;
   const meta = view?.meta;
@@ -93,12 +102,18 @@ export function FilesTab({ place, path, view, error, me, signIn, refresh }: {
       <FileContent key={file.path} file={file} revision={snapshot.revision} navigate={open} src={rawUrl(place, meta.defaultBranch, file.path)} />
     </div>;
   }
+  // A channel opens on its conversation, and a folder of channels as a list of them, unless asked for files.
+  const readme = readmeOf(snapshot);
+  const conversation = as !== "folder" ? channelConversation(snapshot.directory.entries, readme?.content) : undefined;
+  if (conversation && readme) return <><FileCrumbs place={place} path={snapshot.directory.path} /><ChannelPage key={snapshot.directory.path} place={place} snapshot={snapshot} conversation={conversation} readme={readme} meta={meta} me={me} signIn={signIn} refresh={refresh} /></>;
+  if (as !== "folder" && listsChannels(snapshot.directory.entries)) return <><FileCrumbs place={place} path={snapshot.directory.path} /><ChannelList place={place} snapshot={snapshot} meta={meta} me={me} /></>;
   // A conversation's saved turns open with the conversation, so its log is not listed apart.
   const logs = new Set(snapshot.directory.entries.map(entry => chatLogPath(entry.path)).filter(Boolean));
   const entries = snapshot.directory.entries.filter(entry => !logs.has(entry.path));
   const docs = snapshot.directory.docs ?? [];
   return <div className="folder">
     <FileCrumbs place={place} path={snapshot.directory.path} />
+    {as === "folder" && (channelConversation(snapshot.directory.entries, readme?.content) || listsChannels(snapshot.directory.entries)) && <a className="callout" href={filesHref(place, snapshot.directory.path)} onClick={onLink}><MessageCircle size={18} /><span><strong>Back to the {listsChannels(snapshot.directory.entries) && !channelConversation(snapshot.directory.entries, readme?.content) ? "channels" : "conversation"}</strong><span>You are looking at this folder as files</span></span><ChevronRight size={16} /></a>}
     {index && <a className="callout" href={filesHref(place, index.path)} onClick={onLink}><MessageCircle size={18} /><span><strong>Open the saved view</strong><span>index.json</span></span><ChevronRight size={16} /></a>}
     {entries.length ? <ul className="rows">{entries.map(entry => {
       const Icon = entryIcon(entry);
