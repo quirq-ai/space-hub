@@ -351,11 +351,16 @@ instead: `scripts/setup.sh maincloud`. Pick a unique name with `SPACEHUB_DB`.
 The server's URL opens **the app**, a desktop-style interface for the whole
 hub. A top bar holds search (⌘K: spaces, projects and the current project's
 files), the live state and your account; a sidebar lists your spaces, recent
-projects and where you are; a details panel shows the place's facts, who is
-here and how to clone it; a dock at the bottom holds the place's sections
-and tools. On a phone the sidebar becomes a drawer and the dock a tab bar.
+projects and where you are; a strip under each title shows the place's
+facts and who is here, beside a Clone menu; a dock at the bottom holds the
+place's sections and tools. On a phone the sidebar becomes a drawer and the
+dock a tab bar.
 
-- `/` lists every space, recently pushed projects and the hub's activity.
+- `/` lists every space and recently pushed projects. Its **Activity** button
+  opens the hub's activity in a right-hand panel (over the page on narrower
+  windows): the entries come in one after another, then each new one slides
+  in at the top as it happens. The panel remembers, per browser, whether it
+  was closed.
 - `/<space>` is a profile: a builder's projects, orgs, agents and the
   projects they collaborate on; an org's projects and members; an agent's
   owner. Avatars come from GitHub for builders who signed up with GitHub and

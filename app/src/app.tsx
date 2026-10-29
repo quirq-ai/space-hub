@@ -4,10 +4,10 @@ import { placeUrl, viewUrl, type HubMeta, type Place, type ProjectMeta, type Spa
 import { useLive } from "@/hooks/use-live";
 import { recentProjects, rememberProject, useMe } from "@/hooks/use-me";
 import { hashOf, useRoute } from "@/router";
-import { Dock, Progress, Sidebar, TopBar, type DockItem, type SideSection } from "@/shell/shell";
+import { Dock, Inspector, Progress, Sidebar, TopBar, type DockItem, type SideSection } from "@/shell/shell";
 import { SearchPalette } from "@/shell/search";
 import { Avatar } from "@/ui/primitives";
-import { HomePage } from "@/pages/home";
+import { ActivityFeed, HomePage } from "@/pages/home";
 import { SpacePage } from "@/pages/space";
 import { ProjectPage } from "@/pages/project";
 import { SECTION_ICONS, SECTION_ORDER } from "@/pages/files";
@@ -15,8 +15,11 @@ import { SECTION_ICONS, SECTION_ORDER } from "@/pages/files";
 const HUB: Place = { space: "", project: "" };
 const SEEN = "spacehub:seen:v1";
 const RAIL = "spacehub:rail:v1";
+const ACTIVITY = "spacehub:activity:v1";
 
 function readSeen(): Record<string, string> { try { return JSON.parse(localStorage.getItem(SEEN) || "{}") ?? {}; } catch { return {}; } }
+// The home page's activity panel starts open on wide windows unless the viewer closed it; narrower ones open it on demand.
+function readActivity() { let stored = ""; try { stored = localStorage.getItem(ACTIVITY) ?? ""; } catch { /* Storage may be blocked. */ } return stored !== "closed" && matchMedia("(min-width: 1180px)").matches; }
 function markSeen(key: string) { try { localStorage.setItem(SEEN, JSON.stringify({ ...readSeen(), [key]: new Date().toISOString() })); } catch { /* Storage may be blocked. */ } }
 
 export function App() {
@@ -32,6 +35,8 @@ export function App() {
   const [rail, setRail] = useState(() => { try { return localStorage.getItem(RAIL) === "on"; } catch { return false; } });
   const toggleRail = () => setRail(on => { try { localStorage.setItem(RAIL, on ? "off" : "on"); } catch { /* Storage may be blocked. */ } return !on; });
   const [seen, setSeen] = useState(readSeen);
+  const [activityOpen, setActivityOpen] = useState(readActivity);
+  const toggleActivity = () => setActivityOpen(open => { try { localStorage.setItem(ACTIVITY, open ? "closed" : "open"); } catch { /* Storage may be blocked. */ } return !open; });
 
   // Keep the place's last view while another path of the same place loads, so nothing goes blank.
   const kept = useRef<{ key: string; view: View }>(undefined);
@@ -122,18 +127,21 @@ export function App() {
       .map(entry => ({ key: entry.name, label: entry.name, href: placeUrl({ space: entry.name, project: "" }), icon: <Avatar name={entry.name} size={30} kind={entry.detail?.startsWith("org") ? "org" : entry.detail?.startsWith("agent") ? "agent" : "personal"} />, fresh: !!seen[entry.name] && entry.modifiedAt > seen[entry.name] }));
   }
 
-  return <div className={`shell${rail ? " rail" : ""}`}>
+  const activity = route.page === "home" && activityOpen;
+
+  return <div className={`shell${activity ? " with-inspector" : ""}${rail ? " rail" : ""}`}>
     <Progress />
     <TopBar me={me} signIn={signIn} live={state} onSearch={() => setSearching(true)} onMenu={() => setSidebarOpen(true)} />
     <Sidebar switcher={switcher} primary={primary} sections={sideSections} footer={footer} open={sidebarOpen} onClose={() => setSidebarOpen(false)} rail={rail} onRail={toggleRail} onSearch={() => setSearching(true)} />
     <main className="main" id="main">
       <div className="main-scroll">
-        {route.page === "home" && <HomePage view={view as View<HubMeta> | undefined} me={me.name} />}
+        {route.page === "home" && <HomePage view={view as View<HubMeta> | undefined} me={me.name} activityOpen={activityOpen} onActivity={toggleActivity} />}
         {route.page === "space" && <SpacePage name={place.space} tab={route.tab} view={view as View<SpaceMeta> | undefined} error={live.error} me={me.name} />}
         {route.page === "project" && <ProjectPage route={route} view={view as View<ProjectMeta> | undefined} error={live.error} me={me.name} signIn={signIn} refresh={live.refresh} />}
       </div>
       <Dock places={places} tools={tools} />
     </main>
+    {activity && <Inspector title="Activity" onClose={toggleActivity}><ActivityFeed view={meta?.level === "hub" ? view as View<HubMeta> : undefined} /></Inspector>}
     {searching && <SearchPalette place={place} onClose={() => setSearching(false)} />}
   </div>;
 }

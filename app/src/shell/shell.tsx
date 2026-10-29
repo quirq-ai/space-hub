@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { BookOpen, Check, ChevronDown, ChevronRight, ChevronsUpDown, Home, LogIn, LogOut, Menu, PanelLeftClose, PanelLeftOpen, Plus, Search, User } from "lucide-react";
+import { BookOpen, Check, ChevronDown, ChevronRight, ChevronsUpDown, Home, LogIn, LogOut, Menu, PanelLeftClose, PanelLeftOpen, Plus, Search, User, X } from "lucide-react";
 import { ThemePicker } from "@/components/theme-picker";
 import { useLoading } from "@/hooks/use-live";
 import { onLink } from "@/router";
@@ -162,4 +162,15 @@ export function Dock({ places, tools }: { places: DockItem[]; tools: DockItem[] 
     <span className="dock-icon">{entry.icon}</span><span className="dock-label">{entry.label}</span>{entry.fresh && <span className="dock-fresh" title="Changed since you last looked" />}
   </a>;
   return <nav className="dock" aria-label="Dock">{places.map(item)}{places.length > 0 && tools.length > 0 && <span className="dock-gap" aria-hidden="true" />}{tools.map(item)}</nav>;
+}
+
+/** The right-hand panel: beside the page on wide windows, over it with a scrim on narrower ones. */
+export function Inspector({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+  return <>
+    <aside className="inspector" aria-label={title}>
+      <div className="inspector-head"><h2>{title}</h2><button className="icon-button" type="button" aria-label={`Close ${title}`} title="Close" onClick={onClose}><X size={16} /></button></div>
+      {children}
+    </aside>
+    <button className="scrim only-medium" type="button" aria-label={`Close ${title}`} onClick={onClose} />
+  </>;
 }

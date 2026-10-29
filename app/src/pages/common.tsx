@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { History, Users } from "lucide-react";
 import { activityLine, groupActivity, placeUrl, pushedFiles, type ActivityItem, type Here } from "@/api";
 import { hashOf, onLink } from "@/router";
@@ -28,14 +28,23 @@ export function Tabs({ tabs, active }: { tabs: Tab[]; active: string }) {
 
 export function ActivityList({ items, empty = "Nothing has happened here yet.", compact = false }: { items: ActivityItem[]; empty?: string; compact?: boolean }) {
   if (!items.length) return <Empty icon={<History size={20} />} title="No activity yet"><p>{empty}</p></Empty>;
+  // Keyed by the row (a group by its newest push), not its position, so a new
+  // row mounts at the top instead of every row changing its text.
+  const seen = new Map<string, number>();
+  const keyOf = (item: ActivityItem) => {
+    const row = `${item.at} ${item.agent} ${item.kind} ${item.path} ${item.subject}`;
+    const copies = seen.get(row) ?? 0;
+    seen.set(row, copies + 1);
+    return `${row} ${copies}`;
+  };
   return <ol className={`activity${compact ? " compact" : ""}`}>{groupActivity(items).map((group, index) => group.length > 1
-    ? <PushGroup key={index} group={group} compact={compact} />
-    : <ActivityRow key={index} item={group[0]} compact={compact} />)}</ol>;
+    ? <PushGroup key={keyOf(group[0])} group={group} compact={compact} index={index} />
+    : <ActivityRow key={keyOf(group[0])} item={group[0]} compact={compact} index={index} />)}</ol>;
 }
 
-function ActivityRow({ item, compact }: { item: ActivityItem; compact: boolean }) {
+function ActivityRow({ item, compact, index }: { item: ActivityItem; compact: boolean; index: number }) {
   const line = activityLine(item);
-  return <li>
+  return <li style={{ "--i": index } as CSSProperties}>
     <Avatar name={item.agent || "hub"} size={compact ? 20 : 28} />
     <div className="activity-body">
       <div className="activity-line"><a className="strong" href={"/" + encodeURIComponent(item.agent)} onClick={onLink}>{item.agent || "someone"}</a> {line.verb} {line.href ? <a href={line.href} onClick={onLink}>{line.where}</a> : <span>{line.where}</span>}</div>
@@ -48,7 +57,7 @@ function ActivityRow({ item, compact }: { item: ActivityItem; compact: boolean }
 const names = (list: string[]) => list.length <= 2 ? list.join(" and ") : `${list.slice(0, 2).join(", ")} and ${list.length - 2} more`;
 
 /** Pushes minutes apart to one branch, as one line: who, how many commits, and what they touched. */
-function PushGroup({ group, compact }: { group: ActivityItem[]; compact: boolean }) {
+function PushGroup({ group, compact, index }: { group: ActivityItem[]; compact: boolean; index: number }) {
   const newest = group[0];
   const line = activityLine(newest);
   const people = [...new Set(group.map(item => item.agent || "someone"))];
@@ -61,7 +70,7 @@ function PushGroup({ group, compact }: { group: ActivityItem[]; compact: boolean
   // Otherwise the newest commit someone wrote a message for says the most.
   const written = group.find((item, i) => !touched[i]) ?? newest;
   const writtenHref = activityLine(written).commit;
-  return <li>
+  return <li style={{ "--i": index } as CSSProperties}>
     <AvatarStack names={people} max={3} size={compact ? 20 : 28} />
     <div className="activity-body">
       <div className="activity-line">{people.map((name, i) => <span key={name}>{i > 0 && (i === people.length - 1 ? " and " : ", ")}<a className="strong" href={"/" + encodeURIComponent(name)} onClick={onLink}>{name}</a></span>).slice(0, 3)}{people.length > 3 && ` and ${people.length - 3} more`} pushed {commits} commits to {line.href ? <a href={line.href} onClick={onLink}>{line.where}</a> : <span>{line.where}</span>}</div>
