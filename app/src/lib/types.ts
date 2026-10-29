@@ -7,8 +7,19 @@ export interface Entry {
   extension: string;
   size: number;
   modifiedAt: string;
-  /** A short line shown instead of "Folder" for spaces and projects. */
+  /** A short line shown instead of "Folder": for spaces and projects, and for folders with a README. */
   detail?: string;
+  /** From a folder's README, its "## Status", "## Owner" and "## Output format" sections. */
+  status?: string;
+  owner?: string;
+  outputFormat?: string;
+}
+
+/** A Markdown document of a folder, shown under its listing. */
+export interface Doc {
+  name: string;
+  path: string;
+  content: string;
 }
 
 export interface FileView extends Entry {
@@ -27,6 +38,8 @@ export interface WorkspaceSnapshot {
     path: string;
     name: string;
     entries: Entry[];
+    /** The folder's README; at a project's root also AGENTS, PROJECT, CONTRIBUTING and WORK_ITEMS. */
+    docs?: Doc[];
   };
   file?: FileView;
   revision: string;

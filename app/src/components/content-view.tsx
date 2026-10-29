@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowUpRight, Check, ChevronRight, Code2, FileText, LockKeyhole } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { remarkHtmlAsText } from "@/lib/markdown";
 import type { FileView } from "@/lib/types";
 import { parseJsonl, jsonlPost } from "@/lib/jsonl";
 import { parseUrlFile } from "@/lib/url-file";
@@ -27,7 +28,7 @@ function localLink(href: string, filePath: string): string | undefined {
 }
 
 export function Markdown({ content, filePath, navigate }: { content: string; filePath: string; navigate: Navigate }) {
-  return <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml components={{
+  return <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm, remarkHtmlAsText]} skipHtml components={{
     a: ({ href = "", children }) => {
       if (/^(https?:\/\/|mailto:)/i.test(href)) return <a href={href} target="_blank" rel="noreferrer noopener">{children}<ArrowUpRight size={12} /></a>;
       if (href.startsWith("#")) return <a href={href}>{children}</a>;

@@ -418,6 +418,15 @@ app_has "the app lists branches" "space=$ALICE&project=chatroom&view=refs" '"nam
 app_has "and folders at a branch, dotfiles included" "space=$ALICE&project=chatroom&view=tree&path=Chat" '"name":"index.log.jsonl"'
 app_has "and history" "space=$ALICE&project=chatroom&view=commits" '"subject":"reply"'
 app_has "and every file, for search" "space=$ALICE&project=chatroom&view=files" '"Chat/index.log.jsonl"'
+# A folder with a README, and a DEPS file pinning this project's last commit.
+(cd "$A2" && printf '# Chat\n\n## Input\n\nThe team room.\n\n## Status\n\nOpen\n' >Chat/README.md \
+  && printf '{"chatroom":{"url":"%s","commit-hash":"%s"}}\n' "$HUB/$ALICE/chatroom" "$(git rev-parse HEAD)" >DEPS && git add . && commit -m "readme and pins")
+check "a README and a DEPS file pushed" as alice git -C "$A2" push -q quirq main
+app_has "a folder reads as its README" "space=$ALICE&project=chatroom" '"detail":"The team room.","status":"Open"'
+app_has "which shows under its listing" "space=$ALICE&project=chatroom&path=Chat" '"docs":[{"name":"README.md","path":"Chat/README.md"'
+app_has "the project counts its pins" "space=$ALICE&project=chatroom" '"deps":1'
+app_has "and each pin links to its hub project" "space=$ALICE&project=chatroom&view=deps" "\"project\":\"$ALICE/chatroom\""
+app_has "one commit behind it" "space=$ALICE&project=chatroom&view=deps" '"status":"behind","behind":1'
 app_has "a profile shows what its builder works on" "space=$WEBUSER" "\"collaborates\":[\"$ALICE/chatroom\"]"
 same "everyone has an avatar" "$(curl -s -o /dev/null -w '%{http_code} %{content_type}' "$WEB/-/avatar/$ALICE")" "200 image/svg+xml"
 
