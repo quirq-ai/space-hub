@@ -10,7 +10,7 @@ export type Membership = { space: string; kind: string; role: string };
 export type AgentInfo = { name: string; description: string; parent: string; owned: boolean; connected: boolean; spaces: string[]; running: { host: string; since: string }[] };
 export type ProjectCard = { fullName: string; description: string; pushedAt: string };
 
-export type HubMeta = { level: "hub"; spaces: number; projects: number; bytes: number; activity: ActivityItem[]; here: Here[]; allProjects: ProjectCard[] };
+export type HubMeta = { level: "hub"; spaces: number; projects: number; bytes: number; events: number; humans: number; agents: number; activity: ActivityItem[]; here: Here[]; allProjects: ProjectCard[] };
 export type SpaceMeta = {
   level: "space"; name: string; displayName: string; kind: string; description: string; parent: string; owners: string[]; members: string[];
   projects: number; bytes: number; github: string; githubLogin: string; createdAt: string; memberOf: Membership[]; agents: string[]; agentList: AgentInfo[];
@@ -69,6 +69,11 @@ export function avatarUrl(name: string): string {
 /** The module's raw view of a file, for image previews and PDFs. */
 export function rawUrl(place: Place, ref: string, path: string): string {
   return `${placeUrl(place)}/raw/${ref.split("/").map(encodeURIComponent).join("/")}/${path.split("/").map(encodeURIComponent).join("/")}`;
+}
+
+/** "1 event", "1,234 events". */
+export function count(n: number, word: string): string {
+  return `${n.toLocaleString("en-US")} ${n === 1 ? word : `${word}s`}`;
 }
 
 export function size(bytes: number): string {

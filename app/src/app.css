@@ -193,6 +193,8 @@ kbd { padding: 1px 6px; border: 1px solid var(--line); border-bottom-width: 2px;
 .page-title { flex: 1; min-width: 0; }
 .page-title h1 { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0; font-size: 22px; font-weight: 650; letter-spacing: -.4px; line-height: 1.25; }
 .page-title p { margin: 3px 0 0; color: var(--text-2); }
+/* One count per span: a narrow header wraps between counts, never inside one. */
+.page-title .stat { white-space: nowrap; }
 .page-actions { display: flex; align-items: center; gap: 8px; }
 .project-mark { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 12px; background: var(--accent-soft); color: var(--accent-text); flex: none; }
 .kind-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 20px; background: var(--fill); color: var(--text-2); font-size: 12px; font-weight: 500; letter-spacing: 0; }

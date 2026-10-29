@@ -130,7 +130,7 @@ export interface Membership {
 }
 
 export type Meta =
-  | { level: 'hub'; spaces: number; projects: number; bytes: number; activity: ActivityItem[]; here: Here[]; allProjects: ProjectCard[] }
+  | { level: 'hub'; spaces: number; projects: number; bytes: number; events: number; humans: number; agents: number; activity: ActivityItem[]; here: Here[]; allProjects: ProjectCard[] }
   | {
       level: 'space';
       name: string;
@@ -554,6 +554,10 @@ function hubLevel(db: Db, now: number) {
       spaces: spaces.length,
       projects: projects.length,
       bytes,
+      // Every activity row since the hub began, and who builds here: builders' personal spaces and agents.
+      events: Number(db.activity.count()),
+      humans: spaces.filter(space => space.kind === 'personal').length,
+      agents: spaces.filter(space => space.kind === 'agent').length,
       activity: activity(db, () => true),
       here: here(db, now, () => true),
       allProjects: projects
