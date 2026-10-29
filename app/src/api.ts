@@ -6,17 +6,18 @@ export type Place = { space: string; project: string };
 export type Here = { agent: string; mode: string; project: string };
 export type ActivityItem = { at: string; agent: string; kind: string; path: string; subject: string; text: string; count: number };
 export type Membership = { space: string; kind: string; role: string };
+export type AgentInfo = { name: string; description: string; parent: string; owned: boolean; connected: boolean; spaces: string[]; running: { host: string; since: string }[] };
 export type ProjectCard = { fullName: string; description: string; pushedAt: string };
 
 export type HubMeta = { level: "hub"; spaces: number; projects: number; bytes: number; activity: ActivityItem[]; here: Here[]; allProjects: ProjectCard[] };
 export type SpaceMeta = {
   level: "space"; name: string; displayName: string; kind: string; description: string; parent: string; owners: string[]; members: string[];
-  projects: number; bytes: number; github: string; githubLogin: string; createdAt: string; memberOf: Membership[]; agents: string[];
+  projects: number; bytes: number; github: string; githubLogin: string; createdAt: string; memberOf: Membership[]; agents: string[]; agentList: AgentInfo[];
   collaborates: string[]; here: Here[]; activity: ActivityItem[];
 };
 export type ProjectMeta = {
   level: "project"; fullName: string; space: string; name: string; description: string; defaultBranch: string; bytes: number;
-  head: { oid: string; subject: string; author: string; time: string } | null; canWrite: boolean; owners: string[]; members: string[];
+  head: { oid: string; subject: string; author: string; time: string } | null; canWrite: boolean; owners: string[]; members: string[]; agents: string[];
   collaborators: string[]; here: Here[]; activity: ActivityItem[];
 };
 export type Meta = HubMeta | SpaceMeta | ProjectMeta;

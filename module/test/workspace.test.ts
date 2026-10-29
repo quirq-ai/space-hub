@@ -262,3 +262,24 @@ describe('code views', () => {
     void bob;
   });
 });
+
+describe('agents', () => {
+  it('get their own list, apart from the members, with who owns them and where they run', () => {
+    const { db, call, alice, view } = hub();
+    const id = (n: number) => n.toString(16).padStart(64, '0');
+    call(alice, mod.createAgent, { name: 'scout', parent: 'quirq', identity: id(1), token: 'one', description: 'reads the web' });
+    call(alice, mod.createAgent, { name: 'helper', parent: 'alice', identity: id(2), token: 'two', description: '' });
+    call(alice, mod.connectAgent, { agent: 'helper', space: 'quirq' });
+    call(alice, mod.addSpaceMember, { space: 'quirq', member: 'bob', role: 'member' });
+
+    const space = view({ space: 'quirq' }).meta;
+    expect(space).toMatchObject({ level: 'space', owners: ['alice'], members: ['bob'], agents: ['scout'] });
+    const agents = space.level === 'space' ? space.agentList : [];
+    expect(agents.map(a => [a.name, a.owned, a.connected, a.parent])).toEqual([['helper', false, true, 'alice'], ['scout', true, false, 'quirq']]);
+    expect(agents[0].spaces).toEqual(['quirq']);
+    expect(agents.every(a => a.running.length === 0)).toBe(true);
+    expect(view({ space: 'alice' }).meta).toMatchObject({ agents: ['helper'] });
+    expect(view({ space: 'quirq', project: 'quirq' }).meta).toMatchObject({ members: ['bob'], agents: ['helper'], collaborators: [] });
+    void db;
+  });
+});

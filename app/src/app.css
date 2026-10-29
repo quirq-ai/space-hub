@@ -418,3 +418,17 @@ kbd { padding: 1px 6px; border: 1px solid var(--line); border-bottom-width: 2px;
 .command-note { margin: 2px 0 0; color: var(--text-2); font-size: 12.5px; line-height: 1.5; }
 .command-note code { padding: 1px 5px; border-radius: 4px; background: var(--fill); overflow-wrap: anywhere; }
 @media (max-width: 760px) { .page-actions { width: 100%; } .popover { right: auto; left: 0; } }
+
+/* Agents: a list of cards, with what each may do here and where it runs. */
+.list-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 10px; color: var(--text-2); font-size: 13px; }
+.agent-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.agent-card { display: flex; align-items: flex-start; gap: 14px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--panel); color: var(--text); }
+.agent-card:hover { text-decoration: none; border-color: var(--line-strong); box-shadow: var(--shadow); }
+.agent-main { display: grid; gap: 3px; min-width: 0; }
+.agent-name { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.agent-name strong { font-size: 14.5px; }
+.agent-name .kind-badge { font-size: 11px; }
+.agent-name .strip-here, .agent-name .quiet { font-size: 12.5px; }
+.agent-desc { color: var(--text-2); }
+.agent-meta { color: var(--text-3); font-size: 12.5px; overflow-wrap: anywhere; }
+.empty-commands { width: min(520px, 100%); margin: 12px auto 0; text-align: left; }

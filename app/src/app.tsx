@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Activity, BookOpen, Code2, Folder, FolderGit2, GitBranch, GitCommitHorizontal, History, Home, Users, User } from "lucide-react";
+import { Activity, BookOpen, Bot, Code2, Folder, FolderGit2, GitBranch, GitCommitHorizontal, History, Home, Users, User } from "lucide-react";
 import { placeUrl, viewUrl, type HubMeta, type Place, type ProjectMeta, type SpaceMeta, type View } from "@/api";
 import { useLive } from "@/hooks/use-live";
 import { recentProjects, rememberProject, useMe } from "@/hooks/use-me";
@@ -112,8 +112,9 @@ export function App() {
     places = [...(view?.snapshot.directory.entries ?? [])].sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt)).slice(0, 8)
       .map(entry => ({ key: entry.name, label: entry.name, href: placeUrl({ space: place.space, project: entry.name }), icon: <FolderGit2 size={22} strokeWidth={1.7} />, fresh: !!seen[`${place.space}/${entry.name}`] && entry.modifiedAt > seen[`${place.space}/${entry.name}`] }));
     tools = [
+      ...(meta.kind !== "agent" ? [{ key: "agents", label: "Agents", href: placeUrl(place, hashOf("agents")), icon: <Bot size={22} strokeWidth={1.7} />, active: route.tab === "agents" }] : []),
+      { key: "people", label: meta.kind === "org" ? "Members" : "People", href: placeUrl(place, hashOf("people")), icon: <Users size={22} strokeWidth={1.7} />, active: route.tab === "people" },
       { key: "activity", label: "Activity", href: placeUrl(place, hashOf("activity")), icon: <Activity size={22} strokeWidth={1.7} />, active: route.tab === "activity" },
-      { key: "people", label: "People", href: placeUrl(place, hashOf("people")), icon: <Users size={22} strokeWidth={1.7} />, active: route.tab === "people" },
     ];
   } else if (route.page === "home" && meta?.level === "hub") {
     const mine = new Set(me.spaces.map(s => s.space));

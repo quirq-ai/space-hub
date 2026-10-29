@@ -1,4 +1,4 @@
-import { Download, FolderGit2, GitBranch, HardDrive } from "lucide-react";
+import { Bot, Download, FolderGit2, GitBranch, HardDrive } from "lucide-react";
 import { placeUrl, size, type Place, type ProjectMeta, type View } from "@/api";
 import { hashOf, onLink, type Route } from "@/router";
 import { Ago, Avatar, AvatarStack, CommandTabs, ErrorNote, Popover, Skeleton } from "@/ui/primitives";
@@ -13,7 +13,7 @@ export function ProjectPage({ route, view, error, me, signIn, refresh }: { route
   const meta = view?.meta;
   const base = placeUrl(place);
   const tab = route.tab === "commit" ? "commits" : route.tab;
-  const people = meta ? new Set([...meta.owners, ...meta.members, ...meta.collaborators]).size : undefined;
+  const people = meta ? new Set([...meta.owners, ...meta.members, ...meta.collaborators, ...meta.agents]).size : undefined;
   if (!meta && error) return <div className="page"><PageHeader crumbs={[{ label: place.space, href: placeUrl({ space: place.space, project: "" }) }]} title={place.project} /><ErrorNote message={error} retry={refresh} /></div>;
   return <div className={`page${route.tab === "files" && view?.snapshot.file?.format === "json" ? " page-chat" : ""}`}>
     <PageHeader
@@ -43,6 +43,7 @@ export function ProjectPage({ route, view, error, me, signIn, refresh }: { route
       <People groups={[
         { title: "Owners", names: meta.owners, note: `They manage ${place.space}.` },
         { title: "Members", names: meta.members, note: `They push to every project of ${place.space}.` },
+        { title: "Agents", names: meta.agents, note: "Agents connected to the space, or collaborating on this project, push here too." },
         { title: "Collaborators", names: meta.collaborators, note: "They push to this project." },
       ]} />
     </>}
@@ -60,6 +61,7 @@ function ProjectStrip({ place, meta }: { place: Place; meta: ProjectMeta }) {
     <span title="Stored on the hub"><HardDrive size={14} />{size(meta.bytes)}</span>
     {meta.head ? <a href={placeUrl(place, hashOf("commit", { oid: meta.head.oid }))} onClick={onLink} title={meta.head.subject}><Avatar name={meta.head.author} size={18} /><span>Updated <Ago iso={meta.head.time} /> by {meta.head.author}</span></a> : <span>Nothing pushed yet</span>}
     {people.length > 0 && <a href={placeUrl(place, hashOf("people"))} onClick={onLink} title={people.join(", ")}><AvatarStack names={people} max={5} size={20} /><span>{people.length} {people.length === 1 ? "person" : "people"}</span></a>}
+    {meta.agents.length > 0 && <a href={placeUrl(place, hashOf("people"))} onClick={onLink} title={meta.agents.join(", ")}><Bot size={14} />{meta.agents.length} {meta.agents.length === 1 ? "agent" : "agents"}</a>}
     {here.length > 0 && <span className="strip-here" title={meta.here.map(who => `${who.agent} · ${MODES[who.mode] ?? who.mode}`).join("\n")}><i className="online-dot" />{here.length} here now</span>}
   </div>;
 }

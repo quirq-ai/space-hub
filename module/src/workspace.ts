@@ -92,6 +92,17 @@ export interface ProjectCard {
   pushedAt: string;
 }
 
+/** An agent seen from a space: whether the space owns it, whether it may push here, where it runs. */
+export interface AgentInfo {
+  name: string;
+  description: string;
+  parent: string;
+  owned: boolean;
+  connected: boolean;
+  spaces: string[];
+  running: { host: string; since: string }[];
+}
+
 export interface Membership {
   space: string;
   kind: string;
@@ -116,7 +127,10 @@ export type Meta =
       githubLogin: string;
       createdAt: string;
       memberOf: Membership[];
+      /** Agents this space owns (names). */
       agents: string[];
+      /** Agents connected to this space or owned by it, for the Agents tab. */
+      agentList: AgentInfo[];
       collaborates: string[];
       here: Here[];
       activity: ActivityItem[];
@@ -133,6 +147,8 @@ export type Meta =
       canWrite: boolean;
       owners: string[];
       members: string[];
+      /** Agents that may push here: connected to the space, or collaborators on the project. */
+      agents: string[];
       collaborators: string[];
       here: Here[];
       activity: ActivityItem[];
@@ -344,11 +360,53 @@ function rootId(key: string) {
   return new Sha1().update(encoder.encode(`hub\0${key}`)).hex();
 }
 
+const isAgent = (db: Db, name: string) => db.space.name.find(name)?.kind === 'agent';
+
+/** Owners, the people who are members, and the agents connected as members. */
 function rolesOf(db: Db, space: string) {
   const row = db.space.name.find(space);
   const roles = [...db.spaceRole.space.filter(space)];
   const owners = row?.kind === 'personal' ? [space] : row?.kind === 'agent' ? [row.parent] : roles.filter(role => role.role === 'owner').map(role => role.member).sort();
-  return { owners, members: roles.filter(role => role.role !== 'owner').map(role => role.member).sort() };
+  const rest = roles.filter(role => role.role !== 'owner').map(role => role.member).sort();
+  return { owners, members: rest.filter(name => !isAgent(db, name)), agents: rest.filter(name => isAgent(db, name)) };
+}
+
+function projectPeople(db: Db, project: Project) {
+  const { owners, members, agents } = rolesOf(db, project.owner);
+  const collaborators = [...db.projectMember.projectId.filter(project.id)].map(row => row.agent);
+  return {
+    owners,
+    members,
+    agents: [...new Set([...agents, ...collaborators.filter(name => isAgent(db, name))])].sort(),
+    collaborators: collaborators.filter(name => !isAgent(db, name)).sort(),
+  };
+}
+
+function agentInfo(db: Db, name: string, space: string, now: number): AgentInfo {
+  const row = db.space.name.find(name);
+  const spaces = [...db.spaceRole.member.filter(name)].map(role => role.space).sort();
+  const running = [...db.presence.iter()]
+    .filter(p => p.agent === name && p.mode === 'agent' && now - Number(p.seenAt.microsSinceUnixEpoch / 1_000_000n) <= PRESENCE_STALE_SECONDS)
+    .map(p => ({ host: p.host, since: iso(p.since) }));
+  const hosts = new Set<string>();
+  return {
+    name,
+    description: row?.description ?? '',
+    parent: row?.parent ?? '',
+    owned: row?.parent === space,
+    connected: spaces.includes(space),
+    spaces,
+    running: running.filter(r => (hosts.has(r.host) ? false : (hosts.add(r.host), true))),
+  };
+}
+
+/** Every agent a space owns or lets push to it, running ones first. */
+function agentsOf(db: Db, space: string, now: number): AgentInfo[] {
+  const names = new Set<string>([
+    ...[...db.space.kind.filter('agent')].filter(agent => agent.parent === space).map(agent => agent.name),
+    ...rolesOf(db, space).agents,
+  ]);
+  return [...names].map(name => agentInfo(db, name, space, now)).sort((a, b) => Number(b.running.length > 0) - Number(a.running.length > 0) || a.name.localeCompare(b.name));
 }
 
 /** The GitHub login behind a space: a builder who signed up with GitHub, or an org linked to a GitHub account. */
@@ -406,6 +464,7 @@ function spaceLevel(db: Db, name: string, now: number) {
     .map(project => entryOf(project.name, 'directory', 0, iso(project.pushedAt), project.description || `${headOf(db, project) ? 'branch ' + project.defaultBranch : 'empty'}`))
     .sort(compareEntries);
   const { owners, members } = rolesOf(db, name);
+  const agentList = agentsOf(db, name, now);
   const ids = new Set(projects.map(project => project.id));
   const memberOf = [...db.spaceRole.member.filter(name)].map(role => ({ space: role.space, kind: db.space.name.find(role.space)?.kind ?? '', role: role.role })).sort((a, b) => a.space.localeCompare(b.space));
   return finish(
@@ -426,6 +485,7 @@ function spaceLevel(db: Db, name: string, now: number) {
       createdAt: iso(space.createdAt),
       memberOf,
       agents: [...db.space.kind.filter('agent')].filter(agent => agent.parent === name).map(agent => agent.name).sort(),
+      agentList,
       collaborates: [...db.projectMember.agent.filter(name)].map(row => db.project.id.find(row.projectId)?.fullName ?? '').filter(Boolean).sort(),
       here: here(db, now, row => (row.projectId === 0n ? row.space === name : ids.has(row.projectId)) || row.agent === name),
       activity: activity(db, row => row.path === name || row.path.startsWith(`${name}/`) || ids.has(row.projectId)),
@@ -481,8 +541,7 @@ function projectLevel(db: Db, project: Project, requested: string, viewer: strin
       bytes: bytesOf(db, project.id),
       head: commit ? { oid: head, subject: commit.subject, author: commit.author, time } : null,
       canWrite,
-      ...rolesOf(db, project.owner),
-      collaborators: [...db.projectMember.projectId.filter(project.id)].map(row => row.agent).sort(),
+      ...projectPeople(db, project),
       here: here(db, now, row => row.projectId === project.id),
       activity: activity(db, row => row.projectId === project.id),
     }
