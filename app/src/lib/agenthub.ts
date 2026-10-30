@@ -1,11 +1,12 @@
-// Agenthub's sessions as the app shows them: tasks on the Agents Hub, read
-// through the web service (/-/api/agenthub, cli/src/agenthub.ts), and their
-// events folded into a thread of messages, steps, links and notes.
+// Workers launched from a chat, as the app shows them: tasks on the org's
+// Agents Hub, read through the web service (/-/api/agenthub,
+// cli/src/agenthub.ts), and their events folded into messages, steps, links
+// and notes. A launch is a chat turn that ends with the task's marker.
 //
 // The Agents Hub's event kinds: user · message · thinking · tool / tool_done ·
 // command / command_done · link · env · status · turn · note · error.
 
-export type AgentHubStatus = { enabled: boolean; signedIn: boolean; allowed: boolean; builder: string | null };
+export type AgentHubStatus = { enabled: boolean; signedIn: boolean; allowed: boolean };
 export type TaskStatus = "running" | "ending" | "done" | "stopped" | "failed" | string;
 export type Task = { id: string; title: string; status: TaskStatus; repo: string; createdAt: string; updatedAt: string };
 export type TaskResult = { summary: string; links: { label: string; url: string }[]; error: string };
@@ -145,9 +146,43 @@ export function foldEvents(events: TaskEvent[]): ThreadItem[] {
   return items;
 }
 
-/** A task's text without the line crediting who started it (cli/src/agenthub.ts adds it). */
+const MARKER = /\n*<!-- agenthub:task=([A-Za-z0-9_-]{1,100}) -->\s*$/;
+
+/** The worker a chat turn launched, and the turn's text without the marker. */
+export function launchOf(content: string): { task: string; text: string } | null {
+  const found = MARKER.exec(content);
+  return found ? { task: found[1], text: content.slice(0, found.index) } : null;
+}
+
+/** A task's text without the line crediting who launched it (cli/src/agenthub.ts adds it). */
 export function withoutCredit(text: string): string {
-  return text.replace(/\n*\(Started from spacehub by [a-z0-9-]+\.\)\s*$/i, "");
+  return text.replace(/\n*\(Launched by [a-z0-9-]+ from [^\n]*\)\s*$/i, "");
+}
+
+/** What the launch sends: the repository, and an issue or pull request link added to the task. */
+export function launchInput(text: string, github: string): { text: string; repo: string } {
+  const value = github.trim();
+  const thread = /^https:\/\/github\.com\/[^/]+\/[^/]+\/(?:issues|pull)\/\d+/.exec(value);
+  return { text: thread && !text.includes(thread[0]) ? `${text.trim()}\n\n${thread[0]}` : text.trim(), repo: value };
+}
+
+/** "owner/repo" from a repository name or a GitHub link, or "" when it is neither. */
+export function repoName(value: string): string {
+  const link = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+?)(?:\.git)?(?:\/.*)?$/.exec(value.trim());
+  const name = link ? link[1] : value.trim();
+  return /^[\w.-]+\/[\w.-]+$/.test(name) ? name : "";
+}
+
+const RECENT_REPOS = "spacehub:agent-repos:v1";
+
+/** Repositories this browser launched workers on, newest first. */
+export function recentRepos(): string[] {
+  try { const value = JSON.parse(localStorage.getItem(RECENT_REPOS) || "[]"); return Array.isArray(value) ? value.filter(item => typeof item === "string").slice(0, 5) : []; } catch { return []; }
+}
+
+export function rememberRepo(repo: string) {
+  if (!repo) return;
+  try { localStorage.setItem(RECENT_REPOS, JSON.stringify([repo, ...recentRepos().filter(item => item !== repo)].slice(0, 5))); } catch { /* Storage may be blocked. */ }
 }
 
 /** A fresh key, so a retried start or follow-up is not run twice. */

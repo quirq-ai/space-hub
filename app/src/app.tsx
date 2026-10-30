@@ -1,18 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { Activity, BookOpen, Bot, Code2, Hash, Folder, FolderGit2, GitBranch, GitCommitHorizontal, History, Home, Rocket, Users, User } from "lucide-react";
+import { Activity, BookOpen, Bot, Code2, Hash, Folder, FolderGit2, GitBranch, GitCommitHorizontal, History, Home, Users, User } from "lucide-react";
 import { placeUrl, viewUrl, type HubMeta, type Place, type ProjectMeta, type SpaceMeta, type View } from "@/api";
 import { useLive } from "@/hooks/use-live";
 import { channelSeenKey, ChannelsContext, useChannels } from "@/hooks/use-channels";
 import { channelCards, channelOf } from "@/lib/channels";
 import { recentProjects, rememberProject, useMe } from "@/hooks/use-me";
-import { AGENTHUB_PATH, hashOf, useRoute } from "@/router";
+import { hashOf, useRoute } from "@/router";
 import { Dock, Inspector, Progress, Sidebar, TopBar, type DockItem, type SideSection } from "@/shell/shell";
 import { SearchPalette } from "@/shell/search";
 import { Avatar } from "@/ui/primitives";
 import { ActivityFeed, HomePage } from "@/pages/home";
 import { SpacePage } from "@/pages/space";
 import { ProjectPage } from "@/pages/project";
-import { AgentHubPage } from "@/pages/agenthub";
 import { SECTION_ICONS, SECTION_ORDER } from "@/pages/files";
 
 const HUB: Place = { space: "", project: "" };
@@ -28,7 +27,7 @@ function markSeen(key: string) { try { localStorage.setItem(SEEN, JSON.stringify
 export function App() {
   const route = useRoute();
   const me = useMe();
-  const place = route.page === "home" || route.page === "agenthub" ? HUB : route.place;
+  const place = route.page === "home" ? HUB : route.place;
   const filesPath = route.page === "project" && route.tab === "files" ? route.path : "";
   const live = useLive<View>(viewUrl(place, filesPath));
   // A project's space, for the sidebar's list of its sibling projects.
@@ -74,10 +73,10 @@ export function App() {
   }, []);
   useEffect(() => {
     if (route.page === "project") rememberProject(placeKey);
-    if (route.page !== "home" && route.page !== "agenthub") { markSeen(route.page === "project" ? placeKey : place.space); setSeen(readSeen()); }
+    if (route.page !== "home") { markSeen(route.page === "project" ? placeKey : place.space); setSeen(readSeen()); }
   }, [route.page, placeKey, place.space]);
   useEffect(() => {
-    document.title = route.page === "home" ? "spacehub" : route.page === "agenthub" ? "Agenthub · spacehub" : `${route.page === "project" ? placeKey : place.space} · spacehub`;
+    document.title = route.page === "home" ? "spacehub" : `${route.page === "project" ? placeKey : place.space} · spacehub`;
   }, [route.page, placeKey, place.space]);
 
   const signIn = `/-/login?next=${encodeURIComponent(location.pathname + location.hash)}`;
@@ -86,12 +85,11 @@ export function App() {
   // Sidebar: a space switcher, the main places, short lists of where you are and where you were, and a footer.
   const kindOf = (name: string) => me.spaces.find(s => s.space === name)?.kind ?? (meta?.level === "space" && meta.name === name ? meta.kind : space.data?.meta.name === name ? space.data.meta.kind : "personal");
   const switcher = {
-    current: route.page === "home" || route.page === "agenthub" ? null : { name: place.space, kind: kindOf(place.space), href: placeUrl({ space: place.space, project: "" }) },
+    current: route.page === "home" ? null : { name: place.space, kind: kindOf(place.space), href: placeUrl({ space: place.space, project: "" }) },
     options: me.spaces.map(s => ({ name: s.space, kind: s.kind, href: placeUrl({ space: s.space, project: "" }) })),
   };
   const primary = [
     { key: "home", label: "Home", href: "/", icon: <Home size={16} />, active: route.page === "home" },
-    { key: "agenthub", label: "Agenthub", href: AGENTHUB_PATH, icon: <Rocket size={16} />, active: route.page === "agenthub" },
     ...(me.name ? [{ key: "me", label: "Your profile", href: placeUrl({ space: me.name, project: "" }), icon: <User size={16} />, active: route.page === "space" && place.space === me.name }] : []),
   ];
   const sideSections: SideSection[] = [];
@@ -108,11 +106,11 @@ export function App() {
     if (agents.length) sideSections.push({ key: "agents", title: "Agents", limit: 6, items: agents.map(item) });
   }
   const siblings = route.page === "project" ? space.data?.snapshot.directory.entries : route.page === "space" ? view?.snapshot.directory.entries : undefined;
-  if (route.page !== "home" && route.page !== "agenthub" && siblings) sideSections.push({
+  if (route.page !== "home" && siblings) sideSections.push({
     key: "projects", title: `Projects in ${place.space}`, limit: 6,
     items: [...siblings].sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt)).map(entry => ({ key: "p:" + entry.name, label: entry.name, href: placeUrl({ space: place.space, project: entry.name }), icon: <FolderGit2 size={16} />, active: place.project === entry.name })),
   });
-  if ((route.page === "home" || route.page === "agenthub") && me.spaces.length) sideSections.push({
+  if (route.page === "home" && me.spaces.length) sideSections.push({
     key: "spaces", title: "Your spaces", limit: 6,
     items: me.spaces.map(s => ({ key: "s:" + s.space, label: s.space, href: placeUrl({ space: s.space, project: "" }), icon: <Avatar name={s.space} size={18} kind={s.kind} /> })),
   });
@@ -163,7 +161,6 @@ export function App() {
     <Sidebar switcher={switcher} primary={primary} sections={sideSections} footer={footer} open={sidebarOpen} onClose={() => setSidebarOpen(false)} rail={rail} onRail={toggleRail} onSearch={() => setSearching(true)} />
     <main className="main" id="main">
       <div className="main-scroll">
-        {route.page === "agenthub" && <AgentHubPage task={route.task} me={me.name} signIn={signIn} />}
         {route.page === "home" && <HomePage view={view as View<HubMeta> | undefined} me={me.name} activityOpen={activityOpen} onActivity={toggleActivity} />}
         {route.page === "space" && <SpacePage name={place.space} tab={route.tab} view={view as View<SpaceMeta> | undefined} error={live.error} me={me.name} />}
         {route.page === "project" && <ChannelsContext.Provider value={channels}><ProjectPage route={route} view={view as View<ProjectMeta> | undefined} error={live.error} me={me.name} signIn={signIn} refresh={live.refresh} /></ChannelsContext.Provider>}

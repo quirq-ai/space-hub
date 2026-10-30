@@ -12,7 +12,7 @@
 //   GET      /-/live, /-/live.js live pages: a page's new rendering on every change (live.ts)
 //   GET      /, /<space>, /<space>/<project>, /-/app/*, /-/api/view, /-/api/me,
 //   POST     /-/api/chat         the hub's app: open-chat's interface over the hub (app.ts)
-//   *        /-/api/agenthub/... Agenthub: worker agent sessions on an Agents Hub (agenthub.ts),
+//   *        /-/api/agenthub/... the orgs' worker agents, launched from a chat (agenthub.ts),
 //                                only with SPACEHUB_AGENTHUB_URL and _TOKEN set
 //   *        /-/api/xo/v1/...    xo.quirq.dev's store and agents (xo.ts), only
 //                                with SPACEHUB_XO_KEY set
@@ -159,6 +159,11 @@ async function sessionOf(req: http.IncomingMessage): Promise<{ token: string; us
   } catch {
     return null;
   }
+}
+
+// Save chat turns as the builder; the module's push rules decide who may.
+async function appendChat(session: { token: string }, input: { project: string; conversation: string; turns: { id: string; role: string; content: string; links: { label: string; path: string }[] }[] }) {
+  await withConn(session.token, conn => conn.reducers.appendChat(input));
 }
 
 // Where the signed-in builder may create projects: its personal space and
@@ -339,7 +344,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   if (await handleSignIn(SIGNIN, req, res)) return;
   if (LIVE.handle(req, res, url)) return;
   if (req.method === 'POST' && !sameOrigin(req)) return send(res, 403, page('Forbidden', null, '<h1>Forbidden</h1><p class="desc">This form must be sent from this site.</p>'));
-  if (await handleAgentHub(AGENTHUB, { sessionOf, sameOrigin }, req, res, url)) return;
+  if (await handleAgentHub(AGENTHUB, { sessionOf, spacesOf, appendChat, sameOrigin }, req, res, url)) return;
   if (await handleApp({ dir: APP_DIR, internalHttp: INTERNAL_HTTP, db: DB, withConn, sessionOf }, req, res, url)) return;
 
   if (route === '/-/login') {

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { foldEvents, linkLabel, withoutCredit, toDetail, toEvents, toTasks } from "../src/lib/agenthub.ts";
+import { foldEvents, launchInput, launchOf, linkLabel, repoName, withoutCredit, toDetail, toEvents, toTasks } from "../src/lib/agenthub.ts";
 
 test("tasks from a list or {tasks}, newest activity first", () => {
   const tasks = toTasks({ tasks: [
@@ -57,6 +57,19 @@ test("work still going stays open", () => {
 });
 
 test("the credit line is not shown in the task", () => {
-  assert.equal(withoutCredit("Fix it\n\n(Started from spacehub by suraj.)"), "Fix it");
-  assert.equal(withoutCredit("Fix it (Started early)"), "Fix it (Started early)");
+  assert.equal(withoutCredit("Fix it\n\n(Launched by suraj from quirq/quirq, Chat/a/chat.json.)"), "Fix it");
+  assert.equal(withoutCredit("Fix it (Launched early)"), "Fix it (Launched early)");
+});
+
+test("a launch turn names its worker; other turns do not", () => {
+  assert.deepEqual(launchOf("Fix the README\n\n<!-- agenthub:task=abc_1 -->"), { task: "abc_1", text: "Fix the README" });
+  assert.equal(launchOf("Fix the README"), null);
+  assert.equal(launchOf("<!-- agenthub:task=a b -->"), null);
+});
+
+test("launching from GitHub: a repository, or an issue or PR whose link joins the task", () => {
+  assert.deepEqual(launchInput("Fix this", "https://github.com/quirq-ai/quirq/issues/7"), { text: "Fix this\n\nhttps://github.com/quirq-ai/quirq/issues/7", repo: "https://github.com/quirq-ai/quirq/issues/7" });
+  assert.deepEqual(launchInput("Fix this ", "quirq-ai/quirq"), { text: "Fix this", repo: "quirq-ai/quirq" });
+  assert.equal(repoName("https://github.com/quirq-ai/quirq/pull/3"), "quirq-ai/quirq");
+  assert.equal(repoName("not a repo"), "");
 });

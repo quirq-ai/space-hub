@@ -3,7 +3,6 @@
 // (tree, blob, raw, commits, commit, refs, activity) and the guide.
 //
 //   GET  /, /<space>, /<space>/<project>   the app's page (its path within a project is in the #hash)
-//   GET  /-/agenthub                       the app's page for Agenthub, its sessions (agenthub.ts)
 //   GET  /-/app/<file>                     the app's script, styles and images (built from app/)
 //   GET  /-/api/view?space=&project=&path= the hub, a space or a project as folders and files
 //                                          (the module's /api, see module/src/workspace.ts)
@@ -178,11 +177,10 @@ export async function handleApp(deps: AppDeps, req: http.IncomingMessage, res: h
     }
   }
 
-  const read = req.method === 'GET' || req.method === 'HEAD';
-  const page = read ? PAGE.exec(route) : null;
-  if (page || (read && route === '/-/agenthub')) {
-    const [, space, project] = page ?? [];
-    const title = !page ? 'Agenthub · spacehub' : space ? `${project ? `${space}/${project}` : space} · spacehub` : 'spacehub';
+  const page = req.method === 'GET' || req.method === 'HEAD' ? PAGE.exec(route) : null;
+  if (page) {
+    const [, space, project] = page;
+    const title = space ? `${project ? `${space}/${project}` : space} · spacehub` : 'spacehub';
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'content-security-policy': APP_CSP, 'x-content-type-options': 'nosniff', 'referrer-policy': 'same-origin' });
     res.end(appPage(deps.dir, title));
     return true;

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { agentHubConfig, handleAgentHub, parseStart, type AgentHubConfig } from '../src/agenthub.ts';
+import { agentHubConfig, handleAgentHub, parseLaunch, repoOf, type AgentHubConfig } from '../src/agenthub.ts';
 
 const TOKEN = 'hub-secret-token';
 
@@ -42,19 +42,24 @@ function fakeHub() {
   return { server, tasks, seen };
 }
 
-async function setup(builders = 'suraj') {
+async function setup(spaces = 'quirq') {
   const hub = fakeHub();
   await new Promise<void>(r => hub.server.listen(0, '127.0.0.1', r));
   const cfg = agentHubConfig({
     SPACEHUB_AGENTHUB_URL: `http://127.0.0.1:${(hub.server.address() as AddressInfo).port}/`,
     SPACEHUB_AGENTHUB_TOKEN: TOKEN,
-    SPACEHUB_AGENTHUB_BUILDERS: builders,
+    SPACEHUB_AGENTHUB_SPACES: spaces,
   }) as AgentHubConfig;
-  // Sessions: the cookie is the builder's name.
+  // Sessions: the cookie is the builder's name; suraj and gates are in quirq, mallory is not.
+  const chat: { as: string; project: string; conversation: string; content: string }[] = [];
   const deps = {
     sessionOf: async (req: http.IncomingMessage) => {
       const name = /spacehub_session=([^;]*)/.exec(req.headers.cookie ?? '')?.[1];
       return name ? { token: name, username: name } : null;
+    },
+    spacesOf: async (session: { username: string }) => (session.username === 'mallory' ? ['mallory'] : [session.username, 'quirq']),
+    appendChat: async (session: { username: string }, input: { project: string; conversation: string; turns: { content: string }[] }) => {
+      chat.push({ as: session.username, project: input.project, conversation: input.conversation, content: input.turns[0].content });
     },
     sameOrigin: (req: http.IncomingMessage) => req.headers.origin === `http://${req.headers.host}`,
   };
@@ -72,15 +77,17 @@ async function setup(builders = 'suraj') {
     return { status: resp.status, body: await resp.json() };
   };
   const close = () => { web.close(); web.closeAllConnections(); hub.server.close(); hub.server.closeAllConnections(); };
-  return { hub, ask, close };
+  return { hub, ask, close, chat };
 }
 
-test('not set up: no URL or token means no Agenthub', async () => {
+const WHERE = { space: 'quirq', project: 'quirq', conversation: 'Chat/hello-world/chat.json' };
+
+test('not set up: no URL or token means no agents', async () => {
   assert.equal(agentHubConfig({}), null);
   assert.equal(agentHubConfig({ SPACEHUB_AGENTHUB_URL: 'https://a.example' }), null);
   assert.throws(() => agentHubConfig({ SPACEHUB_AGENTHUB_URL: 'http://a.example', SPACEHUB_AGENTHUB_TOKEN: 'x' }), /https/);
   const res = await new Promise<{ status: number; body: string }>(resolve => {
-    const web = http.createServer(async (req, out) => { await handleAgentHub(null, { sessionOf: async () => null, sameOrigin: () => true }, req, out, new URL(req.url!, 'http://l')); });
+    const web = http.createServer(async (req, out) => { await handleAgentHub(null, { sessionOf: async () => null, spacesOf: async () => [], appendChat: async () => {}, sameOrigin: () => true }, req, out, new URL(req.url!, 'http://l')); });
     web.listen(0, '127.0.0.1', async () => {
       const base = `http://127.0.0.1:${(web.address() as AddressInfo).port}/-/api/agenthub`;
       const status = await (await fetch(base)).json();
@@ -91,33 +98,41 @@ test('not set up: no URL or token means no Agenthub', async () => {
     });
   });
   assert.equal(res.status, 503);
-  assert.deepEqual(JSON.parse(res.body), { enabled: false, signedIn: false, allowed: false, builder: null });
+  assert.deepEqual(JSON.parse(res.body), { enabled: false, signedIn: false, allowed: false });
 });
 
-test('status says who may use it; only allowed builders reach the Agents Hub', async () => {
-  const { hub, ask, close } = await setup('suraj, Gates');
-  assert.deepEqual((await ask('GET', '')).body, { enabled: true, signedIn: true, allowed: true, builder: 'suraj' });
-  assert.equal((await ask('GET', '', { as: 'gates' })).body.allowed, true);
-  assert.equal((await ask('GET', '/tasks', { as: '' })).status, 401);
-  assert.equal((await ask('GET', '/tasks', { as: 'mallory' })).status, 403);
+test('members of an org with agents may launch in it; nobody else reaches the Agents Hub', async () => {
+  const { hub, ask, close } = await setup();
+  assert.deepEqual((await ask('GET', '?space=quirq')).body, { enabled: true, signedIn: true, allowed: true });
+  assert.deepEqual((await ask('GET', '?space=suraj')).body, { enabled: false, signedIn: true, allowed: false });
+  assert.equal((await ask('GET', '?space=quirq', { as: 'mallory' })).body.allowed, false);
+  assert.equal((await ask('GET', '/tasks/t1', { as: '' })).status, 401);
+  assert.equal((await ask('GET', '/tasks/t1', { as: 'mallory' })).status, 403);
+  assert.equal((await ask('POST', '/tasks', { body: { ...WHERE, space: 'suraj', project: 'notes', text: 'x' } })).status, 403);
   assert.equal(hub.seen.length, 0);
   close();
 });
 
-test('start, read, follow up, stop and tear down a session, with the token kept on the server', async () => {
-  const { hub, ask, close } = await setup();
-  const started = await ask('POST', '/tasks', { body: { text: 'Fix the README\nand open a PR', repo: 'https://github.com/quirq-ai/space-hub.git' } });
+test('a launch starts a task and saves the message, with the task, to the chat', async () => {
+  const { hub, ask, close, chat } = await setup();
+  const started = await ask('POST', '/tasks', { body: { ...WHERE, text: 'Fix the README\nand open a PR', repo: 'https://github.com/quirq-ai/space-hub/issues/4' } });
   assert.equal(started.status, 201);
+  assert.equal(started.body.saved, true);
   assert.equal(started.body.task.title, 'Fix the README');
   assert.equal(started.body.task.repo, 'quirq-ai/space-hub');
   const post = hub.seen.at(-1)!;
   assert.equal(post.auth, `Bearer ${TOKEN}`);
   assert.match(post.key!, /^[0-9a-f]{32}$/);
-  assert.match(JSON.parse(post.body).text, /Started from spacehub by suraj/);
+  assert.match(JSON.parse(post.body).text, /Launched by suraj from quirq\/quirq, Chat\/hello-world\/chat.json/);
   assert.ok(!JSON.stringify(started.body).includes(TOKEN));
+  assert.deepEqual(chat, [{ as: 'suraj', project: 'quirq/quirq', conversation: WHERE.conversation, content: 'Fix the README\nand open a PR\n\n<!-- agenthub:task=t1 -->' }]);
+  close();
+});
 
-  assert.equal((await ask('GET', '/tasks')).body.tasks.length, 1);
-  assert.equal((await ask('GET', '/tasks/t1')).body.task.status, 'running');
+test('follow a worker: read, events, follow up, stop and tear down', async () => {
+  const { ask, close } = await setup();
+  await ask('POST', '/tasks', { body: { ...WHERE, text: 'Do it' } });
+  assert.equal((await ask('GET', '/tasks/t1', { as: 'gates' })).body.task.status, 'running');
   assert.deepEqual((await ask('GET', '/tasks/t1/events?after=0')).body.next, 1);
   assert.equal((await ask('GET', '/tasks/t1/events?after=1')).body.events.length, 0);
   assert.equal((await ask('POST', '/tasks/t1/messages', { body: { text: 'also a test' } })).status, 409);
@@ -129,24 +144,27 @@ test('start, read, follow up, stop and tear down a session, with the token kept 
 });
 
 test('writes from another site, bad ids and bad input are refused before the Agents Hub is asked', async () => {
-  const { hub, ask, close } = await setup();
-  assert.equal((await ask('POST', '/tasks', { body: { text: 'x' }, from: 'https://evil.example' })).status, 403);
+  const { hub, ask, close, chat } = await setup();
+  assert.equal((await ask('POST', '/tasks', { body: { ...WHERE, text: 'x' }, from: 'https://evil.example' })).status, 403);
   assert.equal((await ask('DELETE', '/tasks/t1', { from: 'https://evil.example' })).status, 403);
   assert.equal((await ask('GET', '/tasks/..%2Fsecret')).status, 404);
   assert.equal((await ask('GET', '/tasks/a/b/c')).status, 404);
-  assert.equal((await ask('POST', '/tasks', { body: { text: '  ' } })).status, 400);
-  assert.equal((await ask('POST', '/tasks', { body: { text: 'x', repo: 'not a repo' } })).status, 400);
+  assert.equal((await ask('POST', '/tasks', { body: { ...WHERE, text: '  ' } })).status, 400);
+  assert.equal((await ask('POST', '/tasks', { body: { ...WHERE, text: 'x', repo: 'not a repo' } })).status, 400);
+  assert.equal((await ask('POST', '/tasks', { body: { ...WHERE, conversation: '../x.json', text: 'x' } })).status, 400);
   assert.equal(hub.seen.length, 0);
+  assert.equal(chat.length, 0);
   close();
 });
 
 test('the hub’s token being refused is not shown as the builder being signed out', async () => {
   const fake = fakeHub();
   await new Promise<void>(r => fake.server.listen(0, '127.0.0.1', r));
-  const cfg = agentHubConfig({ SPACEHUB_AGENTHUB_URL: `http://127.0.0.1:${(fake.server.address() as AddressInfo).port}`, SPACEHUB_AGENTHUB_TOKEN: 'wrong', SPACEHUB_AGENTHUB_BUILDERS: 'suraj' })!;
-  const web = http.createServer(async (req, res) => { await handleAgentHub(cfg, { sessionOf: async () => ({ token: 'x', username: 'suraj' }), sameOrigin: () => true }, req, res, new URL(req.url!, 'http://l')); });
+  const cfg = agentHubConfig({ SPACEHUB_AGENTHUB_URL: `http://127.0.0.1:${(fake.server.address() as AddressInfo).port}`, SPACEHUB_AGENTHUB_TOKEN: 'wrong', SPACEHUB_AGENTHUB_SPACES: 'quirq' })!;
+  const deps = { sessionOf: async () => ({ token: 'x', username: 'suraj' }), spacesOf: async () => ['quirq'], appendChat: async () => {}, sameOrigin: () => true };
+  const web = http.createServer(async (req, res) => { await handleAgentHub(cfg, deps, req, res, new URL(req.url!, 'http://l')); });
   await new Promise<void>(r => web.listen(0, '127.0.0.1', r));
-  const resp = await fetch(`http://127.0.0.1:${(web.address() as AddressInfo).port}/-/api/agenthub/tasks`, { headers: { cookie: 'spacehub_session=other' } });
+  const resp = await fetch(`http://127.0.0.1:${(web.address() as AddressInfo).port}/-/api/agenthub/tasks/t1`, { headers: { cookie: 'spacehub_session=other' } });
   assert.equal(resp.status, 502);
   assert.match((await resp.json()).error, /SPACEHUB_AGENTHUB_TOKEN/);
   web.close();
@@ -155,7 +173,11 @@ test('the hub’s token being refused is not shown as the builder being signed o
   fake.server.closeAllConnections();
 });
 
-test('a title defaults to the first line, and the builder is credited', () => {
-  assert.deepEqual(parseStart({ text: 'Summarise issues\nin detail', title: '' }, 'suraj'), { title: 'Summarise issues', text: 'Summarise issues\nin detail\n\n(Started from spacehub by suraj.)' });
-  assert.equal(parseStart({ text: 'x', title: '  My task ' }, 'a').title, 'My task');
+test('repositories from a name or a GitHub link; a title from the first line', () => {
+  assert.equal(repoOf('https://github.com/quirq-ai/quirq/pull/12'), 'quirq-ai/quirq');
+  assert.equal(repoOf('https://github.com/quirq-ai/quirq.git'), 'quirq-ai/quirq');
+  assert.equal(repoOf('quirq-ai/quirq'), 'quirq-ai/quirq');
+  const launch = parseLaunch({ ...WHERE, text: '## Summarise *issues*\nin detail' }, 'suraj');
+  assert.equal(launch.task.title, 'Summarise issues');
+  assert.equal(launch.message, '## Summarise *issues*\nin detail');
 });
