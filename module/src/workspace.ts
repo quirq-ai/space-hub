@@ -9,6 +9,7 @@
 //   space                    a space: its projects as folders
 //   space + project (+path)  the project's default branch: folders and files,
 //                            with `path` (relative to the project) opened
+//   templates                the templates a new project can start from
 //
 // Reads come straight from the tables, so nothing is cached and every answer
 // is current. Writes go through the append_chat reducer (chat.ts).
@@ -16,6 +17,8 @@ import { PRESENCE_STALE_SECONDS, inSpace, objectKey, readObject, refKey, type Db
 import { Sha1 } from './sha1';
 import { CodeError, README_BYTES, commitView, commitsView, filesView, refsView, treeView } from './code';
 import { DEPS_FILE, depsText, depsView, parseDeps } from './deps';
+import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_FILES, SPACE_FILE, parseSpace, progressOf, textFiles, type SpaceGoal, type TemplateFile } from './space';
+import { BUILTIN_ABOUT, BUILTIN_FILES, BUILTIN_TEMPLATE, BUILTIN_TITLE } from './spacetemplate';
 
 export const MAX_TEXT_BYTES = 2 * 1024 * 1024;
 export const MAX_PREVIEW_BYTES = 20 * 1024 * 1024;
@@ -57,6 +60,10 @@ export interface Entry {
   status?: string;
   owner?: string;
   outputFormat?: string;
+  /** A project's goal and outcomes done, from its SPACE.md, and whether it is a template. */
+  goal?: string;
+  progress?: { done: number; total: number };
+  template?: boolean;
 }
 
 /** A Markdown document of a folder, shown under its listing. */
@@ -174,7 +181,19 @@ export type Meta =
       collaborators: string[];
       here: Here[];
       activity: ActivityItem[];
+      /** The project's SPACE.md, read: its goal, outcomes, owners, rules and routines. */
+      goal: SpaceGoal | null;
     };
+
+/** What a new project can start from: the built-in goal space, or a project marked as a template. */
+export interface Template {
+  /** "goal" for the built-in one, else the project's full name. */
+  id: string;
+  title: string;
+  about: string;
+  builtin: boolean;
+  outcomes: number;
+}
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -574,7 +593,10 @@ function spaceLevel(db: Db, name: string, now: number) {
   const projects = [...db.project.owner.filter(name)];
   const entries = projects
     .filter(project => isVisibleName(project.name))
-    .map(project => entryOf(project.name, 'directory', 0, iso(project.pushedAt), project.description || `${headOf(db, project) ? 'branch ' + project.defaultBranch : 'empty'}`))
+    .map(project => ({
+      ...entryOf(project.name, 'directory', 0, iso(project.pushedAt), project.description || `${headOf(db, project) ? 'branch ' + project.defaultBranch : 'empty'}`),
+      ...goalFields(goalOf(db, project)),
+    }))
     .sort(compareEntries);
   const { owners, members } = rolesOf(db, name);
   const agentList = agentsOf(db, name, now);
@@ -665,8 +687,73 @@ function projectLevel(db: Db, project: Project, requested: string, viewer: strin
       ...projectPeople(db, project),
       here: here(db, now, row => row.projectId === project.id),
       activity: activity(db, row => row.projectId === project.id),
+      goal: goalOf(db, project, rootTree),
     }
   );
+}
+
+// ---------------------------------------------------------------- goals and templates
+
+/** A project's SPACE.md at the root of its default branch, read; null without one. */
+export function goalOf(db: Db, project: Project, rootTree?: TreeEntry[]): SpaceGoal | null {
+  const tree = rootTree ?? (() => {
+    const head = headOf(db, project);
+    return head ? treeOf(db, project, parseCommit(objectOf(db, project, head, 'commit')).tree) : [];
+  })();
+  const entry = tree.find(candidate => candidate.name === SPACE_FILE && isFileMode(candidate.mode));
+  const text = entry ? readText(db, project, entry.oid, SUMMARY_BYTES) : null;
+  return text === null ? null : parseSpace(text);
+}
+
+function goalFields(goal: SpaceGoal | null): Pick<Entry, 'goal' | 'progress' | 'template'> {
+  if (!goal) return {};
+  const progress = progressOf(goal);
+  // A template's goal is a placeholder for the spaces it starts; its card says what it is for instead.
+  const line = goal.template ? goal.template : goal.goal;
+  return { ...(line ? { goal: line } : {}), ...(progress.total ? { progress } : {}), ...(goal.template !== null ? { template: true } : {}) };
+}
+
+/** The built-in goal space first, then every project whose SPACE.md has "## Template", by name. */
+export function templatesView(db: Db): Template[] {
+  const builtin = parseSpace(BUILTIN_FILES[SPACE_FILE]);
+  const projects = [...db.project.iter()]
+    .filter(project => isVisibleName(project.name))
+    .flatMap(project => {
+      const goal = goalOf(db, project);
+      if (!goal || goal.template === null) return [];
+      return [{ id: project.fullName, title: goal.title || project.fullName, about: goal.template || project.description, builtin: false, outcomes: goal.outcomes.length }];
+    })
+    .sort((a, b) => a.id.localeCompare(b.id));
+  return [{ id: BUILTIN_TEMPLATE, title: BUILTIN_TITLE, about: BUILTIN_ABOUT, builtin: true, outcomes: builtin.outcomes.length }, ...projects];
+}
+
+/**
+ * A template's files: the built-in goal space, or a template project's
+ * default branch (regular files and symlinks; submodules are left out).
+ */
+export function templateFiles(db: Db, id: string): Map<string, TemplateFile> {
+  if (!id || id === BUILTIN_TEMPLATE) return textFiles(BUILTIN_FILES);
+  const project = db.project.fullName.find(id.toLowerCase()) ?? db.project.fullName.find(id);
+  if (!project) throw new ApiError(`There is no template ${id}.`, 404);
+  const goal = goalOf(db, project);
+  if (!goal || goal.template === null) throw new ApiError(`${id} is not a template: its SPACE.md needs a "## Template" section.`, 400);
+  const head = headOf(db, project);
+  const files = new Map<string, TemplateFile>();
+  let bytes = 0;
+  const walk = (oid: string, base: string) => {
+    for (const entry of treeOf(db, project, oid)) {
+      const path = base ? `${base}/${entry.name}` : entry.name;
+      if (isDirectoryMode(entry.mode)) { walk(entry.oid, path); continue; }
+      if (!isFileMode(entry.mode) && entry.mode !== '120000') continue;
+      if (files.size >= MAX_TEMPLATE_FILES) throw new ApiError(`A template holds at most ${MAX_TEMPLATE_FILES} files.`, 413);
+      const data = objectOf(db, project, entry.oid, 'blob');
+      bytes += data.length;
+      if (bytes > MAX_TEMPLATE_BYTES) throw new ApiError(`A template holds at most ${MAX_TEMPLATE_BYTES / 1024 / 1024} MB.`, 413);
+      files.set(path, { mode: entry.mode, data });
+    }
+  };
+  walk(parseCommit(objectOf(db, project, head, 'commit')).tree, '');
+  return files;
 }
 
 export function parseQuery(qs: string) {
@@ -730,6 +817,7 @@ export function renderApi(db: Db, req: ApiRequest): { status: number; headers: R
   const headers: Record<string, string> = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' };
   try {
     if (req.query.has('avatar')) return { status: 200, headers, body: JSON.stringify(avatarOf(db, (req.query.get('avatar') ?? '').toLowerCase())) };
+    if (req.query.has('templates')) return { status: 200, headers, body: JSON.stringify({ templates: templatesView(db) }) };
     if (req.query.has('view')) {
       const body = JSON.stringify(codeView(db, req));
       // Same content, same tag: the app polls these views too.

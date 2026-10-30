@@ -9,6 +9,11 @@ export type ActivityItem = { at: string; agent: string; kind: string; path: stri
 export type Membership = { space: string; kind: string; role: string };
 export type AgentInfo = { name: string; description: string; parent: string; owned: boolean; connected: boolean; spaces: string[]; running: { host: string; since: string }[] };
 export type ProjectCard = { fullName: string; description: string; pushedAt: string };
+/** A project's SPACE.md, read by the hub: what it is for and how far along it is. */
+export type SpaceGoal = {
+  title: string; goal: string; due: string; outcomes: { text: string; done: boolean; owner: string }[];
+  owners: string[]; rules: string[]; routines: string[]; template: string | null;
+};
 
 export type HubMeta = { level: "hub"; spaces: number; projects: number; bytes: number; events: number; humans: number; agents: number; activity: ActivityItem[]; here: Here[]; allProjects: ProjectCard[] };
 export type SpaceMeta = {
@@ -19,7 +24,7 @@ export type SpaceMeta = {
 export type ProjectMeta = {
   level: "project"; fullName: string; space: string; name: string; description: string; defaultBranch: string; bytes: number;
   head: { oid: string; subject: string; author: string; time: string } | null; deps: number; canWrite: boolean; owners: string[]; members: string[]; agents: string[];
-  collaborators: string[]; here: Here[]; activity: ActivityItem[];
+  collaborators: string[]; here: Here[]; activity: ActivityItem[]; goal: SpaceGoal | null;
 };
 export type Meta = HubMeta | SpaceMeta | ProjectMeta;
 export type View<M extends Meta = Meta> = { snapshot: WorkspaceSnapshot; meta: M };

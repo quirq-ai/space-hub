@@ -13,6 +13,10 @@ export interface Entry {
   status?: string;
   owner?: string;
   outputFormat?: string;
+  /** A project's goal and outcomes done, from its SPACE.md, and whether it is a template. */
+  goal?: string;
+  progress?: { done: number; total: number };
+  template?: boolean;
 }
 
 /** A Markdown document of a folder, shown under its listing. */

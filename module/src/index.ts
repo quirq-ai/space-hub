@@ -35,8 +35,10 @@ import { Identity, Timestamp } from 'spacetimedb';
 import { Sha1, objectHeader } from './sha1';
 import { CHUNK_SIZE, PRESENCE_STALE_SECONDS, commitParents, inSpace, memberKey, objectKey, ownsSpace, readObject, refKey, roleKey } from './store';
 import { renderUi } from './ui';
-import { parseQuery, renderApi } from './workspace';
-import { appendTurns } from './chat';
+import { ApiError, parseQuery, renderApi, templateFiles } from './workspace';
+import { appendTurns, type NewObject } from './chat';
+import { commitFiles, instantiate } from './space';
+import { BUILTIN_TEMPLATE } from './spacetemplate';
 import { OLDEST_PROTOCOL, PROTOCOL } from './protocol';
 
 const MAX_OBJECT_SIZE = 100 * 1024 * 1024;
@@ -761,12 +763,56 @@ function createProjectIn(ctx: Ctx, space: string, name: string, description: str
   });
   ctx.db.projectSize.insert({ projectId: created.id, bytes: 0n });
   logActivity(ctx, { kind: 'project_created', projectId: created.id, path: fullName, agent: me });
+  return created;
 }
 
 export const createProject = spacetimedb.reducer(
   { space: t.string(), name: t.string(), description: t.string() },
-  (ctx, { space, name, description }) => createProjectIn(ctx, space.trim().toLowerCase(), name, description)
+  (ctx, { space, name, description }) => { createProjectIn(ctx, space.trim().toLowerCase(), name, description); }
 );
+
+// Start a project from a template (space.ts): the built-in goal space (""
+// or "goal") or a project whose SPACE.md has "## Template". Its files become
+// the new project's first commit, with the goal and the caller as owner
+// filled in, all in one transaction.
+export const createProjectFromTemplate = spacetimedb.reducer(
+  { space: t.string(), name: t.string(), description: t.string(), template: t.string(), goal: t.string() },
+  (ctx, { space, name, description, template, goal }) => {
+    const owner = space.trim().toLowerCase();
+    let files: ReturnType<typeof templateFiles>;
+    try {
+      files = templateFiles(ctx.db, template.trim());
+    } catch (err) {
+      throw new SenderError(err instanceof ApiError ? err.message : String(err));
+    }
+    const sp = createProjectIn(ctx, owner, name, description);
+    const me = requireActor(ctx);
+    const now = Number(ctx.timestamp.microsSinceUnixEpoch / 1_000_000n);
+    const date = new Date(now * 1000).toISOString().slice(0, 10);
+    const filled = instantiate(files, { space: owner, project: name, goal: goal.trim().replace(/\s+/g, ' ').slice(0, 500), owner: me, date });
+    const from = template.trim() && template.trim() !== BUILTIN_TEMPLATE ? template.trim() : 'the goal space template';
+    const built = commitFiles(filled, me, now, `Start ${sp.fullName} from ${from}`);
+    let added = 0n;
+    for (const object of built.objects) added += writeObject(ctx, sp, object);
+    ctx.db.gitRef.insert({ id: 0n, key: refKey(sp.id, 'refs/heads/main'), projectId: sp.id, name: 'refs/heads/main', oid: built.commit, updatedAt: ctx.timestamp, updatedBy: ctx.sender });
+    ctx.db.project.id.update({ ...sp, defaultBranch: 'main', pushedAt: ctx.timestamp });
+    grow(ctx, sp.id, added);
+    logActivity(ctx, { projectId: sp.id, path: sp.fullName, kind: 'ref_created', subject: 'refs/heads/main', oid: built.commit, text: `Start ${sp.fullName} from ${from}` });
+  }
+);
+
+// Store one object the server built (chat turns, a template's files),
+// chunked when it is big; returns the bytes it added.
+function writeObject(ctx: Ctx, sp: Parameters<typeof insertObject>[1] & { id: bigint }, object: NewObject): bigint {
+  if (ctx.db.gitObject.key.find(objectKey(sp.id, object.oid))) return 0n;
+  const chunks = object.data.length > CHUNK_SIZE ? Math.ceil(object.data.length / CHUNK_SIZE) : 0;
+  for (let idx = 0; idx < chunks; idx++) {
+    const data = object.data.slice(idx * CHUNK_SIZE, (idx + 1) * CHUNK_SIZE);
+    ctx.db.objectChunk.insert({ id: 0n, key: `${sp.id}:${object.oid}:${idx}`, projectId: sp.id, oid: object.oid, idx, data });
+  }
+  insertObject(ctx, sp, object.oid, object.kind, object.data.length, chunks, chunks ? new Uint8Array(0) : object.data);
+  return BigInt(object.data.length);
+}
 
 export const deleteProject = spacetimedb.reducer({ project: t.string() }, (ctx, { project: fullName }) => {
   const sp = requireProjectAdmin(ctx, fullName);
@@ -982,16 +1028,7 @@ export const appendChat = spacetimedb.reducer(
       throw new SenderError(err instanceof Error ? err.message : String(err));
     }
     let added = 0n;
-    for (const object of built.objects) {
-      if (ctx.db.gitObject.key.find(objectKey(sp.id, object.oid))) continue;
-      const chunks = object.data.length > CHUNK_SIZE ? Math.ceil(object.data.length / CHUNK_SIZE) : 0;
-      for (let idx = 0; idx < chunks; idx++) {
-        const data = object.data.slice(idx * CHUNK_SIZE, (idx + 1) * CHUNK_SIZE);
-        ctx.db.objectChunk.insert({ id: 0n, key: `${sp.id}:${object.oid}:${idx}`, projectId: sp.id, oid: object.oid, idx, data });
-      }
-      insertObject(ctx, sp, object.oid, object.kind, object.data.length, chunks, chunks ? new Uint8Array(0) : object.data);
-      added += BigInt(object.data.length);
-    }
+    for (const object of built.objects) added += writeObject(ctx, sp, object);
     ctx.db.gitRef.id.update({ ...current!, oid: built.commit, updatedAt: ctx.timestamp, updatedBy: ctx.sender });
     ctx.db.project.id.update({ ...sp, pushedAt: ctx.timestamp });
     grow(ctx, sp.id, added);
