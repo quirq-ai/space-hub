@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, FileText, Github, LogIn, Rocket, Square, UserRound, X } from "lucide-react";
 import { MAX_MESSAGE_LENGTH } from "@/lib/demo-chat";
 import { Markdown } from "@/components/content-view";
@@ -105,7 +105,8 @@ function LaunchTray({ place, path, draft, onClose, onLaunched }: { place: Place;
   const [github, setGithub] = useState(() => recentRepos()[0] ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [key] = useState(newKey);
+  // One key per launch: a retry of it starts one worker, an edited one is new.
+  const key = useMemo(newKey, [draft, github]);
   const recent = recentRepos();
   const repo = repoName(github);
   const launch = async () => {

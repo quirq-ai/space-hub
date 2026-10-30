@@ -36,7 +36,8 @@ export function WorkerCard({ id }: { id: string }) {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [reply, setReply] = useState<string | null>(null);
-  const [key] = useState(newKey);
+  // One key per follow-up: a retry of it is not sent twice, the next one is new.
+  const [key, setKey] = useState(newKey);
 
   if (!task) {
     const note = detail.status === 404 ? "This worker ended and was torn down." : detail.status === 403 ? "Only members of the org can follow its workers." : detail.status === 503 ? "Agents are not set up on this hub." : detail.error;
@@ -49,7 +50,7 @@ export function WorkerCard({ id }: { id: string }) {
     try {
       if (what === "stop") await send("POST", `/tasks/${encodeURIComponent(id)}/stop`, {});
       if (what === "teardown") await send("DELETE", `/tasks/${encodeURIComponent(id)}`);
-      if (what === "reply") { await send("POST", `/tasks/${encodeURIComponent(id)}/messages`, { text: reply }, key); setReply(null); }
+      if (what === "reply") { await send("POST", `/tasks/${encodeURIComponent(id)}/messages`, { text: reply }, key); setReply(null); setKey(newKey()); }
       detail.refresh(); events.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "That did not work.");
