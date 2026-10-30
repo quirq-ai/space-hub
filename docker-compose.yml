@@ -6,6 +6,8 @@
 #   SPACEHUB_ACCOUNTS=open|xo changes how people sign up (default github)
 #   SPACEHUB_GITHUB_CLIENT_ID=... SPACEHUB_GITHUB_CLIENT_SECRET=... sign in with the hub's
 #   GitHub OAuth App (README, Sign up with GitHub)
+#   SPACEHUB_AGENTHUB_URL=... SPACEHUB_AGENTHUB_TOKEN=... SPACEHUB_AGENTHUB_SPACES=org turn on
+#   worker agents launched from the org's chats (README, Agents launched from chat)
 #
 # Clients: spacehub auth login --server wss://hub.example.com   (with the GitHub account gh is logged in to)
 # Admin (SQL, logs) stays inside the container:
@@ -22,6 +24,9 @@ services:
       SPACEHUB_XO_KEY: ${SPACEHUB_XO_KEY:-}  # empty: the xo API stays off
       SPACEHUB_GITHUB_CLIENT_ID: ${SPACEHUB_GITHUB_CLIENT_ID:-}  # both empty: sign in with gh's token
       SPACEHUB_GITHUB_CLIENT_SECRET: ${SPACEHUB_GITHUB_CLIENT_SECRET:-}
+      SPACEHUB_AGENTHUB_URL: ${SPACEHUB_AGENTHUB_URL:-}  # URL or token empty: Agenthub stays off
+      SPACEHUB_AGENTHUB_TOKEN: ${SPACEHUB_AGENTHUB_TOKEN:-}
+      SPACEHUB_AGENTHUB_SPACES: ${SPACEHUB_AGENTHUB_SPACES:-}
     volumes:
       - spacehub-data:/data
     restart: unless-stopped

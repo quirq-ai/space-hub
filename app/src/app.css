@@ -558,3 +558,65 @@ a.label:hover { text-decoration: none; filter: brightness(.96); }
   .preview { width: 100vw; height: 88vh; margin: auto 0 0; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
 }
 @media (prefers-reduced-motion: reduce) { .preview[open] { animation: none; } }
+
+/* Workers launched from a chat (components/worker-card.tsx, the composer's launch tray). */
+.button.primary { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
+.button.primary:hover { background: var(--accent); filter: brightness(1.06); }
+.button:disabled { opacity: .5; cursor: default; filter: none; }
+.launch { display: flex; align-items: center; justify-content: center; flex: none; width: 30px; height: 30px; border: 0; border-radius: 8px; background: none; color: var(--text-2); cursor: pointer; }
+.launch:hover, .launch.on { background: var(--accent-soft); color: var(--accent-text); }
+.launch-tray { display: grid; gap: 8px; margin-bottom: 8px; padding: 10px 10px 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); }
+.launch-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.launch-icon { flex: none; color: var(--accent-text); }
+.launch-title { flex: 1; min-width: 0; color: var(--text-2); font-size: 12.5px; }
+.launch-title strong { color: var(--text); font-weight: 600; }
+.launch-tray .icon-button { width: 24px; height: 24px; }
+.launch-github { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; height: 30px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--panel); color: var(--text-3); }
+.launch-github:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.launch-github input { flex: 1; min-width: 0; border: 0; outline: none; background: none; color: var(--text); font: inherit; font-size: 13px; }
+.launch-recent { display: flex; flex-wrap: wrap; gap: 6px; }
+.launch-recent button { padding: 2px 9px; border: 1px solid var(--line); border-radius: 20px; background: var(--panel); color: var(--text-2); font: 12px var(--mono); cursor: pointer; }
+.launch-recent button:hover, .launch-recent button.on { border-color: var(--line-strong); color: var(--text); }
+.launch-note { margin: 0; color: var(--text-3); font-size: 12px; }
+.launch-note.is-error { color: var(--red); }
+.worker { --tone: var(--accent); margin: 6px 0 2px; max-width: 640px; padding: 10px 12px; border: 1px solid var(--line); border-left: 2px solid var(--tone); border-radius: var(--radius); background: var(--bg); font-size: 13px; }
+.worker.is-done { --tone: var(--green); } .worker.is-fail { --tone: var(--red); } .worker.is-stop, .worker.is-quiet { --tone: var(--line-strong); }
+.worker-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.worker-head strong { overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.worker-head a { flex: none; font-size: 12px; }
+.worker-dot { flex: none; align-self: center; width: 7px; height: 7px; border-radius: 50%; background: var(--tone); }
+.worker.is-run .worker-dot { animation: worker-pulse 1.4s infinite ease-in-out; }
+@keyframes worker-pulse { 50% { opacity: .3; } }
+.worker-status { margin-left: auto; flex: none; color: var(--text-3); font-size: 12px; }
+.worker-now { margin: 4px 0 0 15px; overflow: hidden; color: var(--text-2); font: 12px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+.worker-result { margin: 6px 0 0 15px; color: var(--text); }
+.worker-result .markdown p { margin: 0 0 4px; }
+.worker-error { margin: 6px 0 0 15px; color: var(--red); font-size: 12.5px; white-space: pre-wrap; }
+.worker .message-links { margin-left: 15px; }
+.message-links a { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); color: var(--text); font-size: 12.5px; }
+.message-links a:hover { text-decoration: none; background: var(--hover); }
+.message-links a svg { color: var(--green); }
+.worker-actions { display: flex; gap: 2px; margin: 6px 0 -4px 9px; }
+.worker-actions button { display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px; border: 0; border-radius: 6px; background: none; color: var(--text-3); font-size: 12px; cursor: pointer; }
+.worker-actions button:hover { background: var(--hover); color: var(--text); }
+.worker-actions button.danger:hover { background: var(--red-soft); color: var(--red); }
+.worker-actions button:disabled { opacity: .5; cursor: default; }
+.worker-actions .flip { transform: rotate(180deg); }
+.worker-steps { list-style: none; max-height: 360px; margin: 8px 0 0 15px; padding: 6px 0 0; overflow-y: auto; border-top: 1px solid var(--line); }
+.worker-line { padding: 2px 0; font-size: 12.5px; }
+.worker-line.is-task { color: var(--text-2); white-space: pre-wrap; }
+.worker-line.is-agent .markdown p { margin: 2px 0; }
+.worker-line.is-note { color: var(--text-3); }
+.worker-line.is-err { color: var(--red); } .worker-line.is-done, .worker-line.is-ok { color: var(--green); } .worker-line.is-warn { color: var(--amber); }
+.worker-line.is-step summary, .worker-step { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--text-2); cursor: default; list-style: none; }
+.worker-line.is-step summary { cursor: pointer; }
+.worker-line.is-step summary::-webkit-details-marker { display: none; }
+.worker-line code, .worker-line summary > span:not(.step-icon), .worker-step > span:not(.step-icon) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.worker-line pre { max-height: 200px; margin: 4px 0 4px 20px; padding: 6px 8px; overflow: auto; border-radius: 6px; background: var(--fill); font: 11.5px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.worker-line.is-ok .step-icon { color: var(--green); } .worker-line.is-fail .step-icon { color: var(--red); }
+.step-icon { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 14px; height: 14px; }
+.step-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--text-3); }
+.step-spin { width: 10px; height: 10px; border: 2px solid var(--accent-soft); border-top-color: var(--accent); border-radius: 50%; animation: step-spin .8s linear infinite; }
+@keyframes step-spin { to { transform: rotate(360deg); } }
+.step-exit { flex: none; padding: 0 5px; border-radius: 4px; background: var(--red-soft); color: var(--red); font: 11px var(--mono); }
+@media (prefers-reduced-motion: reduce) { .worker.is-run .worker-dot, .step-spin { animation: none; } }

@@ -1,8 +1,11 @@
-import { useEffect, useRef } from "react";
-import { ArrowUp, FileText, LogIn, Square, UserRound } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ArrowUp, FileText, Github, LogIn, Rocket, Square, UserRound, X } from "lucide-react";
 import { MAX_MESSAGE_LENGTH } from "@/lib/demo-chat";
 import { Markdown } from "@/components/content-view";
 import { useChat } from "@/hooks/use-chat";
+import { useLive } from "@/hooks/use-live";
+import { WorkerCard } from "@/components/worker-card";
+import { launchInput, launchOf, newKey, recentRepos, rememberRepo, repoName, send, type AgentHubStatus } from "@/lib/agenthub";
 import { type Place } from "@/api";
 import { Ago, Avatar, AvatarStack, ErrorNote } from "@/ui/primitives";
 
@@ -32,6 +35,10 @@ export function ChatView({ place, path, data, repliesPath, logExists, me, canWri
   const added: Message[] = chat.messages.map(turn => ({ ...turn, author: turn.author || (turn.role === "assistant" ? "quirqy" : "") }));
   const all = [...saved, ...added];
   const people = [...new Set(all.map(message => message.author).filter(name => name && name !== "note"))];
+  // Members of an org with agents launch a worker with the message instead of only sending it.
+  const agents = useLive<AgentHubStatus>(!blocked ? `/-/api/agenthub?space=${encodeURIComponent(place.space)}` : undefined, 0);
+  const canLaunch = !!agents.data?.enabled && agents.data.allowed;
+  const [launching, setLaunching] = useState(false);
 
   useEffect(() => { end.current?.scrollIntoView({ block: "end", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" }); }, [all.length, chat.pending]);
   useEffect(() => {
@@ -53,7 +60,13 @@ export function ChatView({ place, path, data, repliesPath, logExists, me, canWri
           <span className="message-avatar">{!grouped && (message.author ? <Avatar name={message.author} size={32} /> : <span className="avatar-anon"><UserRound size={18} /></span>)}</span>
           <div className="message-main">
             {!grouped && <div className="message-meta"><strong>{!message.author ? "User" : message.author === me ? `${message.author} (you)` : message.author}</strong>{message.saving ? <span className="quiet">Saving…</span> : message.time && (/^\d{4}-/.test(message.time) ? <Ago iso={message.time} /> : <span className="quiet">{message.time}</span>)}</div>}
-            <div className="message-text"><Markdown content={message.content} filePath={path} navigate={onOpen} /></div>
+            {(() => {
+              const launch = launchOf(message.content);
+              return <>
+                <div className="message-text"><Markdown content={launch ? launch.text : message.content} filePath={path} navigate={onOpen} /></div>
+                {launch && <WorkerCard id={launch.task} />}
+              </>;
+            })()}
             {message.links && message.links.length > 0 && <div className="message-links">{message.links.map((link, i) => <button key={i} type="button" onClick={() => onOpen(link.path)}><FileText size={14} />{link.label || link.path}</button>)}</div>}
           </div>
         </li>;
@@ -67,17 +80,63 @@ export function ChatView({ place, path, data, repliesPath, logExists, me, canWri
       {blocked === "signin" && <div className="composer-blocked"><span>Sign in to write in this conversation.</span><a className="button" href={signIn}><LogIn size={15} />Sign in</a></div>}
       {blocked === "member" && <div className="composer-blocked"><span>Only members of {place.space} can write here. You can read along.</span></div>}
       {!blocked && <>
+        {launching && <LaunchTray place={place} path={path} draft={chat.draft} onClose={() => setLaunching(false)} onLaunched={() => { setLaunching(false); chat.setDraft(""); chat.refresh(); onSaved(); }} />}
         {!added.length && chat.suggestions.length > 0 && <div className="suggestions">{chat.suggestions.map(item => <button key={item.label} type="button" disabled={!chat.ready || chat.pending} onClick={() => chat.send(item.prompt)}>{item.label}</button>)}</div>}
         <form className="composer" onSubmit={event => { event.preventDefault(); chat.send(); }}>
           <Avatar name={me!} size={28} />
           <textarea ref={input} rows={1} maxLength={MAX_MESSAGE_LENGTH} aria-label={`Message ${place.space}/${place.project}`} placeholder={chat.ready ? placeholder : "Connecting…"} value={chat.draft}
             onChange={event => chat.setDraft(event.target.value)}
             onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} />
+          {canLaunch && !chat.pending && <button type="button" className={`launch${launching ? " on" : ""}`} aria-label="Launch a worker with this message" title="Launch a worker with this message" aria-pressed={launching} onClick={() => setLaunching(value => !value)}><Rocket size={16} /></button>}
           {chat.pending ? <button type="button" className="send stop" aria-label="Stop the sample reply" onClick={chat.stop}><Square size={13} fill="currentColor" /></button>
             : <button type="submit" className="send" aria-label="Send" disabled={!chat.ready || !chat.draft.trim()}><ArrowUp size={17} /></button>}
         </form>
-        <p className="composer-note">Saved to {place.space}/{place.project} as {me}{chat.sampleReplies ? " · sample replies on" : ""} · Enter to send, Shift+Enter for a new line</p>
+        <p className="composer-note">Saved to {place.space}/{place.project} as {me}{chat.sampleReplies ? " · sample replies on" : ""} · Enter to send, Shift+Enter for a new line{canLaunch ? ` · Launch runs it as a worker of ${place.space}` : ""}</p>
       </>}
     </div>
+  </div>;
+}
+
+/**
+ * Above the composer: launch the message as a worker of the org, on a GitHub
+ * repository, or on an issue or pull request (its link joins the task).
+ */
+function LaunchTray({ place, path, draft, onClose, onLaunched }: { place: Place; path: string; draft: string; onClose: () => void; onLaunched: () => void }) {
+  const [github, setGithub] = useState(() => recentRepos()[0] ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  // One key per launch: a retry of it starts one worker, an edited one is new.
+  const key = useMemo(newKey, [draft, github]);
+  const recent = recentRepos();
+  const repo = repoName(github);
+  const launch = async () => {
+    if (!draft.trim() || busy) return;
+    setBusy(true); setError("");
+    try {
+      const input = launchInput(draft, github);
+      const made = await send("POST", "/tasks", { space: place.space, project: place.project, conversation: path, ...input }, key) as { saved?: boolean };
+      rememberRepo(repo);
+      if (made?.saved === false) setError("The worker started, but the message was not saved to this chat.");
+      else onLaunched();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "The worker did not start.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <div className="launch-tray">
+    <div className="launch-row">
+      <Rocket size={15} className="launch-icon" />
+      <span className="launch-title">Launch {draft.trim() ? "this message" : "a message"} as a worker of <strong>{place.space}</strong></span>
+      <button type="button" className="icon-button" aria-label="Close" onClick={onClose}><X size={14} /></button>
+    </div>
+    <div className="launch-row">
+      <label className="launch-github"><Github size={14} /><input value={github} placeholder="owner/repo, or a GitHub issue or pull request link" spellCheck={false} autoCapitalize="off" onChange={event => setGithub(event.target.value)} /></label>
+      <button type="button" className="button primary small" disabled={!draft.trim() || busy || (!!github.trim() && !repo)} onClick={() => void launch()}>{busy ? "Launching…" : "Launch"}</button>
+    </div>
+    {recent.length > 0 && <div className="launch-recent">{recent.map(name => <button key={name} type="button" className={name === repo ? "on" : undefined} onClick={() => setGithub(name)}>{name}</button>)}</div>}
+    {github.trim() && !repo && <p className="launch-note">Use owner/repo, or paste a github.com link.</p>}
+    {!draft.trim() && <p className="launch-note">Write what the worker should do in the message box, then launch.</p>}
+    {error && <p className="launch-note is-error">{error}</p>}
   </div>;
 }
