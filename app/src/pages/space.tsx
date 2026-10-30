@@ -1,5 +1,7 @@
 import { Bot, Building2, Download, FolderGit2, Github, Plus, User, Users } from "lucide-react";
-import { kindLabel, placeUrl, size, type AgentInfo, type SpaceMeta, type View } from "@/api";
+import { activeBy, kindLabel, latestOf, newestBy, placeUrl, size, type AgentInfo, type SpaceMeta, type View } from "@/api";
+import { Browser, Glyph } from "@/ui/cards";
+import { PathBar } from "@/shell/path-bar";
 import { hashOf, onLink } from "@/router";
 import { Ago, Avatar, CommandTabs, Empty, Popover, SkeletonRows } from "@/ui/primitives";
 import { ActivityList, HereNow, PageHeader, People, Tabs } from "./common";
@@ -7,7 +9,7 @@ import { ActivityList, HereNow, PageHeader, People, Tabs } from "./common";
 const KIND_ICON = { personal: <User size={13} />, org: <Building2 size={13} />, agent: <Bot size={13} /> } as Record<string, React.ReactNode>;
 
 /** A builder's profile, an org, or an agent: who they are, what they work on, what they did. */
-export function SpacePage({ name, tab, view, error, me }: { name: string; tab: "projects" | "agents" | "activity" | "people"; view: View<SpaceMeta> | undefined; error: string; me: string | null }) {
+export function SpacePage({ name, tab, view, error, me, seen }: { name: string; tab: "projects" | "agents" | "activity" | "people"; view: View<SpaceMeta> | undefined; error: string; me: string | null; seen: Record<string, string> }) {
   if (!view) return <div className="page">{error ? <Empty icon={<User size={20} />} title={`No space named ${name}`}><p>{error}</p></Empty> : <><div className="profile-skeleton"><span className="skeleton round" style={{ width: 72, height: 72 }} /><SkeletonRows rows={2} avatar={false} /></div><SkeletonRows rows={5} /></>}</div>;
   const meta = view.meta;
   const projects = [...view.snapshot.directory.entries].sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
@@ -17,7 +19,10 @@ export function SpacePage({ name, tab, view, error, me }: { name: string; tab: "
   const hasAgents = meta.kind !== "agent";
   const agentCount = meta.agentList.length;
   const canManage = !!me && meta.owners.includes(me);
+  const byProject = newestBy(meta.activity, item => item.path);
+  const peopleByProject = activeBy(meta.activity, item => item.path);
   return <div className="page">
+    <PathBar place={{ space: name, project: "" }} path="" />
     <PageHeader
       leading={<Avatar name={name} size={72} kind={meta.kind} />}
       title={<>{meta.displayName}<span className="kind-badge">{KIND_ICON[meta.kind]}{kindLabel(meta.kind)}</span></>}
@@ -46,19 +51,23 @@ export function SpacePage({ name, tab, view, error, me }: { name: string; tab: "
       { key: "activity", label: "Activity", href: base + "#" + hashOf("activity") },
     ]} />
     {tab === "projects" && <>
-      {projects.length ? <ul className="rows">{projects.map(project => <li key={project.name}><a className="row" href={placeUrl({ space: name, project: project.name })} onClick={onLink}>
-        <FolderGit2 size={18} className="row-icon" /><span className="row-main"><strong>{project.name}</strong><span>{project.detail}</span></span><span className="row-meta">Updated <Ago iso={project.modifiedAt} /></span>
-      </a></li>)}</ul> : <Empty icon={<FolderGit2 size={20} />} title="No projects yet"><p>Create one with <code>spacehub project create {name}/&lt;name&gt; --source . --push</code>.</p></Empty>}
-      {meta.collaborates.length > 0 && <><h2 className="section-title">Collaborates on</h2><ul className="rows">{meta.collaborates.map(fullName => {
-        const [space, project] = fullName.split("/");
-        return <li key={fullName}><a className="row" href={placeUrl({ space, project })} onClick={onLink}><FolderGit2 size={18} className="row-icon" /><span className="row-main"><strong>{fullName}</strong></span></a></li>;
-      })}</ul></>}
+      {projects.length || meta.collaborates.length ? <Browser head={<>{projects.length} {projects.length === 1 ? "project" : "projects"} in {name}</>} groups={[
+        { key: "projects", title: "Projects", note: `Each one is a git repository on the hub that ${meta.kind === "org" ? "the org's members" : name} push to.`, cards: projects.map(project => {
+          const fullName = `${name}/${project.name}`;
+          return { key: project.name, name: project.name, search: project.detail, people: peopleByProject.get(fullName), href: placeUrl({ space: name, project: project.name }), icon: <Glyph><FolderGit2 size={17} /></Glyph>, title: project.name,
+            detail: project.detail || undefined, latest: latestOf(byProject.get(fullName)), time: project.modifiedAt, fresh: !!seen[fullName] && project.modifiedAt > seen[fullName] };
+        }) },
+        { key: "collaborates", title: "Collaborates on", note: "Projects of other spaces they may push to.", compact: true, cards: meta.collaborates.map(fullName => {
+          const [space, project] = fullName.split("/");
+          return { key: fullName, name: fullName, href: placeUrl({ space, project }), icon: <Glyph><FolderGit2 size={16} /></Glyph>, title: fullName };
+        }) },
+      ]} /> : <Empty icon={<FolderGit2 size={20} />} title="No projects yet"><p>Create one with <code>spacehub project create {name}/&lt;name&gt; --source . --push</code>.</p></Empty>}
     </>}
     {tab === "agents" && hasAgents && <AgentList space={name} kind={meta.kind} agents={meta.agentList} canManage={canManage} />}
     {tab === "activity" && <ActivityList items={meta.activity} />}
     {tab === "people" && <>
-      <h2 className="section-title">Here now</h2><HereNow here={meta.here} />
-      <People groups={[{ title: "Owners", names: meta.owners }, { title: "Members", names: meta.members }]} />
+      {meta.here.length > 0 && <><h2 className="section-title">Here now</h2><HereNow here={meta.here} /></>}
+      <People here={meta.here} groups={[{ title: "Owners", names: meta.owners, note: `They manage ${name}.` }, { title: "Members", names: meta.members, note: `They push to every project of ${name}.` }]} />
     </>}
   </div>;
 }
@@ -77,17 +86,14 @@ function AgentList({ space, kind, agents, canManage }: { space: string; kind: st
   ]} note="An agent is a space with its own identity: its home project holds its instructions and memory, and it pushes to the spaces it is connected to." />;
   if (!agents.length) return <Empty icon={<Bot size={20} />} title="No agents yet"><p>Create one{kind === "org" ? " for this org" : ""}, or connect an agent you own so it can push here.</p><div className="empty-commands">{commands}</div></Empty>;
   return <>
-    <div className="list-head"><span>{agents.length} {agents.length === 1 ? "agent" : "agents"}{running ? <> · <span className="strip-here"><i className="online-dot" />{running} running</span></> : null}</span>
-      {canManage && <Popover label="Add an agent" icon={<Plus size={15} />}><div className="popover-title">Add an agent to {space}</div>{commands}</Popover>}</div>
-    <ul className="agent-list">{agents.map(agent => <li key={agent.name}>
-      <a className="agent-card" href={placeUrl({ space: agent.name, project: "" })} onClick={onLink}>
-        <Avatar name={agent.name} size={40} kind="agent" />
-        <span className="agent-main">
-          <span className="agent-name"><strong>{agent.name}</strong><span className="kind-badge"><Bot size={12} />Agent</span>{agent.running.length > 0 ? <span className="strip-here"><i className="online-dot" />Running on {agent.running.map(r => r.host || "a machine").join(", ")}</span> : <span className="quiet">Not running</span>}</span>
-          {agent.description && <span className="agent-desc">{agent.description}</span>}
-          <span className="agent-meta">{roleNote(agent)}{agent.running[0] && <> · running since <Ago iso={agent.running[0].since} /></>}</span>
-        </span>
-      </a>
-    </li>)}</ul>
+    <Browser head={<>{agents.length} {agents.length === 1 ? "agent" : "agents"}{running ? <> · <span className="strip-here"><i className="online-dot" />{running} running</span></> : null}</>}
+      actions={canManage && <Popover label="Add an agent" icon={<Plus size={15} />}><div className="popover-title">Add an agent to {space}</div>{commands}</Popover>}
+      groups={[{ key: "running", title: "Running", note: "Connected now, on the machine named.", keep: (agent: AgentInfo) => agent.running.length > 0 },
+      { key: "idle", title: "Not running", note: "Start one with spacehub agent run, or from Agenthub.", keep: (agent: AgentInfo) => !agent.running.length }].map(group =>
+      ({ key: group.key, title: group.title, note: group.note, cards: agents.filter(group.keep).map(agent => ({
+        key: agent.name, name: agent.name, search: `${agent.description} ${agent.parent} ${agent.spaces.join(" ")}`, href: placeUrl({ space: agent.name, project: "" }), icon: <Avatar name={agent.name} size={34} kind="agent" />, title: agent.name,
+        labels: agent.running.length ? <span className="label done"><i className="online-dot" />{agent.running.map(r => r.host || "a machine").join(", ")}</span> : undefined,
+        detail: agent.description || undefined, latest: { text: roleNote(agent) }, time: agent.running[0]?.since,
+      })) }))} />
   </>;
 }

@@ -6,11 +6,12 @@ import { Markdown } from "@/components/content-view";
 import { seenChannels, useChannelsHere } from "@/hooks/use-channels";
 import { useLive } from "@/hooks/use-live";
 import { chatLogPath } from "@/lib/chat-log";
-import { CHANNEL_FOLDERS, channelCards, field, isDone, readmeSections, snippet, type ChannelCard } from "@/lib/channels";
+import { CHANNEL_FOLDERS, channelCards, field, intro, isDone, readmeSections, snippet, type ChannelCard } from "@/lib/channels";
 import { isConversation } from "@/lib/conversation";
 import type { Doc, Entry, WorkspaceSnapshot } from "@/lib/types";
 import { hashOf, navigate, onLink } from "@/router";
-import { Ago, Avatar, Empty, ErrorNote, SkeletonRows } from "@/ui/primitives";
+import { Avatar, Empty, ErrorNote, SkeletonRows } from "@/ui/primitives";
+import { Browser } from "@/ui/cards";
 import { ChatView } from "./chat";
 import { entryIcon } from "./files";
 
@@ -49,29 +50,18 @@ export function ChannelList({ place, snapshot, meta, me }: { place: Place; snaps
   const files = snapshot.directory.entries.filter(entry => entry.kind === "file" && entry.name.toLowerCase() !== "readme.md");
   const readme = snapshot.directory.docs?.find(doc => /^readme/i.test(doc.name));
   return <div className="channels">
-    <div className="list-head"><span>{cards.length} {cards.length === 1 ? "channel" : "channels"} in {snapshot.directory.name}</span><a className="button ghost small" href={filesHref(place, here, "folder")} onClick={onLink}><Rows3 size={14} />Files</a></div>
     {files.length > 0 && <a className="callout inbox" href={filesHref(place, here, "folder")} onClick={onLink}><Inbox size={18} /><span><strong>{files.length} {files.length === 1 ? "file" : "files"} in the inbox</strong><span>Dropped in {here}/ and waiting to be sorted into a channel</span></span><ChevronRight size={16} /></a>}
-    {GROUPS.map(group => {
-      const shown = cards.filter(group.keep);
-      if (!shown.length) return null;
-      return <section className="channel-group" key={group.key}>
-        <h2 className="section-title">{group.title} <span className="quiet">{shown.length}</span></h2>
-        <p className="quiet">{group.note}</p>
-        <ul className="channel-cards">{shown.map(card => <li key={card.entry.path}>
-          <a className={`channel-card${card.done ? " done" : ""}`} href={filesHref(place, card.entry.path)} onClick={onLink}>
-            <ChannelIcon card={{ kind: card.kind, name: card.entry.name }} />
-            <span className="channel-card-main">
-              <span className="channel-card-title"><strong>{card.kind === "channel" ? "#" : ""}{card.entry.name}</strong><ChannelLabels status={card.entry.status} outputFormat={card.entry.outputFormat} />{card.entry.owner && <span className="label" title="Owner"><Avatar name={card.entry.owner} size={14} />{card.entry.owner}</span>}</span>
-              {card.entry.detail && <span className="channel-card-detail">{card.entry.detail}</span>}
-              {card.last ? <span className="channel-card-last"><Avatar name={card.last.author || "quirqy"} size={16} /><span><b>{card.last.author || (card.last.role === "assistant" ? "quirqy" : "someone")}</b> {snippet(card.last.content)}</span></span>
-                : <span className="channel-card-last quiet">No messages on the hub yet</span>}
-            </span>
-            <span className="channel-card-meta">{card.last?.time && <Ago iso={card.last.time} />}{card.unread && <i className="unread-dot" title="New since you last looked" />}</span>
-          </a>
-        </li>)}</ul>
-      </section>;
-    })}
-    {readme && <details className="panel channel-readme"><summary className="panel-head"><FileText size={15} /><strong>How {snapshot.directory.name} works</strong><span className="quiet">{readme.name}</span></summary><Markdown content={readme.content} filePath={readme.path} navigate={path => navigate(filesHref(place, path))} /></details>}
+    <Browser head={<>{cards.length} {cards.length === 1 ? "channel" : "channels"} in {snapshot.directory.name}</>} intro={readme ? intro(readme.content) : undefined} keepOrder
+      actions={<a className="button ghost small" href={filesHref(place, here, "folder")} onClick={onLink}><Rows3 size={14} />Files</a>}
+      groups={GROUPS.map(group => ({ key: group.key, title: group.title, note: group.note, cards: cards.filter(group.keep).map(card => ({
+      key: card.entry.path, name: card.entry.name, search: [card.entry.detail, card.entry.outputFormat, card.entry.status, card.entry.owner, card.last?.author, card.last?.content].filter(Boolean).join(" "), href: filesHref(place, card.entry.path), done: card.done, fresh: card.unread, time: card.last?.time,
+      icon: <ChannelIcon card={{ kind: card.kind, name: card.entry.name }} />,
+      title: (card.kind === "channel" ? "#" : "") + card.entry.name,
+      labels: <><ChannelLabels status={card.entry.status} outputFormat={card.entry.outputFormat} />{card.entry.owner && <span className="label" title="Owner"><Avatar name={card.entry.owner} size={14} />{card.entry.owner}</span>}</>,
+      detail: card.entry.detail,
+      latest: card.last && { who: card.last.author || (card.last.role === "assistant" ? "quirqy" : "someone"), text: snippet(card.last.content) },
+      empty: "No messages on the hub yet",
+    })) }))} />
   </div>;
 }
 

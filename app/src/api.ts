@@ -147,3 +147,30 @@ export function pushedFiles(subject: string): string[] | null {
   const sync = /^autosync: (.+?)(?: and \d+ more)?$/.exec(subject);
   return sync ? sync[1].split(", ") : null;
 }
+
+/** The newest activity of each place, by `key` (items are newest first). */
+export function newestBy(items: ActivityItem[], key: (item: ActivityItem) => string): Map<string, ActivityItem> {
+  const newest = new Map<string, ActivityItem>();
+  for (const item of items) { const at = key(item); if (at && !newest.has(at)) newest.set(at, item); }
+  return newest;
+}
+
+/** One activity as a card's last line: who, and the commit message or what they did. */
+export function latestOf(item: ActivityItem | undefined): { who: string; text: string } | undefined {
+  if (!item) return;
+  const line = activityLine(item);
+  return { who: item.agent || "someone", text: PUSHES.has(item.kind) && item.text ? item.text : `${line.verb} ${line.where}` };
+}
+
+/** Who has been at work in each place, by `key`, newest first, each name once. */
+export function activeBy(items: ActivityItem[], key: (item: ActivityItem) => string): Map<string, string[]> {
+  const people = new Map<string, string[]>();
+  for (const item of items) {
+    const at = key(item);
+    if (!at || !item.agent) continue;
+    const names = people.get(at) ?? [];
+    if (!names.includes(item.agent)) names.push(item.agent);
+    people.set(at, names);
+  }
+  return people;
+}

@@ -155,13 +155,13 @@ export function Sidebar({ switcher, primary, sections, footer, open, onClose, ra
 
 export type DockItem = { key: string; label: string; href: string; icon: ReactNode; active?: boolean; fresh?: boolean };
 
-/** The dock: the places of where you are, a gap, then tools. */
-export function Dock({ places, tools }: { places: DockItem[]; tools: DockItem[] }) {
-  if (!places.length && !tools.length) return null;
+/** The dock: the places inside where you are (a project's sections, a space's projects, the hub's spaces). */
+export function Dock({ places }: { places: DockItem[] }) {
+  if (!places.length) return null;
   const item = (entry: DockItem) => <a key={entry.key} className={`dock-item${entry.active ? " active" : ""}`} href={entry.href} onClick={onLink} aria-label={entry.label} aria-current={entry.active ? "page" : undefined}>
     <span className="dock-icon">{entry.icon}</span><span className="dock-label">{entry.label}</span>{entry.fresh && <span className="dock-fresh" title="Changed since you last looked" />}
   </a>;
-  return <nav className="dock" aria-label="Dock">{places.map(item)}{places.length > 0 && tools.length > 0 && <span className="dock-gap" aria-hidden="true" />}{tools.map(item)}</nav>;
+  return <nav className="dock" aria-label="Dock">{places.map(item)}</nav>;
 }
 
 /** The right-hand panel: beside the page on wide windows, over it with a scrim on narrower ones. */

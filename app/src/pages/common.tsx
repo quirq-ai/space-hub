@@ -3,6 +3,7 @@ import { History, Users } from "lucide-react";
 import { activityLine, groupActivity, placeUrl, pushedFiles, type ActivityItem, type Here } from "@/api";
 import { hashOf, onLink } from "@/router";
 import { Ago, Avatar, AvatarStack, Empty, PersonLink } from "@/ui/primitives";
+import { Browser } from "@/ui/cards";
 
 export function PageHeader({ crumbs, title, subtitle, leading, actions, children }: {
   crumbs?: { label: string; href: string }[]; title: ReactNode; subtitle?: ReactNode; leading?: ReactNode; actions?: ReactNode; children?: ReactNode;
@@ -92,12 +93,15 @@ export function HereNow({ here }: { here: Here[] }) {
   return <ul className="people-list">{here.map((who, index) => <li key={index}><PersonLink name={who.agent} /><span className="quiet">{MODES[who.mode] ?? who.mode}{who.project ? ` · ${who.project}` : ""}</span><span className="online-dot" title="Connected now" /></li>)}</ul>;
 }
 
-export function People({ groups }: { groups: { title: string; names: string[]; note?: string }[] }) {
+/** People and agents as cards, grouped by what they may do, with who is connected right now. */
+export function People({ groups, here = [], agents = [] }: { groups: { title: string; names: string[]; note?: string }[]; here?: Here[]; agents?: string[] }) {
   const shown = groups.filter(group => group.names.length);
   if (!shown.length) return <Empty icon={<Users size={20} />} title="No people yet" />;
-  return <div className="people-groups">{shown.map(group => <section key={group.title}>
-    <h2 className="section-title">{group.title} <span className="quiet">{group.names.length}</span></h2>
-    {group.note && <p className="quiet">{group.note}</p>}
-    <ul className="people-grid">{group.names.map(name => <li key={name}><a href={"/" + encodeURIComponent(name)} onClick={onLink} className="person-card"><Avatar name={name} size={36} /><span>{name}</span></a></li>)}</ul>
-  </section>)}</div>;
+  const online = new Set(here.map(who => who.agent));
+  const total = new Set(shown.flatMap(group => group.names)).size;
+  return <Browser head={<>{total} {total === 1 ? "person" : "people and agents"}{online.size ? <> · <span className="strip-here"><i className="online-dot" />{online.size} here now</span></> : null}</>} groups={shown.map(group => ({ key: group.title, title: group.title, note: group.note, compact: true, cards: group.names.map(name => ({
+    key: name, name, search: group.title, href: "/" + encodeURIComponent(name), title: name,
+    icon: <Avatar name={name} size={28} kind={agents.includes(name) ? "agent" : undefined} />,
+    labels: online.has(name) ? <span className="label done" title="Connected now"><i className="online-dot" />Here now</span> : undefined,
+  })) }))} />;
 }

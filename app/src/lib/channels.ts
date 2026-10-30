@@ -80,8 +80,14 @@ export function channelOf(root: string, path: string): string | undefined {
   return name ? `${root}/${name}` : undefined;
 }
 
-/** One line of a message for a preview: Markdown marks and line breaks dropped. */
+/** One line of a message for a preview: Markdown marks, HTML comments (a worker launch's marker) and line breaks dropped. */
 export function snippet(content: string, max = 120): string {
-  const plain = content.replace(/```[\s\S]*?```/g, " ").replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/[#>*_`~|]/g, "").replace(/\s+/g, " ").trim();
+  const plain = content.replace(/```[\s\S]*?```/g, " ").replace(/<!--[\s\S]*?-->/g, " ").replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/[#>*_`~|]/g, "").replace(/\s+/g, " ").trim();
   return plain.length > max ? plain.slice(0, max - 1).trimEnd() + "…" : plain;
+}
+
+/** What a README says a folder is for: its first paragraph, as one line. */
+export function intro(markdown: string, max = 240): string {
+  const paragraph = markdown.replace(/```[\s\S]*?```/g, "").split(/\r?\n\s*\r?\n/).map(block => block.trim()).find(block => block && !/^(#|<!--|[-*|>] |\|)/.test(block));
+  return paragraph ? snippet(paragraph, max) : "";
 }

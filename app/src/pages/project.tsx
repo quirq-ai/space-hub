@@ -6,6 +6,7 @@ import { ActivityList, HereNow, PageHeader, People, Tabs } from "./common";
 import { BranchesTab, CodeTab, CommitTab, CommitsTab } from "./code";
 import { DepsTab } from "./deps";
 import { FilesTab, isChannel } from "./files";
+import { PathBar } from "@/shell/path-bar";
 
 type ProjectRoute = Extract<Route, { page: "project" }>;
 
@@ -15,11 +16,12 @@ export function ProjectPage({ route, view, error, me, signIn, refresh }: { route
   const base = placeUrl(place);
   const tab = route.tab === "commit" ? "commits" : route.tab;
   const people = meta ? new Set([...meta.owners, ...meta.members, ...meta.collaborators, ...meta.agents]).size : undefined;
-  if (!meta && error) return <div className="page"><PageHeader crumbs={[{ label: place.space, href: placeUrl({ space: place.space, project: "" }) }]} title={place.project} /><ErrorNote message={error} retry={refresh} /></div>;
+  const path = route.tab === "files" ? route.path : "";
+  if (!meta && error) return <div className="page"><PathBar place={place} path={path} /><PageHeader title={place.project} /><ErrorNote message={error} retry={refresh} /></div>;
   const chatty = route.tab === "files" && view && (view.snapshot.file?.format === "json" || (!view.snapshot.file && route.as !== "folder" && isChannel(view.snapshot)));
   return <div className={`page${chatty ? " page-chat" : ""}`}>
+    <PathBar place={place} path={path} />
     <PageHeader
-      crumbs={[{ label: place.space, href: placeUrl({ space: place.space, project: "" }) }]}
       leading={<span className="project-mark"><FolderGit2 size={22} /></span>}
       title={place.project}
       subtitle={meta ? meta.description || undefined : <Skeleton width={220} />}
@@ -43,8 +45,8 @@ export function ProjectPage({ route, view, error, me, signIn, refresh }: { route
     {route.tab === "branches" && <BranchesTab place={place} />}
     {meta && route.tab === "activity" && <ActivityList items={meta.activity} />}
     {meta && route.tab === "people" && <>
-      <h2 className="section-title">Here now</h2><HereNow here={meta.here} />
-      <People groups={[
+      {meta.here.length > 0 && <><h2 className="section-title">Here now</h2><HereNow here={meta.here} /></>}
+      <People here={meta.here} agents={meta.agents} groups={[
         { title: "Owners", names: meta.owners, note: `They manage ${place.space}.` },
         { title: "Members", names: meta.members, note: `They push to every project of ${place.space}.` },
         { title: "Agents", names: meta.agents, note: "Agents connected to the space, or collaborating on this project, push here too." },
