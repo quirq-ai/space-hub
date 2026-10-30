@@ -8,9 +8,12 @@ import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline/promises';
+import { fileURLToPath } from 'node:url';
 import { configFile, githubLogin, loadConfig, removeToken, saveSettings, saveToken } from './config';
 import os from 'node:os';
-import { connect, connectTo, errorMessage, findSpace, findProject, findUser, listRefs, projectsIn, PROTOCOL, quietSdkLogs, snapshot, spaceRoles, tables, type Conn } from './conn';
+import { connect, connectTo, errorMessage, findSpace, findProject, findUser, hubProtocol, listRefs, projectsIn, PROTOCOL, quietSdkLogs, snapshot, spaceRoles, tables, type Conn } from './conn';
+import { accountCheck, binDir, findOnPath, hubCheck, pathCheck, report, restartCheck, type Account, type Check } from './doctor';
+import { permissionHelp, spacesNamed } from './permission';
 import { AgentRun } from './agentrun';
 import { agentTemplate } from './agenttemplate';
 import { Autosync, AutosyncLoop, AutosyncStop, conflictHelp, UNFINISHED, unfinishedWork } from './autosync';
@@ -47,6 +50,11 @@ AUTH
   auth logout     Forget the token for the current server  [--yes]
   auth delete     Delete this builder from the server: its projects, agents, places in
                     orgs and activity history; its name is free again  [--yes]
+
+SETUP
+  doctor          Check this machine: where the CLI is installed and whether your shell
+                    finds it (with the PATH line to add if not), whether the install
+                    survives a restart, the CLI vs the hub, and who you are signed in as
 
 SPACES
   space create <org> [-d <text>]           Create an org (you are its owner)
@@ -1257,6 +1265,68 @@ async function agentRun(args: string[]) {
   note(`${name} stopped`);
 }
 
+// ---------------------------------------------------------------- doctor
+
+// Who owns a space: a builder owns its personal space, an agent belongs to
+// the owners of the space it was made in, an org has owner roles.
+async function ownersOf(conn: Conn, name: string, depth = 0): Promise<string[]> {
+  const sp = await findSpace(conn, name);
+  if (!sp) return [];
+  if (sp.kind === 'personal') return [sp.name];
+  if (sp.kind === 'agent') return depth < 4 ? ownersOf(conn, sp.parent, depth + 1) : [];
+  return (await spaceRoles(conn, name)).filter(r => r.role === 'owner').map(r => r.member);
+}
+
+// A permission refusal, followed by who is signed in and who could do it.
+// Anything else (or a hub that cannot be asked) adds nothing.
+async function refusalHelp(message: string): Promise<string[]> {
+  const spaces = spacesNamed(message);
+  if (!spaces.length || !session) return [];
+  const { conn, identity, server } = session;
+  const ask = async () => {
+    const user = await findUser(conn, identity);
+    const owners = await Promise.all(spaces.map(async space => ({ space, owners: await ownersOf(conn, space) })));
+    return permissionHelp(user?.username ?? null, server, owners);
+  };
+  const late = new Promise<string[]>(resolve => setTimeout(() => resolve([]), 5_000).unref());
+  return Promise.race([ask().catch(() => []), late]);
+}
+
+async function doctor() {
+  const cfg = loadConfig();
+  const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const bin = binDir(packageDir, process.argv[1] ?? packageDir);
+  const checks: Check[] = [
+    { name: 'CLI', level: 'ok', text: `spacehub ${VERSION} (protocol ${PROTOCOL}) in ${packageDir}` },
+    pathCheck(bin, findOnPath('spacehub', process.env.PATH ?? ''), process.env.SHELL),
+    restartCheck(fs.realpathSync(packageDir), os.homedir(), os.tmpdir()),
+  ];
+  // The hub check connects without saving a token, so doctor never signs you up.
+  let account: Account | null = null;
+  try {
+    const { conn, identity } = await connectTo(cfg.server, cfg.database, cfg.token);
+    session = { conn, identity, server: cfg.server, database: cfg.database };
+    checks.push(hubCheck(cfg.server, PROTOCOL, await hubProtocol(conn), null));
+    if (cfg.token) {
+      const user = await findUser(conn, identity);
+      account = { builder: user?.username ?? null, owner: [], member: [] };
+      if (user) {
+        const name = user.username;
+        const roles = await snapshot(conn, tables.spaceRole.where(r => r.member.eq(name)), () =>
+          [...conn.db.spaceRole.iter()].filter(r => r.member === name).sort((a, b) => a.space.localeCompare(b.space))
+        );
+        account.owner = [name, ...roles.filter(r => r.role === 'owner').map(r => r.space)];
+        account.member = roles.filter(r => r.role !== 'owner').map(r => r.space);
+      }
+    }
+  } catch (err) {
+    checks.push(hubCheck(cfg.server, PROTOCOL, null, errorMessage(err)));
+  }
+  checks.push(accountCheck(cfg.server, !!cfg.token, account));
+  out(report(checks));
+  if (checks.some(c => c.level === 'fail')) throw new Exit('', 1);
+}
+
 // ---------------------------------------------------------------- main
 
 async function main() {
@@ -1266,6 +1336,7 @@ async function main() {
 
   if (!group || group === 'help' || group === '--help' || group === '-h') return out(HELP);
   if (group === '--version' || group === 'version') return out(`spacehub ${VERSION} (protocol ${PROTOCOL})`);
+  if (group === 'doctor') return doctor();
 
   if (group === 'auth') {
     switch (sub) {
@@ -1339,8 +1410,10 @@ main()
     session?.conn.disconnect();
     process.exit(0);
   })
-  .catch(err => {
-    note(`spacehub: ${err instanceof Usage || err instanceof Exit ? err.message : errorMessage(err)}`);
+  .catch(async err => {
+    const message = err instanceof Usage || err instanceof Exit ? err.message : errorMessage(err);
+    if (message) note(`spacehub: ${message}`);
+    for (const line of await refusalHelp(message)) note(`  ${line}`);
     session?.conn.disconnect();
     process.exit(err instanceof Exit ? err.status : 1);
   });

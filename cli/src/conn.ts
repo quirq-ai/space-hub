@@ -68,7 +68,7 @@ export function connectTo(
 
 // The client protocol the hub speaks, or null when it is too old to say (no
 // client_protocol procedure) or does not answer in time.
-function hubProtocol(conn: Conn): Promise<HubProtocol | null> {
+export function hubProtocol(conn: Conn): Promise<HubProtocol | null> {
   const asked = conn.procedures.clientProtocol({}).then(
     p => ({ current: p.current, oldest: p.oldest }),
     () => null
