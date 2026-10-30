@@ -7,7 +7,8 @@
 //   POST     /-/api/auth/github  sign up or in with a GitHub token (signin.ts), for the CLI
 //   GET      /-/login/xo         sign in with xo in the browser, and its callback (xosignin.ts)
 //   POST     /-/logout           forget the session
-//   GET/POST /-/new              create a project, optionally imported from GitHub
+//   GET/POST /-/new              create a project: from a template (with its goal), empty,
+//                                or imported from GitHub
 //   POST     /-/sync/<o>/<name>  pull a project's GitHub source again
 //   POST     /-/link/<space>     link a space to a GitHub account (or sync it, or unlink)
 //   GET      /-/live, /-/live.js live pages: a page's new rendering on every change (live.ts)
@@ -317,18 +318,49 @@ function serverOf(req: http.IncomingMessage) {
   return `${scheme}://${req.headers.host ?? 'localhost'}`;
 }
 
-function newPage(viewer: string, spaces: string[], error = '', values: Record<string, string> = {}) {
+// The templates a project can start from (the module's ?templates view);
+// the built-in goal space alone when the module cannot be asked.
+type Template = { id: string; title: string; about: string; builtin: boolean };
+async function templatesList(): Promise<Template[]> {
+  const builtin: Template[] = [{ id: 'goal', title: 'Goal space', about: '', builtin: true }];
+  try {
+    const response = await fetch(`${INTERNAL_HTTP}/v1/database/${encodeURIComponent(DB)}/route/api?templates`);
+    if (!response.ok) return builtin;
+    const body = (await response.json()) as { templates?: Template[] };
+    return body.templates?.length ? body.templates : builtin;
+  } catch {
+    return builtin;
+  }
+}
+
+function newPage(viewer: string, spaces: string[], templates: Template[], error = '', values: Record<string, string> = {}) {
   const v = (k: string) => esc(values[k] ?? '');
   const chosen = values.space || viewer;
   const options = spaces.map(sp => `<option value="${esc(sp)}"${sp === chosen ? ' selected' : ''}>${esc(sp)}</option>`).join('');
+  const template = values.template ?? 'goal';
+  const known = templates.some(t => t.id === template) || template === '';
+  const choices = [
+    ...templates.map(t => ({ id: t.id, label: t.builtin ? `${t.title} (built in)` : `${t.title} · ${t.id}`, about: t.about })),
+    ...(known ? [] : [{ id: template, label: template, about: '' }]),
+    { id: '', label: 'Empty project', about: 'No files: push your own.' },
+  ];
+  const picker = choices
+    .map(c => `<option value="${esc(c.id)}"${c.id === template ? ' selected' : ''}${c.about ? ` title="${esc(c.about)}"` : ''}>${esc(c.label)}</option>`)
+    .join('');
+  const about = choices.find(c => c.id === template)?.about ?? '';
   return page(
     'New project · spacehub',
     viewer,
     `<h1><b>Create a new project</b></h1>
-<p class="desc">Import a public GitHub repository with its branches, tags and history, or start empty.</p>
+<p class="desc">Start a space around a goal from a template, start empty, or import a public GitHub repository with its branches, tags and history.</p>
 ${error ? `<div class="banner err">${esc(error)}</div>` : ''}
 <form method="post" action="/-/new">
-<label for="github">Import from GitHub <span class="muted">optional, e.g. https://github.com/owner/repo</span></label>
+<label for="goal">Goal <span class="muted">what this space is for, in one sentence; it opens the space, above its outcomes</span></label>
+<textarea id="goal" name="goal" rows="2" maxlength="500" style="font:inherit;min-height:56px" placeholder="Ship the new site by December 1, with sign-ups working.">${v('goal')}</textarea>
+<label for="template">Start from <span class="muted">a template brings its files: SPACE.md (goal, outcomes, owners, rules, routines), channels and guides</span></label>
+<select id="template" name="template">${picker}</select>
+${about ? `<p class="muted">${esc(about)}</p>` : ''}
+<label for="github">Or import from GitHub <span class="muted">optional, e.g. https://github.com/owner/repo; an import ignores the template</span></label>
 <input type="url" id="github" name="github" value="${v('github')}" placeholder="https://github.com/owner/repo">
 <label for="name">Space and project name <span class="muted">the name defaults to the repository's</span></label>
 <div style="display:flex;gap:8px;align-items:center"><select id="space" name="space" aria-label="Space">${options}</select><span class="muted">/</span><input type="text" id="name" name="name" value="${v('name')}" pattern="[A-Za-z0-9._-]{1,100}"></div>
@@ -442,11 +474,16 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
 
   if (route === '/-/new') {
     const session = await sessionOf(req);
-    if (!session) return redirect(res, `/-/login?next=${encodeURIComponent('/-/new')}`);
+    // Keep ?template= through sign-in, so "Use this template" still picks it.
+    if (!session) return redirect(res, `/-/login?next=${encodeURIComponent('/-/new' + url.search)}`);
     const spaces = await spacesOf(session);
-    if (req.method === 'GET') return send(res, 200, newPage(session.username, spaces));
+    const templates = await templatesList();
+    if (req.method === 'GET') {
+      const template = url.searchParams.get('template');
+      return send(res, 200, newPage(session.username, spaces, templates, '', template === null ? {} : { template }));
+    }
     const form = await readForm(req);
-    const values = Object.fromEntries(['github', 'space', 'name', 'description', 'builder'].map(k => [k, (form.get(k) ?? '').trim()]));
+    const values = Object.fromEntries(['github', 'space', 'name', 'description', 'builder', 'template', 'goal'].map(k => [k, (form.get(k) ?? '').trim()]));
     try {
       const source = values.github ? parseGithub(values.github) : null;
       if (values.github && !source) throw new Fail('Use a GitHub repository URL like https://github.com/owner/repo.');
@@ -470,7 +507,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
       }
       const project = `${owner}/${name}`;
       await withConn(session.token, async conn => {
-        await conn.reducers.createProject({ space: owner, name, description });
+        if (!source && values.template) await conn.reducers.createProjectFromTemplate({ space: owner, name, description, template: values.template, goal: values.goal });
+        else await conn.reducers.createProject({ space: owner, name, description });
         if (builder) await conn.reducers.setProjectBuilder({ project, ...builder });
         if (source) await conn.reducers.startImport({ project, source: source.url });
       });
@@ -480,7 +518,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
       }
       return redirect(res, `/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`);
     } catch (err) {
-      return send(res, 400, newPage(session.username, spaces, errorMessage(err), values));
+      return send(res, 400, newPage(session.username, spaces, templates, errorMessage(err), values));
     }
   }
 

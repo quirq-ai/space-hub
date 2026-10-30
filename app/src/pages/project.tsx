@@ -7,6 +7,7 @@ import { BranchesTab, CodeTab, CommitTab, CommitsTab } from "./code";
 import { DepsTab } from "./deps";
 import { FilesTab, isChannel } from "./files";
 import { PathBar } from "@/shell/path-bar";
+import { GoalChip, GoalPanel } from "./goal";
 
 type ProjectRoute = Extract<Route, { page: "project" }>;
 
@@ -37,6 +38,7 @@ export function ProjectPage({ route, view, error, me, signIn, refresh }: { route
       { key: "activity", label: "Activity", href: base + "#" + hashOf("activity") },
       { key: "people", label: "People", href: base + "#" + hashOf("people"), count: people },
     ]} />
+    {meta?.goal && route.tab === "files" && !path && !chatty && <GoalPanel place={place} goal={meta.goal} canWrite={meta.canWrite} />}
     {route.tab === "files" && <FilesTab place={place} path={route.path} as={route.as} view={view} error={error} me={me} signIn={signIn} refresh={refresh} />}
     {meta && route.tab === "code" && <CodeTab place={place} ref={route.ref} path={route.path} defaultBranch={meta.defaultBranch} />}
     {meta && route.tab === "commits" && <CommitsTab place={place} ref={route.ref} path={route.path} num={route.num} defaultBranch={meta.defaultBranch} />}
@@ -63,6 +65,7 @@ function ProjectStrip({ place, meta }: { place: Place; meta: ProjectMeta }) {
   const people = [...new Set([...meta.owners, ...meta.members, ...meta.collaborators])];
   const here = [...new Set(meta.here.map(who => who.agent))];
   return <div className="meta-strip">
+    {meta.goal && <GoalChip place={place} goal={meta.goal} />}
     <a href={placeUrl(place, hashOf("branches"))} onClick={onLink} title="Default branch"><GitBranch size={14} />{meta.defaultBranch}</a>
     <span title="Stored on the hub"><HardDrive size={14} />{size(meta.bytes)}</span>
     {meta.deps > 0 && <a href={placeUrl(place, hashOf("deps"))} onClick={onLink} title="Repositories pinned by DEPS"><Boxes size={14} />{meta.deps} pinned {meta.deps === 1 ? "repo" : "repos"}</a>}

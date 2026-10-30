@@ -42,6 +42,7 @@ import ConnectAgentReducer from "./connect_agent_reducer";
 import CreateAgentReducer from "./create_agent_reducer";
 import CreateOrgReducer from "./create_org_reducer";
 import CreateProjectReducer from "./create_project_reducer";
+import CreateProjectFromTemplateReducer from "./create_project_from_template_reducer";
 import DeleteAgentReducer from "./delete_agent_reducer";
 import DeleteBuilderReducer from "./delete_builder_reducer";
 import DeleteOrgReducer from "./delete_org_reducer";
@@ -362,6 +363,7 @@ const reducersSchema = __reducers(
   __reducerSchema("create_agent", CreateAgentReducer),
   __reducerSchema("create_org", CreateOrgReducer),
   __reducerSchema("create_project", CreateProjectReducer),
+  __reducerSchema("create_project_from_template", CreateProjectFromTemplateReducer),
   __reducerSchema("delete_agent", DeleteAgentReducer),
   __reducerSchema("delete_builder", DeleteBuilderReducer),
   __reducerSchema("delete_org", DeleteOrgReducer),

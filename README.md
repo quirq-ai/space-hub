@@ -176,6 +176,64 @@ agents, or be connected anywhere without its owners.
 The workspace needs no persistent storage: the hub holds everything, and a
 fresh workspace clones again.
 
+## Goals and templates
+
+A project says what it is for in a `SPACE.md` at its root, and the hub puts
+that first: the project opens on its goal, how many outcomes are done, each
+outcome and who answers for it, and its owners; the strip under its name and
+its card on the space page show the goal and the outcomes done.
+
+```markdown
+# Q4 launch
+
+## Goal
+Launch quirq.ai to the first 100 teams by December 1.
+
+## Due
+2026-12-01
+
+## Outcomes
+- [x] Landing page live @dwivedi-ai
+- [ ] 100 teams with an active space @suraj
+
+## Owners
+- suraj
+
+## Rules
+- Every piece of work serves an outcome above.
+
+## Routines
+- Every run: pull, reply, sort the inbox, regenerate outputs, push.
+```
+
+Outcomes are a task list; a trailing `@name` or `(@name)` names who answers
+for one. Rules and routines are what people and agents here follow (the
+**Rules** button lists them). Other sections are left to the file.
+
+**Templates.** A new project can start from a template instead of empty: its
+files become the project's first commit, with the goal you give and you as
+owner. Every hub has the built-in **goal space** (`module/src/spacetemplate.ts`):
+the shape quirq/quirq grew into, with `SPACE.md`, `CLAUDE.md` and
+`CONTRIBUTING.md` for agents and people, `Chat/` channels (each an owner, an
+input and one output) starting with `Chat/general`, whose output is the plan,
+and the Vision, Library, Insights and Activity sections. Any project becomes
+a template by adding a `## Template` section to its `SPACE.md` saying when to
+use it; its page then shows **Use this template**, and its card is marked.
+
+```sh
+spacehub project create acme/launch --goal "Launch by December 1"        # the goal space
+spacehub project create acme/q4 --template acme/playbook --goal "..."    # a template project
+```
+
+On the website, **New project** (`/-/new`) asks for the goal and what to
+start from (`/-/new?template=<space>/<project>` picks one). Starting from a
+template fills `{{space}}`, `{{project}}`, `{{goal}}`, `{{owner}}` and
+`{{date}}` in its Markdown and JSON files, makes you the only owner, opens
+every outcome again and drops the `## Template` section. It runs as one
+reducer (`create_project_from_template`), so it is all or nothing; a template
+holds at most 2,000 files and 16 MB. The module lists templates at
+`/api?templates`.
+
 ## A whole space at once
 
 ```sh
@@ -512,7 +570,8 @@ name.
   xo server offers it, a **Sign in with xo** button sits above them (and
   **Sign up with xo** on `/-/signup`): one click, XO's sign-in in the
   browser, and you are signed in, with no terminal (see xo below).
-- **New project** (`/-/new`) creates an empty project in your personal space
+- **New project** (`/-/new`) starts a project around its goal from a template
+  (see Goals and templates), creates an empty project in your personal space
   or a space you belong to, or imports a public GitHub repository. Paste
   `https://github.com/owner/repo`, and the server clones it with all
   branches, tags and history into `<space>/<repo>`, using GitHub's
@@ -655,6 +714,8 @@ module/src/index.ts      tables, reducers and the web UI route; runs inside Spac
 module/src/ui.ts         the web UI's code pages (tree, blob, commits, diffs, refs, ...)
 module/src/workspace.ts  the app's data: the hub, a space or a project as open-chat snapshots (/api)
 module/src/chat.ts       chat turns from the app, committed to a conversation's .log.jsonl
+module/src/space.ts      SPACE.md (goal, outcomes, owners, rules, routines) and starting from templates
+module/src/spacetemplate.ts the built-in goal space template
 module/src/code.ts       the app's code views: branches, trees and files at a ref, history, diffs
 module/src/markdown.ts   safe Markdown for READMEs and .md files
 module/src/diff.ts       line diffs for commit pages

@@ -1,4 +1,5 @@
-import { Bot, Building2, Download, FolderGit2, Github, Plus, User, Users } from "lucide-react";
+import { Bot, Building2, Download, FolderGit2, Github, LayoutTemplate, Plus, Target, User, Users } from "lucide-react";
+import { Meter } from "./goal";
 import { activeBy, kindLabel, latestOf, newestBy, placeUrl, size, type AgentInfo, type SpaceMeta, type View } from "@/api";
 import { Browser, Glyph } from "@/ui/cards";
 import { PathBar } from "@/shell/path-bar";
@@ -54,8 +55,9 @@ export function SpacePage({ name, tab, view, error, me, seen }: { name: string; 
       {projects.length || meta.collaborates.length ? <Browser head={<>{projects.length} {projects.length === 1 ? "project" : "projects"} in {name}</>} groups={[
         { key: "projects", title: "Projects", note: `Each one is a git repository on the hub that ${meta.kind === "org" ? "the org's members" : name} push to.`, cards: projects.map(project => {
           const fullName = `${name}/${project.name}`;
-          return { key: project.name, name: project.name, search: project.detail, people: peopleByProject.get(fullName), href: placeUrl({ space: name, project: project.name }), icon: <Glyph><FolderGit2 size={17} /></Glyph>, title: project.name,
-            detail: project.detail || undefined, latest: latestOf(byProject.get(fullName)), time: project.modifiedAt, fresh: !!seen[fullName] && project.modifiedAt > seen[fullName] };
+          return { key: project.name, name: project.name, search: [project.goal, project.detail].filter(Boolean).join(" "), people: peopleByProject.get(fullName), href: placeUrl({ space: name, project: project.name }), icon: <Glyph tone={project.goal ? "accent" : undefined}>{project.template ? <LayoutTemplate size={17} /> : project.goal ? <Target size={17} /> : <FolderGit2 size={17} />}</Glyph>, title: project.name,
+            labels: <GoalLabels progress={project.progress} template={project.template} />,
+            detail: project.goal || project.detail || undefined, latest: latestOf(byProject.get(fullName)), time: project.modifiedAt, fresh: !!seen[fullName] && project.modifiedAt > seen[fullName] };
         }) },
         { key: "collaborates", title: "Collaborates on", note: "Projects of other spaces they may push to.", compact: true, cards: meta.collaborates.map(fullName => {
           const [space, project] = fullName.split("/");
@@ -70,6 +72,15 @@ export function SpacePage({ name, tab, view, error, me, seen }: { name: string; 
       <People here={meta.here} groups={[{ title: "Owners", names: meta.owners, note: `They manage ${name}.` }, { title: "Members", names: meta.members, note: `They push to every project of ${name}.` }]} />
     </>}
   </div>;
+}
+
+/** A project card's goal labels: outcomes done, and whether it is a template. */
+function GoalLabels({ progress, template }: { progress?: { done: number; total: number }; template?: boolean }) {
+  if (!progress && !template) return null;
+  return <>
+    {progress && !template && <span className={`label goal-label${progress.done === progress.total ? " done" : ""}`} title={`${progress.done} of ${progress.total} outcomes done`}><Meter done={progress.done} total={progress.total} size="small" />{progress.done}/{progress.total}</span>}
+    {template && <span className="label quiet-label" title="New projects can start from it"><LayoutTemplate size={11} />Template</span>}
+  </>;
 }
 
 /** Who owns the agent and where it may push. */

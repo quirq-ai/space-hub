@@ -94,6 +94,8 @@ AGENTS
 PROJECTS (alias: repo)
   project create <name> | <space>/<name>   Create a project (in your personal space by default)
                                     [-d <text>] [--source <dir> [--remote <name>] [--push]] [--clone]
+                                    [--template goal | <space>/<project>] [--goal <text>]
+                                    (a template: the built-in goal space, or a project with "## Template" in SPACE.md)
   project list [<space>]                   List projects
   project view [<project>]                 Default branch, size and refs
   project clone <project> [<dir>]          git clone a project (extra flags after --)
@@ -609,9 +611,12 @@ async function projectCreate(args: string[]) {
   let remote = opt(args, '--remote', '-r');
   const pushAfter = bool(args, '--push');
   const cloneAfter = bool(args, '--clone', '-c');
+  const goal = opt(args, '--goal', '-g');
+  const template = opt(args, '--template', '-t') ?? (goal !== undefined ? 'goal' : undefined);
   const target = (args[0] ?? die('usage: spacehub project create <name> | <space>/<name>')).replace(/\.git$/, '');
   const [spaceArg, name] = target.includes('/') ? target.split('/', 2) : [undefined, target];
   if (pushAfter && !source) die('--push needs --source <dir>');
+  if (template !== undefined && source) die('--template starts the project with its own first commit; leave out --source');
   if (source) {
     // Check the remote name before creating anything. It defaults to
     // "quirq" so origin is never touched (it is usually GitHub).
@@ -623,16 +628,19 @@ async function projectCreate(args: string[]) {
   }
   const space = (spaceArg ?? (await username())).toLowerCase();
   const { conn } = await open();
-  await conn.reducers.createProject({ space, name, description });
+  if (template !== undefined) await conn.reducers.createProjectFromTemplate({ space, name, description, template, goal: goal ?? '' });
+  else await conn.reducers.createProject({ space, name, description });
   const fullName = `${space}/${name}`;
   const url = hubUrl(loadConfig().server, fullName);
-  out(`Created project ${fullName}`);
+  out(`Created project ${fullName}${template !== undefined ? ` from ${template === 'goal' || !template ? 'the goal space template' : template}` : ''}`);
   if (source) {
     await runOrDie('git', ['-C', source, 'remote', 'add', remote!, url]);
     out(`Added remote ${remote} -> ${url}`);
     if (pushAfter) await runOrDie('git', ['-C', source, 'push', remote!, 'HEAD']);
   } else if (cloneAfter) {
     await runOrDie('git', ['clone', '--origin', REMOTE, url]);
+  } else if (template !== undefined) {
+    out(`Its goal and outcomes are in SPACE.md.\n\n  spacehub project clone ${fullName}`);
   } else {
     out(`\n  spacehub project clone ${fullName}\n  # or, in an existing repository:\n  git remote add ${REMOTE} ${url} && git push ${REMOTE} HEAD`);
   }
