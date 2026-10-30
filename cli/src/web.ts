@@ -474,7 +474,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
 
   if (route === '/-/new') {
     const session = await sessionOf(req);
-    if (!session) return redirect(res, `/-/login?next=${encodeURIComponent('/-/new')}`);
+    // Keep ?template= through sign-in, so "Use this template" still picks it.
+    if (!session) return redirect(res, `/-/login?next=${encodeURIComponent('/-/new' + url.search)}`);
     const spaces = await spacesOf(session);
     const templates = await templatesList();
     if (req.method === 'GET') {

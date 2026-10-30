@@ -30,7 +30,7 @@ Ship the new site by **December 1**, with sign-ups working.
 
 ## Outcomes
 
-- [x] Copy approved — @suraj
+- [x] Copy approved \u2014 @suraj
 - [ ] Site live on [quirq.ai](https://quirq.ai) (@euler)
 - [ ] 100 sign-ups
 - [ ] Works on v1-beta browsers

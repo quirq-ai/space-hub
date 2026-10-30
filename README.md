@@ -193,8 +193,8 @@ Launch quirq.ai to the first 100 teams by December 1.
 2026-12-01
 
 ## Outcomes
-- [x] Landing page live — @dwivedi-ai
-- [ ] 100 teams with an active space — @suraj
+- [x] Landing page live @dwivedi-ai
+- [ ] 100 teams with an active space @suraj
 
 ## Owners
 - suraj
@@ -206,7 +206,7 @@ Launch quirq.ai to the first 100 teams by December 1.
 - Every run: pull, reply, sort the inbox, regenerate outputs, push.
 ```
 
-Outcomes are a task list; a trailing `— @name` or `(@name)` names who answers
+Outcomes are a task list; a trailing `@name` or `(@name)` names who answers
 for one. Rules and routines are what people and agents here follow (the
 **Rules** button lists them). Other sections are left to the file.
 

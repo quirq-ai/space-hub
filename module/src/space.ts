@@ -20,7 +20,7 @@ const FILL_BYTES = 256 * 1024;
 export interface Outcome {
   text: string;
   done: boolean;
-  /** Who answers for it: a trailing "@name" or "— name". */
+  /** Who answers for it: a trailing "@name", "(@name)", or a dash and a name. */
   owner: string;
 }
 
@@ -51,7 +51,7 @@ function plain(text: string) {
 
 const ITEM = /^(?:[-*+]|\d+\.)\s+(.*)$/;
 const TASK = /^\[( |x|X)\]\s+(.*)$/;
-const OWNER = /(?:\s*\(@([A-Za-z0-9._-]+)\)|\s+[—–-]\s+@?([A-Za-z0-9._-]+)|\s+@([A-Za-z0-9._-]+))\s*$/;
+const OWNER = /(?:\s*\(@([A-Za-z0-9._-]+)\)|\s+[\u2014\u2013-]\s+@?([A-Za-z0-9._-]+)|\s+@([A-Za-z0-9._-]+))\s*$/;
 
 function outcomeOf(item: string): Outcome {
   const task = TASK.exec(item);

@@ -21,7 +21,7 @@ export const BUILTIN_FILES: Record<string, string> = {
 
 ## Outcomes
 
-- [ ] A plan that reaches the goal, in Chat/general — @{{owner}}
+- [ ] A plan that reaches the goal, in Chat/general @{{owner}}
 - [ ] Replace these with the outcomes that prove the goal is met
 
 ## Owners
