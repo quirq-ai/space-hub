@@ -12,6 +12,8 @@
 //   GET      /-/live, /-/live.js live pages: a page's new rendering on every change (live.ts)
 //   GET      /, /<space>, /<space>/<project>, /-/app/*, /-/api/view, /-/api/me,
 //   POST     /-/api/chat         the hub's app: open-chat's interface over the hub (app.ts)
+//   *        /-/api/agenthub/... Agenthub: worker agent sessions on an Agents Hub (agenthub.ts),
+//                                only with SPACEHUB_AGENTHUB_URL and _TOKEN set
 //   *        /-/api/xo/v1/...    xo.quirq.dev's store and agents (xo.ts), only
 //                                with SPACEHUB_XO_KEY set
 //
@@ -28,6 +30,7 @@ import { LiveHub } from './live';
 import { accountsSetting, handleSignIn, signInConfig } from './signin';
 import { handleXo, xoConfig } from './xo';
 import { appDir, handleApp } from './app';
+import { agentHubConfig, handleAgentHub } from './agenthub';
 
 quietSdkLogs();
 
@@ -38,6 +41,7 @@ const MAX_IMPORT_MB = Number(process.env.SPACEHUB_IMPORT_MAX_MB ?? 500);
 const MAX_CONCURRENT_IMPORTS = 2;
 const YEAR = 60 * 60 * 24 * 365;
 const XO = xoConfig(DB);
+const AGENTHUB = agentHubConfig();
 // SpacetimeDB's HTTP side, where the module renders pages.
 const INTERNAL_HTTP = (process.env.SPACEHUB_INTERNAL_HTTP ?? SERVER.replace(/^ws/, 'http')).replace(/\/+$/, '');
 const LIVE = new LiveHub({ server: SERVER, db: DB, http: INTERNAL_HTTP });
@@ -335,6 +339,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   if (await handleSignIn(SIGNIN, req, res)) return;
   if (LIVE.handle(req, res, url)) return;
   if (req.method === 'POST' && !sameOrigin(req)) return send(res, 403, page('Forbidden', null, '<h1>Forbidden</h1><p class="desc">This form must be sent from this site.</p>'));
+  if (await handleAgentHub(AGENTHUB, { sessionOf, sameOrigin }, req, res, url)) return;
   if (await handleApp({ dir: APP_DIR, internalHttp: INTERNAL_HTTP, db: DB, withConn, sessionOf }, req, res, url)) return;
 
   if (route === '/-/login') {

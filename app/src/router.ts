@@ -2,12 +2,15 @@ import { useEffect, useState } from "react";
 import type { Place } from "@/api";
 
 /**
- * The app owns three paths (/, /<space>, /<space>/<project>); everything
+ * The app owns three paths (/, /<space>, /<space>/<project>), plus
+ * /-/agenthub for Agenthub's sessions; everything
  * inside a space or project lives in the hash, as "/<tab>?<params>", so the
  * server and its proxy only ever see those three paths.
  */
 export type Route =
   | { page: "home" }
+  // Agenthub: its sessions, or one of them (#/session?id=).
+  | { page: "agenthub"; task: string }
   | { page: "space"; place: Place; tab: "projects" | "agents" | "activity" | "people" }
   // as=folder shows a folder as files even when it is a channel or a list of channels.
   | { page: "project"; place: Place; tab: "files"; path: string; as: string }
@@ -18,11 +21,14 @@ export type Route =
 
 function decode(part: string) { try { return decodeURIComponent(part); } catch { return part; } }
 
+export const AGENTHUB_PATH = "/-/agenthub";
+
 export function parseRoute(pathname: string, hash: string): Route {
-  const [space = "", project = ""] = pathname.split("/").filter(Boolean).map(decode);
-  const place = { space, project };
   const [tab = "", qs = ""] = hash.replace(/^#\/?/, "").split("?");
   const params = new URLSearchParams(qs);
+  if (pathname.replace(/\/+$/, "") === AGENTHUB_PATH) return { page: "agenthub", task: tab === "session" ? params.get("id") ?? "" : "" };
+  const [space = "", project = ""] = pathname.split("/").filter(Boolean).map(decode);
+  const place = { space, project };
   if (!space) return { page: "home" };
   if (!project) return { page: "space", place, tab: tab === "activity" || tab === "people" || tab === "agents" ? tab : "projects" };
   switch (tab) {
@@ -70,8 +76,9 @@ export function onLink(event: React.MouseEvent<HTMLAnchorElement>) {
   const href = event.currentTarget.getAttribute("href");
   if (!href || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.currentTarget.target) return;
   const url = new URL(href, location.href);
-  // Only the app's own pages: the hub, a space, a project.
-  if (url.origin !== location.origin || url.pathname.split("/").filter(Boolean).length > 2 || url.pathname.startsWith("/-/") || url.search) return;
+  // Only the app's own pages: the hub, a space, a project, Agenthub.
+  const own = url.pathname === AGENTHUB_PATH || (url.pathname.split("/").filter(Boolean).length <= 2 && !url.pathname.startsWith("/-/"));
+  if (url.origin !== location.origin || !own || url.search) return;
   event.preventDefault();
   navigate(url.pathname + url.hash);
 }

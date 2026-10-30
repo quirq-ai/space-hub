@@ -313,6 +313,8 @@ Once the new hub is in use, delete the old database with
 | `SPACEHUB_ACCOUNTS` | `github` | How people sign up: `github` (with a GitHub account, see Sign up with GitHub), `open` (anyone registers a name) or `xo` (nobody: only xo's API makes builders). Set on every start |
 | `SPACEHUB_GITHUB_CLIENT_ID`, `SPACEHUB_GITHUB_CLIENT_SECRET` | unset | The hub's GitHub OAuth App, both or neither: sign-in then uses GitHub's device flow with a scope-less token (see Sign up with GitHub) and refuses other tokens |
 | `SPACEHUB_XO_KEY` | unset | Turns on xo.quirq.dev's API, which makes builders for xo's users whatever `SPACEHUB_ACCOUNTS` says (see xo below) |
+| `SPACEHUB_AGENTHUB_URL`, `SPACEHUB_AGENTHUB_TOKEN` | unset | Turn on Agenthub: the app starts worker agent sessions on this Agents Hub with this API token (see Agenthub below) |
+| `SPACEHUB_AGENTHUB_BUILDERS` | unset | The builders who may use Agenthub, comma-separated. Nobody else can, because every session runs as the token's owner |
 | `/data` volume | | Databases, the server's signing keys, and the identity that owns the module. **Mount persistent storage here and back it up.** Without it, a restart forgets every project and invalidates every client token |
 
 The container starts as root only to take ownership of `/data`, because
@@ -780,6 +782,28 @@ the record's version, and `xo_link_agent`).
   so its "spaces" are hub projects today, and an xo project (a group of
   repositories) is closest to a hub space. The hub stores the record as
   opaque JSON, so nothing breaks; xo's own code should rename to match.
+
+## Agenthub
+
+The app's launchpad for worker agents, at `/-/agenthub` (in the sidebar under
+Home). A builder writes what the agent should do, optionally names a GitHub
+repository, and starts a session: a task on an Agents Hub, which gives it its
+own sandbox and an agent that works on GitHub as the Agents Hub's owner.
+The session's page follows it live: the agent's messages, its tool and
+command steps (folded once it moves on), the pull requests it links, and its
+result or error. When it stops running, the builder can follow up, and when
+they are done, tear it down.
+
+- **Turn it on** with `SPACEHUB_AGENTHUB_URL` (the Agents Hub's https
+  address), `SPACEHUB_AGENTHUB_TOKEN` (made in its Settings, Agent access)
+  and `SPACEHUB_AGENTHUB_BUILDERS` (who may use it), then restart the server.
+- **The token stays on the server.** The browser only talks to the web
+  service at `/-/api/agenthub/` (see `cli/src/agenthub.ts`) with its session
+  cookie; the service checks the builder is allowed, checks writes come from
+  this site, and calls the Agents Hub with the token. Each start and
+  follow-up carries an idempotency key, so a retry never runs a task twice.
+- **Who started it.** Every session runs as the token's owner, so the task's
+  text ends with the builder who started it from the hub.
 
 ## Limits (v0)
 
