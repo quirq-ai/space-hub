@@ -312,7 +312,8 @@ Once the new hub is in use, delete the old database with
 | `SPACEHUB_GITHUB_TOKEN` | unset | A GitHub token for a higher API rate limit (read-only public access is enough) |
 | `SPACEHUB_ACCOUNTS` | `github` | How people sign up: `github` (with a GitHub account, see Sign up with GitHub), `open` (anyone registers a name) or `xo` (nobody: only xo's API makes builders). Set on every start |
 | `SPACEHUB_GITHUB_CLIENT_ID`, `SPACEHUB_GITHUB_CLIENT_SECRET` | unset | The hub's GitHub OAuth App, both or neither: sign-in then uses GitHub's device flow with a scope-less token (see Sign up with GitHub) and refuses other tokens |
-| `SPACEHUB_XO_KEY` | unset | Turns on xo.quirq.dev's API, which makes builders for xo's users whatever `SPACEHUB_ACCOUNTS` says (see xo below) |
+| `SPACEHUB_XO_KEY` | unset | Turns on xo.quirq.dev's API, which makes builders for xo's users whatever `SPACEHUB_ACCOUNTS` says, and the website's "Sign in with xo" (see xo below) |
+| `SPACEHUB_XO_URL` | `https://xo.quirq.dev` | The xo server the website's "Sign in with xo" asks (`off`: no button). https, or http to this machine |
 | `SPACEHUB_AGENTHUB_URL`, `SPACEHUB_AGENTHUB_TOKEN` | unset | Turn on worker agents: members launch them from a chat, as tasks on this Agents Hub with this API token (see Agents launched from chat below) |
 | `SPACEHUB_AGENTHUB_SPACES` | unset | The orgs that have agents, comma-separated. Their members (and owners) launch and steer them; nobody else can |
 | `/data` volume | | Databases, the server's signing keys, and the identity that owns the module. **Mount persistent storage here and back it up.** Without it, a restart forgets every project and invalidates every client token |
@@ -507,7 +508,10 @@ name.
   hub.quirq.dev, with xo, XO's command line (`pip install "quirq-xo @
   git+https://github.com/quirq-ai/xo"`, then `xo login`, which signs you in to
   XO and hands your builder, named after your xo username, to spacehub). The
-  steps come from `module/src/howto.ts`, which the guide uses too.
+  steps come from `module/src/howto.ts`, which the guide uses too. Where the
+  xo server offers it, a **Sign in with xo** button sits above them (and
+  **Sign up with xo** on `/-/signup`): one click, XO's sign-in in the
+  browser, and you are signed in, with no terminal (see xo below).
 - **New project** (`/-/new`) creates an empty project in your personal space
   or a space you belong to, or imports a public GitHub repository. Paste
   `https://github.com/owner/repo`, and the server clones it with all
@@ -778,6 +782,24 @@ the record's version, and `xo_link_agent`).
   up with GitHub (or as `SPACEHUB_ACCOUNTS` says); `SPACEHUB_ACCOUNTS=xo`
   leaves xo as the only source of builders. Names are shared: an xo username
   and a GitHub login that are the same cannot both be builders.
+- **Sign in with xo** on the website (`cli/src/xosignin.ts`): the button
+  takes the visitor through the same Clerk sign-in as `xo login`, and back
+  signed in as their xo builder, made on the first sign-in. The hub is a
+  client of xo login's Clerk OAuth application (public, with PKCE):
+  `GET /-/login/xo` keeps a random state and a verifier for 10 minutes, ties
+  them to the browser with an HttpOnly cookie, and sends it to Clerk;
+  `GET /-/login/xo/callback` checks the state against that cookie (once
+  only), then asks the xo server, with `SPACEHUB_XO_KEY`, to swap the code
+  (`POST <xo>/login/hub` with the code, verifier and callback). The xo server
+  answers the Clerk user and their builder, making it as `xo login` would;
+  the hub reads the builder's token from `xo_agent` and puts it only in the
+  usual session cookie. No token or verifier is in a URL, the code works once
+  and only with the verifier kept here, and nothing in the browser talks to
+  the xo server. The button shows only while the xo server's `GET /login`
+  offers this hub's own callback (as the browser reached it), which it does
+  once the callback is a redirect URL of that OAuth application and
+  `XO_HUB_LOGIN_REDIRECT` is set there; the answer is kept for 5 minutes.
+  Without it, the terminal steps are all there is, as before.
 - **Names.** xo's record was designed when a hub space was one repository,
   so its "spaces" are hub projects today, and an xo project (a group of
   repositories) is closest to a hub space. The hub stores the record as

@@ -343,10 +343,62 @@ PY
     python3 "$GH/fake.py" "$GH" "$GH_PORT" & BG="$BG $!"
     GH_ENV=(SPACEHUB_GITHUB_API="http://127.0.0.1:$GH_PORT")
   fi
+  # A stand-in for the xo server and Clerk behind it, for "Sign in with xo"
+  # (cli/src/xosignin.ts): it offers this hub's callback, "signs in" one xo
+  # user at its /oauth/authorize, and swaps the code only with the verifier,
+  # making the user's agent through the hub's xo API as xo.quirq.dev does.
+  XO_PORT=$((PORT + 3)); XO_KEY="e2e-xo-key-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+  cat >"$WORK/xo-fake.py" <<'PY'
+import base64, hashlib, http.server, json, secrets, sys, urllib.parse, urllib.request
+port, web, key, user, name = int(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
+callback = web + '/-/login/xo/callback'
+codes = {}
+class Xo(http.server.BaseHTTPRequestHandler):
+    def reply(self, status, body, location=None):
+        data = json.dumps(body).encode()
+        self.send_response(status)
+        if location: self.send_header('location', location)
+        self.send_header('content-type', 'application/json')
+        self.send_header('content-length', str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+    def do_GET(self):
+        url = urllib.parse.urlparse(self.path)
+        if url.path == '/login':
+            return self.reply(200, {'success': True, 'data': {
+                'browser': {'authorize': f'http://127.0.0.1:{port}/oauth/authorize', 'clientId': 'cli_e2e',
+                            'scope': 'openid profile email', 'redirects': []},
+                'hub': {'redirect': callback}}})
+        if url.path == '/oauth/authorize':  # Clerk: already signed in as the one user
+            q = dict(urllib.parse.parse_qsl(url.query))
+            if q.get('redirect_uri') != callback or q.get('code_challenge_method') != 'S256':
+                return self.reply(400, {'error': 'invalid_request'})
+            code = secrets.token_urlsafe(16)
+            codes[code] = q['code_challenge']
+            return self.reply(302, {}, callback + '?' + urllib.parse.urlencode({'code': code, 'state': q['state']}))
+        self.reply(404, {})
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers.get('content-length') or 0)) or b'{}')
+        if self.path != '/login/hub' or self.headers.get('authorization') != 'Bearer ' + key:
+            return self.reply(401, {'success': False, 'error': 'Missing or wrong hub key'})
+        challenge = codes.pop(body.get('code'), None)
+        proof = base64.urlsafe_b64encode(hashlib.sha256(str(body.get('verifier')).encode()).digest()).rstrip(b'=').decode()
+        if challenge is None or challenge != proof or body.get('redirect') != callback:
+            return self.reply(401, {'success': False, 'error': 'The sign-in did not work (it expired or was already used); sign in again'})
+        req = urllib.request.Request(f'{web}/-/api/xo/v1/agents/{user}', data=json.dumps({'username': name}).encode(),
+                                     headers={'authorization': 'Bearer ' + key, 'content-type': 'application/json'}, method='POST')
+        agent = json.loads(urllib.request.urlopen(req).read())['agent']
+        self.reply(200, {'success': True, 'data': {'subject': user, 'agent': agent}})
+    def log_message(self, *args):
+        pass
+http.server.ThreadingHTTPServer(('127.0.0.1', port), Xo).serve_forever()
+PY
+  WEB="http://127.0.0.1:$WEB_PORT"
+  python3 "$WORK/xo-fake.py" "$XO_PORT" "$WEB" "$XO_KEY" "user_e2e$RUN" "xo$RUN" & BG="$BG $!"
   env ${GH_ENV[@]+"${GH_ENV[@]}"} SPACEHUB_ADMIN_TOKEN="$ADMIN_TOKEN" SPACEHUB_GITHUB_SYNC_MINUTES=0 \
+    SPACEHUB_XO_KEY="$XO_KEY" SPACEHUB_XO_URL="http://127.0.0.1:$XO_PORT" \
     SPACEHUB_WEB_PORT=$WEB_PORT node "$ROOT/cli/dist/web.mjs" >"$WORK/web.log" 2>&1 &
   WEB_PID=$!
-  WEB="http://127.0.0.1:$WEB_PORT"
   for _ in $(seq 1 50); do curl -s -o /dev/null "$WEB/-/login" && break; sleep 0.1; done
 fi
 JAR="$WORK/jar"; WEBUSER="web$RUN"
@@ -468,6 +520,36 @@ else
   check "a GitHub builder can leave" as gh1 spacehub auth delete --yes
   same "and sign up again, as a new builder" "$(ghlogin gh2 "user-$RUN" 2>/dev/null | cut -d' ' -f1-2)" "Signed up"
   check "which leaves too" as gh2 spacehub auth delete --yes
+fi
+
+echo "sign in with xo on the website"
+if [[ -z "${SPACEHUB_E2E_SERVER:-}" ]]; then
+  XJAR="$WORK/xo-jar"; XOUSER="xo$RUN"
+  hop() { curl -s -o "$WORK/hop.html" -w '%{http_code} %{redirect_url}' "$@"; }  # one step, not followed
+  to() { echo "${1#* }"; }  # where a hop was sent
+  same "the sign-in page has the button" "$(curl -s "$WEB/-/login" | grep -c 'href="/-/login/xo">Sign in with xo')" "1"
+  same "above the terminal steps" "$(curl -s "$WEB/-/login" | grep -c 'Or from the terminal')" "1"
+  same "the sign-up page too" "$(curl -s "$WEB/-/signup" | grep -c 'Sign up with xo')" "1"
+  same "not for a hub reached at another address than the one xo offers" "$(curl -s -H 'Host: hub.quirq.dev' "$WEB/-/login" | grep -c 'Sign in with xo')" "0"
+  START="$(hop -c "$XJAR" "$WEB/-/login/xo?next=/-/new")"
+  same "the button sends the browser to XO's sign-in" "${START%% *}" "303"
+  same "with the sign-in's state in an HttpOnly cookie" "$(grep -c '^#HttpOnly_127.0.0.1.*spacehub_xo_signin' "$XJAR")" "1"
+  same "with PKCE, and no verifier or token in the URL" "$(grep -c 'code_challenge_method=S256' <<<"$(to "$START")")$(grep -c 'verifier\|token' <<<"$(to "$START")")" "10"
+  BACK="$(to "$(hop "$(to "$START")")")"
+  same "another browser cannot finish it" "$(hop -c "$WORK/other-jar" "$BACK" | cut -d' ' -f1)" "400"
+  same "the browser that started it does: signed in and sent on" "$(hop -b "$XJAR" -c "$XJAR" "$BACK")" "303 $WEB/-/new"
+  same "as the xo user's builder" "$(grep -c "spacehub_user.$XOUSER\$" "$XJAR")" "1"
+  same "the code works once" "$(hop -b "$XJAR" "$BACK" | cut -d' ' -f1) $(grep -c 'already used' "$WORK/hop.html")" "400 1"
+  same "the callback leaks no referrer" "$(curl -s -D - -o /dev/null "$BACK" | grep -ci '^referrer-policy: no-referrer')" "1"
+  same "the new builder makes projects from the browser" "$(curl -s -o /dev/null -w '%{http_code}' -b "$XJAR" "$WEB/-/new")" "200"
+  XTOKEN="$(python3 -c "import sys,urllib.parse;[print(urllib.parse.unquote(l.split()[-1])) for l in open(sys.argv[1]) if 'spacehub_session' in l]" "$XJAR")"
+  BACK="$(to "$(hop "$(to "$(hop -c "$WORK/jar2" "$WEB/-/login/xo")")")")"
+  same "signing in again is the same builder" "$(hop -b "$WORK/jar2" -c "$WORK/jar2" "$BACK") $(grep -c "$XTOKEN" "$WORK/jar2")" "303 $WEB/ 1"
+  BACK="$(to "$(hop "$(to "$(hop -c "$WORK/jar3" "$WEB/-/login/xo?next=//evil.example")")")")"
+  same "a next off this site lands on the hub's home" "$(hop -b "$WORK/jar3" "$BACK")" "303 $WEB/"
+  STATE="$(sed -n 's/.*[?&]state=\([^&]*\).*/\1/p' <<<"$(to "$(hop -c "$WORK/jar4" "$WEB/-/login/xo")")")"
+  same "a sign-in cancelled at XO says so" "$(hop -b "$WORK/jar4" "$WEB/-/login/xo/callback?error=access_denied&state=$STATE" | cut -d' ' -f1) $(grep -c 'not finished (access_denied)' "$WORK/hop.html")" "400 1"
+  same "an unknown sign-in is refused" "$(hop "$WEB/-/login/xo/callback?code=x&state=nope" | cut -d' ' -f1)" "400"
 fi
 
 echo "orgs"
