@@ -39,6 +39,7 @@ test("the channel a path is in, and a one-line snippet", () => {
   assert.equal(channelOf("Chat", "Vision/a.md"), undefined);
   assert.equal(snippet("**Done.** See [the PR](https://x).\n\n- one"), "Done. See the PR. - one");
   assert.equal(snippet("a".repeat(10), 5), "aaaa…");
+  assert.equal(snippet("Fix the login bug\n\n<!-- agenthub:task=t_1 -->"), "Fix the login bug");
 });
 
 test("a README's intro is its first paragraph, as one line", () => {
