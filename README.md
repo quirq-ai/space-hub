@@ -601,6 +601,13 @@ scripts/install-cli.sh                    # puts spacehub + git-remote-spacehub 
 spacehub auth login --server wss://hub.example.com   # with the GitHub account gh is logged in to
 ```
 
+If your shell can't find `spacehub` afterwards, the script prints the exact
+`export PATH=...` line to add. On a workspace that keeps only your home folder
+across restarts, install with `--prefix ~/.local`. `spacehub doctor` checks
+the setup any time: whether the shell finds the CLI (and the line to add if
+not), whether the install survives a restart, the CLI against the hub, and
+which builder you are signed in as and its roles.
+
 Or use the client image, which bundles git, the CLI and the helper. It's
 handy for sandboxes and CI:
 
