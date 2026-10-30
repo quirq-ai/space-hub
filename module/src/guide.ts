@@ -15,13 +15,11 @@
 // name) or github (sign in with GitHub from the CLI).
 // TODO: on a hub whose accounts are xo (SPACEHUB_ACCOUNTS=xo), builders come from xo login instead.
 import { esc } from './style';
+import { cmd, INSTALL_CLI, INSTALL_XO, loginCommand, step, steps, xoSignsIn } from './howto';
 
 const HUB = {
   cli: 'spacehub',
   remote: 'quirq',
-  source: 'https://github.com/quirq-ai/space-hub',
-  // The hub the CLI talks to when no --server is given.
-  defaultHost: 'hub.quirq.dev',
   // The git URL of a project: it names the hub, so it works whichever hub the CLI is logged in to.
   url: (host: string, project: string) => `quirq://${host}/${project}`,
 };
@@ -33,15 +31,13 @@ export interface GuideContext {
   accounts: string; // "open", "github" or "xo" (hub_state)
 }
 
-// One or more command lines, copied together.
-const cmd = (...lines: string[]) => `<div class="command"><code>${esc(lines.join('\n'))}</code></div>`;
 
 function commands(ctx: GuideContext) {
   const c = HUB.cli;
-  const server = ctx.host === HUB.defaultHost ? '' : ` --server ${ctx.server}`;
   return {
-    install: `d="$(mktemp -d)" && git clone -q --depth 1 ${HUB.source} "$d" && "$d/scripts/install-cli.sh"`,
-    login: ctx.accounts === 'github' ? `${c} auth login${server}` : `${c} auth login${server} --builder <name>`,
+    install: INSTALL_CLI,
+    installXo: INSTALL_XO,
+    login: loginCommand(ctx),
     gh: 'gh auth login',
     create: `${c} project create <name> --source . --push`,
     clone: `${c} project clone <you>/<name>`,
@@ -105,10 +101,6 @@ const svg = (name: keyof typeof ICON) => `<svg class="ic" viewBox="0 0 24 24" ar
 const card = (title: string, text: string, icon?: keyof typeof ICON) =>
   `<li class="card">${icon ? `<span class="card-icon">${svg(icon)}</span>` : ''}<span class="card-text"><strong>${title}</strong><span>${text}</span></span></li>`;
 
-// A numbered step, as a row: a title, what it does, and the commands to run.
-const step = (title: string, text: string, ...blocks: string[]) =>
-  `<li class="step"><div class="step-main"><strong>${title}</strong>${text ? `<span>${text}</span>` : ''}${blocks.join('')}</div></li>`;
-const steps = (...items: string[]) => `<ol class="rows steps">${items.join('')}</ol>`;
 
 // A question that opens to its answer, as a row.
 const faq = (question: string, answer: string, ...blocks: string[]) =>
@@ -118,13 +110,17 @@ const faq = (question: string, answer: string, ...blocks: string[]) =>
 export function guidePage(ctx: GuideContext): string {
   const c = commands(ctx);
   const github = ctx.accounts === 'github';
+  const xo = xoSignsIn(ctx)
+    ? `<p class="or">Use XO? Sign in with xo instead: one login for XO and this hub, as your xo username. It needs Python 3.11 or newer.</p>${cmd(c.installXo, 'xo login')}`
+    : '';
   const signIn = github
     ? step(
-        'Sign in with GitHub',
-        `Your builder name, and your personal space, are your GitHub login. If it asks you to log in to GitHub first, run <code>${esc(c.gh)}</code> and try again.`,
-        cmd(c.login)
+        'Sign in',
+        `With your GitHub account: your builder name, and your personal space, are your GitHub login. If it asks you to log in to GitHub first, run <code>${esc(c.gh)}</code> and try again.`,
+        cmd(c.login),
+        xo
       )
-    : step('Pick a builder name', 'It becomes your personal space. The CLI saves your token: there is no password.', cmd(c.login));
+    : step('Pick a builder name', 'It becomes your personal space. The CLI saves your token: there is no password.', cmd(c.login), xo);
   const sections = [
     ['start', 'Get started'],
     ['words', 'Words to know'],
@@ -202,7 +198,7 @@ ${steps(step('Clone', '', cmd(c.gitClone)), step('Push', '', cmd(c.gitPush)), st
 ${faq('The CLI says it is out of date', 'The hub was updated. Run the install command again; your login stays.', cmd(c.install))}
 ${faq('Autosync stopped on a conflict', 'You and someone else changed the same lines. Your autosync stopped and listed the files; everyone else keeps going. Fix the files, continue the rebase and start autosync again. <code>git rebase --abort</code> keeps your commits as they were instead.', cmd(c.resolve, c.autosync))}
 ${faq('A new file did not sync', 'Check that autosync is running in that clone, and that git is not ignoring the file:', cmd(c.ignored))}
-${faq('Sign in on this website', 'Print your token and paste it at <b>Sign in</b>.', cmd(c.token))}
+${faq('Sign in on this website', 'Sign in from your terminal first (with spacehub or xo), then print your token and paste it at <b>Sign in</b>.', cmd(c.token))}
 ${faq('Who can see and change my projects?', "Anyone who can open this hub can browse and clone every project. Only a space's owners and members, and a project's collaborators, can push.")}
 </ul>
 </section>
