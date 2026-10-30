@@ -5,6 +5,7 @@
 //   GET/POST /-/signup           register a builder (new identity + name), or how to
 //                                sign up with GitHub on a hub where builders do
 //   POST     /-/api/auth/github  sign up or in with a GitHub token (signin.ts), for the CLI
+//   GET      /-/login/xo         sign in with xo in the browser, and its callback (xosignin.ts)
 //   POST     /-/logout           forget the session
 //   GET/POST /-/new              create a project, optionally imported from GitHub
 //   POST     /-/sync/<o>/<name>  pull a project's GitHub source again
@@ -22,12 +23,14 @@ import http from 'node:http';
 import { connectTo, errorMessage, findProject, findUser, quietSdkLogs, snapshot, tables, type Conn } from './conn';
 import { githubLogin, normalizeServer } from './config';
 import { esc, navFor, PAGE_CSP, shell, sideFor } from '../../module/src/style';
-import { signInWays, type Hub } from '../../module/src/howto';
+import { signInWays, xoButton, type Hub } from '../../module/src/howto';
 import { Fail, GithubSync, githubApi, githubBuilder as builderOf, githubInfo as infoOf, mirrorProject } from './github';
 import { LiveHub } from './live';
 import { accountsSetting, handleSignIn, signInConfig } from './signin';
 import { handleXo, xoConfig } from './xo';
+import { CALLBACK_ROUTE, finishSignIn, offerFor, START_ROUTE, startSignIn, STATE_COOKIE, WAIT_SECONDS, xoSignInConfig } from './xosignin';
 import { appDir, handleApp } from './app';
+import { Reply } from './admin';
 
 quietSdkLogs();
 
@@ -37,9 +40,10 @@ const DB = process.env.SPACEHUB_DB ?? 'spacehub';
 const MAX_IMPORT_MB = Number(process.env.SPACEHUB_IMPORT_MAX_MB ?? 500);
 const MAX_CONCURRENT_IMPORTS = 2;
 const YEAR = 60 * 60 * 24 * 365;
-const XO = xoConfig(DB);
 // SpacetimeDB's HTTP side, where the module renders pages.
 const INTERNAL_HTTP = (process.env.SPACEHUB_INTERNAL_HTTP ?? SERVER.replace(/^ws/, 'http')).replace(/\/+$/, '');
+const XO = xoConfig(DB, INTERNAL_HTTP);
+const XO_SIGNIN = xoSignInConfig(XO);
 const LIVE = new LiveHub({ server: SERVER, db: DB, http: INTERNAL_HTTP });
 const GITHUB = githubApi();
 const APP_DIR = appDir();
@@ -79,8 +83,8 @@ function send(res: http.ServerResponse, status: number, html: string, extra: Rec
   res.end(html);
 }
 
-function redirect(res: http.ServerResponse, to: string, cookies: string[] = []) {
-  res.writeHead(303, { location: to, 'cache-control': 'no-store', ...(cookies.length ? { 'set-cookie': cookies } : {}) });
+function redirect(res: http.ServerResponse, to: string, cookies: string[] = [], extra: Record<string, string> = {}) {
+  res.writeHead(303, { location: to, 'cache-control': 'no-store', ...(cookies.length ? { 'set-cookie': cookies } : {}), ...extra });
   res.end();
 }
 
@@ -107,6 +111,12 @@ function sessionCookies(req: http.IncomingMessage, token: string, username: stri
   const secure = req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : '';
   const attrs = `; Path=/; SameSite=Lax; Max-Age=${maxAge}${secure}`;
   return [`spacehub_session=${encodeURIComponent(token)}${attrs}; HttpOnly`, `spacehub_user=${encodeURIComponent(username)}${attrs}`];
+}
+
+// The state of a sign-in with xo, sent back only to its two routes.
+function signInCookie(req: http.IncomingMessage, state: string, maxAge = WAIT_SECONDS) {
+  const secure = req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : '';
+  return `${STATE_COOKIE}=${state}; Path=${START_ROUTE}; SameSite=Lax; Max-Age=${maxAge}; HttpOnly${secure}`;
 }
 
 // Form posts must come from this site: compare Origin (or Referer) with Host.
@@ -229,8 +239,9 @@ function loginPage(viewer: string | null, hub: Hub, error = '', next = '/') {
   return page(
     'Sign in · spacehub',
     viewer,
-    `<div class="page-title"><h1>Sign in</h1><p>There are no passwords here. Sign in once from your terminal, then paste your token to use this site.</p></div>
+    `<div class="page-title"><h1>Sign in</h1><p>${hub.xo ? 'There are no passwords here. Sign in with xo, or once from your terminal, then paste your token.' : 'There are no passwords here. Sign in once from your terminal, then paste your token to use this site.'}</p></div>
 ${error ? `<div class="banner err">${esc(error)}</div>` : ''}
+${hub.xo ? xoButton('Sign in with xo', next) : ''}
 ${signInWays(hub, true)}
 <h2 class="section-title">Paste your token</h2>
 <form class="signin-form" method="post" action="/-/login"><input type="hidden" name="next" value="${esc(next)}">
@@ -241,13 +252,14 @@ ${hub.accounts === 'open' ? '<p class="muted">New here? <a href="/-/signup">Regi
   );
 }
 
-function signupPage(viewer: string | null, error = '', username = '') {
+function signupPage(viewer: string | null, hub: Hub, error = '', username = '') {
   return page(
     'Register · spacehub',
     viewer,
     `<h1><b>Register</b></h1>
 <p class="desc">Pick your builder name. It is also your personal space: your projects live at <code>&lt;name&gt;/&lt;project&gt;</code>.</p>
 ${error ? `<div class="banner err">${esc(error)}</div>` : ''}
+${hub.xo ? xoButton('Sign up with xo', '/', 'Or pick a name') : ''}
 <form method="post" action="/-/signup"><label for="username">Builder name <span class="muted">lowercase letters, digits and hyphens</span></label>
 <input type="text" id="username" name="username" value="${esc(username)}" required pattern="[a-z0-9][a-z0-9-]{0,38}" autocomplete="username">
 <p><button class="btn primary" type="submit">Register</button></p></form>
@@ -260,8 +272,9 @@ function terminalSignupPage(viewer: string | null, hub: Hub, error = '') {
   return page(
     'Sign up · spacehub',
     viewer,
-    `<div class="page-title"><h1>Sign up</h1><p>Builders on this hub sign up from the terminal. There is no password: run the same login on any machine to get your builder back.</p></div>
+    `<div class="page-title"><h1>Sign up</h1><p>${hub.xo ? 'Builders on this hub sign up with xo or from the terminal. There is no password: sign in the same way on any machine to get your builder back.' : 'Builders on this hub sign up from the terminal. There is no password: run the same login on any machine to get your builder back.'}</p></div>
 ${error ? `<div class="banner err">${esc(error)}</div>` : ''}
+${hub.xo ? xoButton('Sign up with xo', '/') : ''}
 ${signInWays(hub, true).replace('Paste it below.', 'Paste it at <a href="/-/login">Sign in</a> to use this site too.')}`,
     true
   );
@@ -279,7 +292,14 @@ async function accountsMode() {
 
 // This hub as the sign-in pages describe it.
 async function hubOf(req: http.IncomingMessage): Promise<Hub> {
-  return { server: serverOf(req), host: req.headers.host ?? 'localhost', accounts: await accountsMode() };
+  const [accounts, offer] = await Promise.all([accountsMode(), offerFor(XO_SIGNIN, callbackOf(req))]);
+  return { server: serverOf(req), host: req.headers.host ?? 'localhost', accounts, xo: offer !== null };
+}
+
+// Where XO's sign-in sends the browser back to this hub, as the browser reached it.
+function callbackOf(req: http.IncomingMessage) {
+  const scheme = req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
+  return `${scheme}://${req.headers.host ?? 'localhost'}${CALLBACK_ROUTE}`;
 }
 
 // This hub's websocket address, as the browser reached it.
@@ -354,6 +374,36 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     return redirect(res, next, sessionCookies(req, token, username));
   }
 
+  if (route === START_ROUTE && req.method === 'GET') {
+    const next = localPath(url.searchParams.get('next'));
+    const offer = await offerFor(XO_SIGNIN, callbackOf(req));
+    if (!offer) return send(res, 404, loginPage(null, await hubOf(req), 'Sign-in with xo is not on for this hub. Sign in from the terminal below.', next));
+    try {
+      const { state, location } = startSignIn(offer, next);
+      return redirect(res, location, [signInCookie(req, state)]);
+    } catch (err) {
+      return send(res, err instanceof Reply ? err.status : 500, loginPage(null, await hubOf(req), errorMessage(err), next));
+    }
+  }
+
+  if (route === CALLBACK_ROUTE && req.method === 'GET') {
+    // The URL holds a one-time code: it goes to no other page, and the state cookie is spent.
+    const quiet = { 'referrer-policy': 'no-referrer' };
+    const spent = signInCookie(req, '', 0);
+    try {
+      if (!XO_SIGNIN) throw new Reply(404, 'Sign-in with xo is not on for this hub.');
+      const q = url.searchParams;
+      const out = await finishSignIn(XO_SIGNIN, { state: q.get('state'), cookie: cookieValue(req, STATE_COOKIE), code: q.get('code'), error: q.get('error') });
+      const username = (await withConn(out.token, (conn, identity) => findUser(conn, identity)))?.username;
+      if (username !== out.username) throw new Reply(502, `The builder ${out.username} cannot sign in on this hub.`);
+      return redirect(res, out.next, [...sessionCookies(req, out.token, username), spent], quiet);
+    } catch (err) {
+      const status = err instanceof Reply ? err.status : 500;
+      if (!(err instanceof Reply)) process.stderr.write(`spacehub-web: sign-in with xo: ${errorMessage(err)}\n`);
+      return send(res, status, loginPage(null, await hubOf(req), err instanceof Reply ? err.message : 'Sign-in with xo failed. Try again.'), { ...quiet, 'set-cookie': spent });
+    }
+  }
+
   if (route === '/-/signup') {
     const session = await sessionOf(req);
     const hub = await hubOf(req);
@@ -361,10 +411,10 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
       const error = req.method === 'POST' ? 'Builders on this hub sign up from the terminal.' : '';
       return send(res, error ? 400 : 200, terminalSignupPage(session?.username ?? null, hub, error));
     }
-    if (req.method === 'GET') return send(res, 200, signupPage(session?.username ?? null));
+    if (req.method === 'GET') return send(res, 200, signupPage(session?.username ?? null, hub));
     const form = await readForm(req);
     const username = (form.get('username') ?? '').trim().toLowerCase();
-    if (!USERNAME.test(username)) return send(res, 400, signupPage(null, 'Use 1 to 39 lowercase letters, digits or inner hyphens.', username));
+    if (!USERNAME.test(username)) return send(res, 400, signupPage(null, hub, 'Use 1 to 39 lowercase letters, digits or inner hyphens.', username));
     try {
       const token = await withConn(undefined, async (conn, _identity, issued) => {
         await conn.reducers.registerUser({ username });
@@ -372,7 +422,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
       });
       return send(res, 200, welcomePage(username, token), { 'set-cookie': sessionCookies(req, token, username) });
     } catch (err) {
-      return send(res, 400, signupPage(null, errorMessage(err), username));
+      return send(res, 400, signupPage(null, hub, errorMessage(err), username));
     }
   }
 

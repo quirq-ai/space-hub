@@ -25,13 +25,14 @@ export interface XoConfig extends AdminHttp {
   key: string; // shared with xo.quirq.dev
 }
 
-export function xoConfig(db: string): XoConfig | null {
+// `http` is SpacetimeDB's HTTP API, as the rest of the web service reaches it.
+export function xoConfig(db: string, http: string): XoConfig | null {
   const key = process.env.SPACEHUB_XO_KEY ?? '';
   if (!key) return null;
   const adminToken = process.env.SPACEHUB_ADMIN_TOKEN ?? '';
   if (!adminToken) throw new Error('SPACEHUB_XO_KEY is set but SPACEHUB_ADMIN_TOKEN is not: the xo API needs the hub admin');
   if (key.length < 32) throw new Error('SPACEHUB_XO_KEY must be at least 32 characters');
-  return { key, adminToken, http: (process.env.SPACEHUB_INTERNAL_HTTP ?? 'http://127.0.0.1:3001').replace(/\/+$/, ''), db };
+  return { key, adminToken, http, db };
 }
 
 function authorized(req: http.IncomingMessage, key: string) {
@@ -63,7 +64,8 @@ async function putRecord(cfg: XoConfig, subject: string, body: Record<string, un
   return { version: (version as number) + 1 };
 }
 
-async function agentOf(cfg: XoConfig, subject: string) {
+// The hub agent xo made for this xo user, with its token (also xosignin.ts).
+export async function agentOf(cfg: XoConfig, subject: string) {
   const [row] = await select(cfg, `SELECT username, token FROM xo_agent WHERE subject = '${subject}'`);
   return row ? { agent: String(row.username), token: String(row.token) } : null;
 }

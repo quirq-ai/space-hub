@@ -25,6 +25,7 @@ export interface Hub {
   server: string; // ws:// or wss:// address
   host: string;
   accounts: string; // "open", "github" or "xo"
+  xo?: boolean; // this website signs in with xo too (the web service asks the xo server)
 }
 
 // `spacehub auth login` for this hub: --server only when it is not the default.
@@ -36,6 +37,14 @@ export function loginCommand(hub: Hub) {
 // xo login hands its users' builders to the hub the xo server keeps: this one
 // only if it is that hub, or if its builders come from xo.
 export const xoSignsIn = (hub: Hub) => hub.host === DEFAULT_HOST || hub.accounts === 'xo';
+
+// One click on this website, through XO's own sign-in (xosignin.ts in the web
+// service); it is shown only while the xo server offers it to this hub.
+export function xoButton(label: string, next: string, or = 'Or from the terminal') {
+  const href = `/-/login/xo${next && next !== '/' ? `?next=${encodeURIComponent(next)}` : ''}`;
+  return `<div class="xo-signin"><a class="btn primary" href="${esc(href)}">${esc(label)}</a><span>Uses your XO account. Your builder name is your xo username.</span></div>
+<h2 class="section-title or-terminal">${esc(or)}</h2>`;
+}
 
 // Every way to sign in to this hub, side by side. forWebsite adds the last
 // step of each: print the token to paste into this site's sign-in form.
