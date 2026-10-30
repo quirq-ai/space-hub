@@ -1,15 +1,17 @@
-import { useEffect, useRef, useState } from "react";
-import { BookOpen, Boxes, ChevronRight, File, FileCode2, FileImage, FileText, Folder, FolderOpen, Lightbulb, MessageCircle, PanelsTopLeft, Shapes, SquareCheck, type LucideIcon } from "lucide-react";
-import type { Doc, Entry } from "@/lib/types";
+import { useEffect, useRef } from "react";
+import { BookOpen, Boxes, ChevronRight, Code2, File, FileCode2, FileImage, FileText, Folder, FolderOpen, Lightbulb, MessageCircle, PanelsTopLeft, Shapes, SquareCheck, type LucideIcon } from "lucide-react";
+import type { Entry } from "@/lib/types";
 import { isConversation } from "@/lib/conversation";
 import { chatLogPath } from "@/lib/chat-log";
-import { FileContent, Markdown } from "@/components/content-view";
+import { FileContent } from "@/components/content-view";
 import { placeUrl, rawUrl, size, type Place, type ProjectMeta, type View } from "@/api";
 import { hashOf, navigate, onLink } from "@/router";
-import { Ago, Avatar, Empty, ErrorNote, SkeletonRows, SkeletonText } from "@/ui/primitives";
+import { Avatar, Empty, ErrorNote, SkeletonRows, SkeletonText } from "@/ui/primitives";
+import { CardGroup, Glyph, ListHead, type PlaceCard } from "@/ui/cards";
+import { useFolderSummaries } from "@/hooks/use-folders";
 import { ChatView } from "./chat";
 import { ChannelList, ChannelPage } from "./channels";
-import { channelConversation, listsChannels } from "@/lib/channels";
+import { channelConversation, intro, listsChannels } from "@/lib/channels";
 import type { WorkspaceSnapshot } from "@/lib/types";
 
 export const SECTION_ICONS = new Map<string, LucideIcon>([
@@ -54,21 +56,6 @@ function Labels({ entry }: { entry: Entry }) {
   </>;
 }
 
-/** The folder's README, and at the root the workspace's guides as tabs. */
-function Docs({ docs, open }: { docs: Doc[]; open: (path: string) => void }) {
-  const [active, setActive] = useState(0);
-  const doc = docs[Math.min(active, docs.length - 1)];
-  return <section className="panel readme docs" aria-label="Documents">
-    <div className="panel-head">
-      {docs.length > 1 ? <div className="doc-tabs" role="tablist" aria-label="Documents">{docs.map((item, i) => <button key={item.path} type="button" role="tab" aria-selected={item === doc} className={item === doc ? "on" : ""} onClick={() => setActive(i)}>{item.name}</button>)}</div>
-        : <><FileText size={15} /><strong>{doc.name}</strong></>}
-      <span className="toolbar-spacer" />
-      <button type="button" className="button ghost small" onClick={() => open(doc.path)}>Open</button>
-    </div>
-    {/\.txt$/i.test(doc.name) ? <pre className="padded doc-text">{doc.content}</pre> : <Markdown content={doc.content} filePath={doc.path} navigate={open} />}
-  </section>;
-}
-
 /** The project as open-chat shows it: folders as places, files rendered as conversations, documents, data and feeds. */
 export function FilesTab({ place, path, as, view, error, me, signIn, refresh }: {
   place: Place; path: string; as: string; view: View<ProjectMeta> | undefined; error: string; me: string | null; signIn: string; refresh: () => void;
@@ -76,6 +63,8 @@ export function FilesTab({ place, path, as, view, error, me, signIn, refresh }: 
   const snapshot = view?.snapshot;
   const meta = view?.meta;
   const first = useRef(true);
+  const folders = snapshot && !snapshot.file ? snapshot.directory.entries.filter(entry => entry.kind === "directory").map(entry => entry.path) : [];
+  const summaries = useFolderSummaries(place, folders, snapshot?.revision ?? "");
   const index = snapshot && !path ? snapshot.directory.entries.find(entry => entry.kind === "file" && entry.name === "index.json") : undefined;
   // A saved home view opens by itself the first time, unless a link says otherwise.
   useEffect(() => {
@@ -110,20 +99,39 @@ export function FilesTab({ place, path, as, view, error, me, signIn, refresh }: 
   // A conversation's saved turns open with the conversation, so its log is not listed apart.
   const logs = new Set(snapshot.directory.entries.map(entry => chatLogPath(entry.path)).filter(Boolean));
   const entries = snapshot.directory.entries.filter(entry => !logs.has(entry.path));
-  const docs = snapshot.directory.docs ?? [];
+  const dirs = entries.filter(entry => entry.kind === "directory");
+  const files = entries.filter(entry => entry.kind === "file");
+  const atRoot = !snapshot.directory.path;
+  const isSection = (entry: Entry) => atRoot && SECTION_ICONS.has(entry.name.toLowerCase());
+  const purpose = readme ? intro(readme.content) : "";
+  const folderCard = (entry: Entry): PlaceCard => {
+    const Icon = entryIcon(entry);
+    const summary = summaries[entry.path];
+    const holds = !summary ? undefined : summary.channels ? `${summary.channels} ${summary.channels === 1 ? "channel" : "channels"}` : `${summary.items} ${summary.items === 1 ? "item" : "items"}`;
+    return {
+      key: entry.path, href: filesHref(place, entry.path), done: /^(done|closed|finished)$/i.test(entry.status ?? ""),
+      icon: <Glyph tone={isSection(entry) ? "accent" : undefined}><Icon size={17} /></Glyph>,
+      title: entry.name, labels: <>{holds && <span className="label">{holds}</span>}<Labels entry={entry} /></>,
+      detail: entry.detail || undefined, time: entry.modifiedAt,
+    };
+  };
+  const fileCard = (entry: Entry): PlaceCard => {
+    const Icon = entryIcon(entry);
+    return { key: entry.path, href: filesHref(place, entry.path), icon: <Glyph><Icon size={16} /></Glyph>, title: entry.name, detail: `${(entry.extension || "file").toUpperCase()} · ${size(entry.size)}`, time: entry.modifiedAt };
+  };
+  const sections = dirs.filter(isSection).sort((a, b) => SECTION_ORDER.indexOf(a.name.toLowerCase()) - SECTION_ORDER.indexOf(b.name.toLowerCase()));
+  const parts = [dirs.length && `${dirs.length} ${dirs.length === 1 ? "folder" : "folders"}`, files.length && `${files.length} ${files.length === 1 ? "file" : "files"}`].filter(Boolean).join(" and ");
   return <div className="folder">
     <FileCrumbs place={place} path={snapshot.directory.path} />
     {as === "folder" && (channelConversation(snapshot.directory.entries, readme?.content) || listsChannels(snapshot.directory.entries)) && <a className="callout" href={filesHref(place, snapshot.directory.path)} onClick={onLink}><MessageCircle size={18} /><span><strong>Back to the {listsChannels(snapshot.directory.entries) && !channelConversation(snapshot.directory.entries, readme?.content) ? "channels" : "conversation"}</strong><span>You are looking at this folder as files</span></span><ChevronRight size={16} /></a>}
     {index && <a className="callout" href={filesHref(place, index.path)} onClick={onLink}><MessageCircle size={18} /><span><strong>Open the saved view</strong><span>index.json</span></span><ChevronRight size={16} /></a>}
-    {entries.length ? <ul className="rows">{entries.map(entry => {
-      const Icon = entryIcon(entry);
-      return <li key={entry.path}><a className="row" href={filesHref(place, entry.path)} onClick={onLink}>
-        <Icon size={18} className="row-icon" />
-        <span className="row-main"><div className="row-title"><strong>{entry.name}</strong><Labels entry={entry} /></div><span>{entry.kind === "directory" ? entry.detail || "Folder" : `${(entry.extension || "file").toUpperCase()} · ${size(entry.size)}`}</span></span>
-        <span className="row-meta"><Ago iso={entry.modifiedAt} /></span>
-      </a></li>;
-    })}</ul> : meta.head ? <Empty icon={<FolderOpen size={20} />} title="This folder is empty"><p>Files pushed here appear as they arrive.</p></Empty>
+    {entries.length > 0 && <ListHead actions={<a className="button ghost small" href={placeUrl(place, hashOf("code", { path: snapshot.directory.path }))} onClick={onLink} title="Read these files in the Code tab"><Code2 size={14} />Code</a>}>{parts} in {atRoot ? place.project : snapshot.directory.name}</ListHead>}
+    {purpose && <p className="place-intro">{purpose}</p>}
+    {entries.length ? <>
+      <CardGroup title="Sections" note="The places this workspace is made of. Each one opens the way its content reads best." cards={sections.map(folderCard)} />
+      <CardGroup title={sections.length ? "Other folders" : "Folders"} cards={dirs.filter(entry => !isSection(entry)).map(folderCard)} />
+      <CardGroup title="Files" compact cards={files.map(fileCard)} />
+    </> : meta.head ? <Empty icon={<FolderOpen size={20} />} title="This folder is empty"><p>Files pushed here appear as they arrive.</p></Empty>
       : <Empty icon={<FolderOpen size={20} />} title="Nothing pushed yet"><p>Clone it and push the first files:</p><code>spacehub project clone {place.space}/{place.project}</code></Empty>}
-    {docs.length > 0 && <Docs key={snapshot.directory.path} docs={docs} open={open} />}
   </div>;
 }

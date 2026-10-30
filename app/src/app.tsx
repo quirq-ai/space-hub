@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Activity, BookOpen, Bot, Code2, Hash, Folder, FolderGit2, GitBranch, GitCommitHorizontal, History, Home, Users, User } from "lucide-react";
+import { BookOpen, Hash, Folder, FolderGit2, History, Home, Users, User } from "lucide-react";
 import { placeUrl, viewUrl, type HubMeta, type Place, type ProjectMeta, type SpaceMeta, type View } from "@/api";
 import { useLive } from "@/hooks/use-live";
 import { channelSeenKey, ChannelsContext, useChannels } from "@/hooks/use-channels";
@@ -122,9 +122,10 @@ export function App() {
     { key: "builders", label: "Builders", href: "/-/builders", icon: <Users size={16} /> },
   ];
 
-  // Dock: the places of where you are, then tools.
+  // Navigation has one job per piece: the breadcrumb goes up, the dock goes
+  // down (the places inside where you are), the tabs switch how you look at
+  // the place, and the sidebar goes across (siblings, and where you were).
   let places: DockItem[] = [];
-  let tools: DockItem[] = [];
   if (route.page === "project" && meta?.level === "project") {
     const roots = [...(view?.snapshot.roots ?? [])].sort((a, b) => {
       const left = SECTION_ORDER.indexOf(a.name.toLowerCase());
@@ -133,20 +134,9 @@ export function App() {
     });
     const top = route.tab === "files" ? route.path.split("/")[0] : "";
     places = roots.slice(0, 8).map(root => { const Icon = SECTION_ICONS.get(root.name.toLowerCase()) ?? Folder; return { key: root.path, label: root.name, href: placeUrl(place, hashOf("files", { path: root.path })), icon: <Icon size={22} strokeWidth={1.7} />, active: top === root.path }; });
-    tools = [
-      { key: "code", label: "Code", href: placeUrl(place, hashOf("code")), icon: <Code2 size={22} strokeWidth={1.7} />, active: route.tab === "code" },
-      { key: "commits", label: "Commits", href: placeUrl(place, hashOf("commits")), icon: <GitCommitHorizontal size={22} strokeWidth={1.7} />, active: route.tab === "commits" || route.tab === "commit" },
-      { key: "branches", label: "Branches", href: placeUrl(place, hashOf("branches")), icon: <GitBranch size={22} strokeWidth={1.7} />, active: route.tab === "branches" },
-      { key: "people", label: "People", href: placeUrl(place, hashOf("people")), icon: <Users size={22} strokeWidth={1.7} />, active: route.tab === "people" },
-    ];
   } else if (route.page === "space" && meta?.level === "space") {
     places = [...(view?.snapshot.directory.entries ?? [])].sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt)).slice(0, 8)
       .map(entry => ({ key: entry.name, label: entry.name, href: placeUrl({ space: place.space, project: entry.name }), icon: <FolderGit2 size={22} strokeWidth={1.7} />, fresh: !!seen[`${place.space}/${entry.name}`] && entry.modifiedAt > seen[`${place.space}/${entry.name}`] }));
-    tools = [
-      ...(meta.kind !== "agent" ? [{ key: "agents", label: "Agents", href: placeUrl(place, hashOf("agents")), icon: <Bot size={22} strokeWidth={1.7} />, active: route.tab === "agents" }] : []),
-      { key: "people", label: meta.kind === "org" ? "Members" : "People", href: placeUrl(place, hashOf("people")), icon: <Users size={22} strokeWidth={1.7} />, active: route.tab === "people" },
-      { key: "activity", label: "Activity", href: placeUrl(place, hashOf("activity")), icon: <Activity size={22} strokeWidth={1.7} />, active: route.tab === "activity" },
-    ];
   } else if (route.page === "home" && meta?.level === "hub") {
     const mine = new Set(me.spaces.map(s => s.space));
     places = [...(view?.snapshot.directory.entries ?? [])].sort((a, b) => Number(mine.has(b.name)) - Number(mine.has(a.name)) || b.modifiedAt.localeCompare(a.modifiedAt)).slice(0, 8)
@@ -161,11 +151,11 @@ export function App() {
     <Sidebar switcher={switcher} primary={primary} sections={sideSections} footer={footer} open={sidebarOpen} onClose={() => setSidebarOpen(false)} rail={rail} onRail={toggleRail} onSearch={() => setSearching(true)} />
     <main className="main" id="main">
       <div className="main-scroll">
-        {route.page === "home" && <HomePage view={view as View<HubMeta> | undefined} me={me.name} activityOpen={activityOpen} onActivity={toggleActivity} />}
-        {route.page === "space" && <SpacePage name={place.space} tab={route.tab} view={view as View<SpaceMeta> | undefined} error={live.error} me={me.name} />}
+        {route.page === "home" && <HomePage view={view as View<HubMeta> | undefined} me={me.name} mySpaces={me.spaces.map(s => s.space)} seen={seen} activityOpen={activityOpen} onActivity={toggleActivity} />}
+        {route.page === "space" && <SpacePage name={place.space} tab={route.tab} view={view as View<SpaceMeta> | undefined} error={live.error} me={me.name} seen={seen} />}
         {route.page === "project" && <ChannelsContext.Provider value={channels}><ProjectPage route={route} view={view as View<ProjectMeta> | undefined} error={live.error} me={me.name} signIn={signIn} refresh={live.refresh} /></ChannelsContext.Provider>}
       </div>
-      <Dock places={places} tools={tools} />
+      <Dock places={places} />
     </main>
     {activity && <Inspector title="Activity" onClose={toggleActivity}><ActivityFeed view={meta?.level === "hub" ? view as View<HubMeta> : undefined} /></Inspector>}
     {searching && <SearchPalette place={place} onClose={() => setSearching(false)} />}

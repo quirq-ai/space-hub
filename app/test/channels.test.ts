@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { channelCards, channelConversation, channelOf, field, listsChannels, readmeSections, snippet } from "../src/lib/channels.ts";
+import { channelCards, channelConversation, channelOf, field, intro, listsChannels, readmeSections, snippet } from "../src/lib/channels.ts";
 
 const entry = (path: string, kind: "file" | "directory", extra: Record<string, string> = {}) => ({ name: path.split("/").pop()!, path, kind, extension: kind === "file" ? path.split(".").pop()! : "", size: 1, modifiedAt: "2026-10-29T00:00:00Z", ...extra });
 
@@ -39,4 +39,9 @@ test("the channel a path is in, and a one-line snippet", () => {
   assert.equal(channelOf("Chat", "Vision/a.md"), undefined);
   assert.equal(snippet("**Done.** See [the PR](https://x).\n\n- one"), "Done. See the PR. - one");
   assert.equal(snippet("a".repeat(10), 5), "aaaa…");
+});
+
+test("a README's intro is its first paragraph, as one line", () => {
+  assert.equal(intro("# Chat\n\nChat is organized in channels.\nEach one is a workstream.\n\n## Input\n\nx"), "Chat is organized in channels. Each one is a workstream.");
+  assert.equal(intro("# Only a title\n\n## Input\n\n- a list"), "");
 });

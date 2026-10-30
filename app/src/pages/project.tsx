@@ -43,8 +43,8 @@ export function ProjectPage({ route, view, error, me, signIn, refresh }: { route
     {route.tab === "branches" && <BranchesTab place={place} />}
     {meta && route.tab === "activity" && <ActivityList items={meta.activity} />}
     {meta && route.tab === "people" && <>
-      <h2 className="section-title">Here now</h2><HereNow here={meta.here} />
-      <People groups={[
+      {meta.here.length > 0 && <><h2 className="section-title">Here now</h2><HereNow here={meta.here} /></>}
+      <People here={meta.here} agents={meta.agents} groups={[
         { title: "Owners", names: meta.owners, note: `They manage ${place.space}.` },
         { title: "Members", names: meta.members, note: `They push to every project of ${place.space}.` },
         { title: "Agents", names: meta.agents, note: "Agents connected to the space, or collaborating on this project, push here too." },
