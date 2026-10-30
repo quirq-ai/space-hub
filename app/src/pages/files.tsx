@@ -7,7 +7,7 @@ import { FileContent } from "@/components/content-view";
 import { placeUrl, rawUrl, size, type Place, type ProjectMeta, type View } from "@/api";
 import { hashOf, navigate, onLink } from "@/router";
 import { Avatar, Empty, ErrorNote, SkeletonRows, SkeletonText } from "@/ui/primitives";
-import { CardGroup, Glyph, ListHead, type PlaceCard } from "@/ui/cards";
+import { Browser, Glyph, type PlaceCard } from "@/ui/cards";
 import { useFolderSummaries } from "@/hooks/use-folders";
 import { ChatView } from "./chat";
 import { ChannelList, ChannelPage } from "./channels";
@@ -33,16 +33,6 @@ const readmeOf = (snapshot: WorkspaceSnapshot) => snapshot.directory.docs?.find(
 /** A folder shown as a channel: a README with an Input or Output format, and a conversation. */
 export function isChannel(snapshot: WorkspaceSnapshot): boolean {
   return !snapshot.file && !!channelConversation(snapshot.directory.entries, readmeOf(snapshot)?.content);
-}
-
-/** Where you are inside the project: its name, then each folder, then the file. */
-function FileCrumbs({ place, path }: { place: Place; path: string }) {
-  const parts = path.split("/").filter(Boolean);
-  if (!parts.length) return null;
-  return <nav className="path-crumbs file-crumbs" aria-label="Path">
-    <a href={filesHref(place, "")} onClick={onLink}>{place.project}</a>
-    {parts.map((part, i) => <span key={i}><span className="crumb-sep">/</span>{i === parts.length - 1 ? <strong aria-current="page">{part}</strong> : <a href={filesHref(place, parts.slice(0, i + 1).join("/"))} onClick={onLink}>{part}</a>}</span>)}
-  </nav>;
 }
 
 /** A folder's labels from its README: Status (Done reads as finished), Owner, Output format. */
@@ -80,13 +70,11 @@ export function FilesTab({ place, path, as, view, error, me, signIn, refresh }: 
     if (file.format === "json" && isConversation(file.data)) {
       const log = chatLogPath(file.path);
       return <>
-        <FileCrumbs place={place} path={file.path} />
         <ChatView key={file.path} place={place} path={file.path} data={file.data} repliesPath={typeof file.data.demoReplies === "string" ? file.data.demoReplies : undefined}
           logExists={!!log && snapshot.directory.entries.some(entry => entry.path === log)} me={me} canWrite={meta.canWrite} signIn={signIn} onSaved={refresh} onOpen={open} />
       </>;
     }
     return <div className="file-view">
-      <FileCrumbs place={place} path={file.path} />
       {file.path === "DEPS" && meta.deps > 0 && <a className="callout" href={placeUrl(place, hashOf("deps"))} onClick={onLink}><Boxes size={18} /><span><strong>See the {meta.deps} pinned {meta.deps === 1 ? "repository" : "repositories"}</strong><span>Each linked to its project on the hub, with whether its pin is current</span></span><ChevronRight size={16} /></a>}
       <FileContent key={file.path} file={file} revision={snapshot.revision} navigate={open} src={rawUrl(place, meta.defaultBranch, file.path)} />
     </div>;
@@ -94,8 +82,8 @@ export function FilesTab({ place, path, as, view, error, me, signIn, refresh }: 
   // A channel opens on its conversation, and a folder of channels as a list of them, unless asked for files.
   const readme = readmeOf(snapshot);
   const conversation = as !== "folder" ? channelConversation(snapshot.directory.entries, readme?.content) : undefined;
-  if (conversation && readme) return <><FileCrumbs place={place} path={snapshot.directory.path} /><ChannelPage key={snapshot.directory.path} place={place} snapshot={snapshot} conversation={conversation} readme={readme} meta={meta} me={me} signIn={signIn} refresh={refresh} /></>;
-  if (as !== "folder" && listsChannels(snapshot.directory.entries)) return <><FileCrumbs place={place} path={snapshot.directory.path} /><ChannelList place={place} snapshot={snapshot} meta={meta} me={me} /></>;
+  if (conversation && readme) return <><ChannelPage key={snapshot.directory.path} place={place} snapshot={snapshot} conversation={conversation} readme={readme} meta={meta} me={me} signIn={signIn} refresh={refresh} /></>;
+  if (as !== "folder" && listsChannels(snapshot.directory.entries)) return <><ChannelList place={place} snapshot={snapshot} meta={meta} me={me} /></>;
   // A conversation's saved turns open with the conversation, so its log is not listed apart.
   const logs = new Set(snapshot.directory.entries.map(entry => chatLogPath(entry.path)).filter(Boolean));
   const entries = snapshot.directory.entries.filter(entry => !logs.has(entry.path));
@@ -109,7 +97,7 @@ export function FilesTab({ place, path, as, view, error, me, signIn, refresh }: 
     const summary = summaries[entry.path];
     const holds = !summary ? undefined : summary.channels ? `${summary.channels} ${summary.channels === 1 ? "channel" : "channels"}` : `${summary.items} ${summary.items === 1 ? "item" : "items"}`;
     return {
-      key: entry.path, href: filesHref(place, entry.path), done: /^(done|closed|finished)$/i.test(entry.status ?? ""),
+      key: entry.path, name: entry.name, search: [entry.detail, entry.status, entry.owner, entry.outputFormat].filter(Boolean).join(" "), href: filesHref(place, entry.path), done: /^(done|closed|finished)$/i.test(entry.status ?? ""),
       icon: <Glyph tone={isSection(entry) ? "accent" : undefined}><Icon size={17} /></Glyph>,
       title: entry.name, labels: <>{holds && <span className="label">{holds}</span>}<Labels entry={entry} /></>,
       detail: entry.detail || undefined, time: entry.modifiedAt,
@@ -117,21 +105,20 @@ export function FilesTab({ place, path, as, view, error, me, signIn, refresh }: 
   };
   const fileCard = (entry: Entry): PlaceCard => {
     const Icon = entryIcon(entry);
-    return { key: entry.path, href: filesHref(place, entry.path), icon: <Glyph><Icon size={16} /></Glyph>, title: entry.name, detail: `${(entry.extension || "file").toUpperCase()} · ${size(entry.size)}`, time: entry.modifiedAt };
+    return { key: entry.path, name: entry.name, search: entry.extension, href: filesHref(place, entry.path), icon: <Glyph><Icon size={16} /></Glyph>, title: entry.name, detail: `${(entry.extension || "file").toUpperCase()} · ${size(entry.size)}`, time: entry.modifiedAt };
   };
   const sections = dirs.filter(isSection).sort((a, b) => SECTION_ORDER.indexOf(a.name.toLowerCase()) - SECTION_ORDER.indexOf(b.name.toLowerCase()));
   const parts = [dirs.length && `${dirs.length} ${dirs.length === 1 ? "folder" : "folders"}`, files.length && `${files.length} ${files.length === 1 ? "file" : "files"}`].filter(Boolean).join(" and ");
   return <div className="folder">
-    <FileCrumbs place={place} path={snapshot.directory.path} />
     {as === "folder" && (channelConversation(snapshot.directory.entries, readme?.content) || listsChannels(snapshot.directory.entries)) && <a className="callout" href={filesHref(place, snapshot.directory.path)} onClick={onLink}><MessageCircle size={18} /><span><strong>Back to the {listsChannels(snapshot.directory.entries) && !channelConversation(snapshot.directory.entries, readme?.content) ? "channels" : "conversation"}</strong><span>You are looking at this folder as files</span></span><ChevronRight size={16} /></a>}
     {index && <a className="callout" href={filesHref(place, index.path)} onClick={onLink}><MessageCircle size={18} /><span><strong>Open the saved view</strong><span>index.json</span></span><ChevronRight size={16} /></a>}
-    {entries.length > 0 && <ListHead actions={<a className="button ghost small" href={placeUrl(place, hashOf("code", { path: snapshot.directory.path }))} onClick={onLink} title="Read these files in the Code tab"><Code2 size={14} />Code</a>}>{parts} in {atRoot ? place.project : snapshot.directory.name}</ListHead>}
-    {purpose && <p className="place-intro">{purpose}</p>}
-    {entries.length ? <>
-      <CardGroup title="Sections" note="The places this workspace is made of. Each one opens the way its content reads best." cards={sections.map(folderCard)} />
-      <CardGroup title={sections.length ? "Other folders" : "Folders"} cards={dirs.filter(entry => !isSection(entry)).map(folderCard)} />
-      <CardGroup title="Files" compact cards={files.map(fileCard)} />
-    </> : meta.head ? <Empty icon={<FolderOpen size={20} />} title="This folder is empty"><p>Files pushed here appear as they arrive.</p></Empty>
+    {entries.length ? <Browser head={<>{parts} in {atRoot ? place.project : snapshot.directory.name}</>} intro={purpose || undefined} keepOrder={atRoot}
+      actions={<a className="button ghost small" href={placeUrl(place, hashOf("code", { path: snapshot.directory.path }))} onClick={onLink} title="Read these files in the Code tab"><Code2 size={14} />Code</a>}
+      groups={[
+        { key: "sections", title: "Sections", note: "The places this workspace is made of. Each one opens the way its content reads best.", cards: sections.map(folderCard) },
+        { key: "folders", title: sections.length ? "Other folders" : "Folders", cards: dirs.filter(entry => !isSection(entry)).map(folderCard) },
+        { key: "files", title: "Files", compact: true, cards: files.map(fileCard) },
+      ]} /> : meta.head ? <Empty icon={<FolderOpen size={20} />} title="This folder is empty"><p>Files pushed here appear as they arrive.</p></Empty>
       : <Empty icon={<FolderOpen size={20} />} title="Nothing pushed yet"><p>Clone it and push the first files:</p><code>spacehub project clone {place.space}/{place.project}</code></Empty>}
   </div>;
 }

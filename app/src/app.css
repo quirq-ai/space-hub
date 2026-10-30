@@ -233,7 +233,6 @@ kbd { padding: 1px 6px; border: 1px solid var(--line); border-bottom-width: 2px;
 .label.warn { background: var(--red-soft); color: var(--red); }
 .label.quiet-label { background: none; box-shadow: inset 0 0 0 1px var(--line); }
 a.label:hover { text-decoration: none; filter: brightness(.96); }
-.file-crumbs { margin: 0 0 12px; }
 .deps-summary { margin: 0 0 12px; }
 .dep-row .row-main > span a { font-weight: 500; }
 
@@ -482,6 +481,45 @@ a.label:hover { text-decoration: none; filter: brightness(.96); }
 .place-card-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; flex: none; color: var(--text-3); font-size: 12px; }
 .glyph { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 24%; background: var(--fill); color: var(--text-2); }
 .glyph.accent { background: var(--accent-soft); color: var(--accent-text); }
+/* The toolbar every list of places shares: what is here, a filter, sort and view. */
+.browser-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 10px; color: var(--text-2); font-size: 13px; }
+.browser-head { flex: 1; min-width: 160px; }
+.browser-filter { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text-3); }
+.browser-filter:focus-within { border-color: var(--line-strong); box-shadow: 0 0 0 3px var(--accent-soft); }
+.browser-filter input { width: 150px; border: 0; outline: 0; background: none; color: var(--text); font: 13px var(--font); }
+.browser-filter button { display: inline-flex; padding: 2px; border: 0; border-radius: 4px; background: none; color: var(--text-3); cursor: pointer; }
+.browser-toggle button { display: inline-flex; align-items: center; padding: 4px 8px; }
+.browser-none { margin: 18px 0; }
+.place-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.place-card.fresh { border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
+.place-card-when { display: inline-flex; align-items: center; gap: 6px; }
+.place-card-when .unread-dot { margin-left: 0; }
+.place-card-people .avatar-stack { display: inline-flex; }
+/* The dense view: one line per place, in one bordered list. */
+.place-cards.list { grid-template-columns: 1fr; gap: 0; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--panel); overflow: hidden; }
+.place-cards.list li + li { border-top: 1px solid var(--line); }
+.place-cards.list .place-card { align-items: center; padding: 8px 14px; border: 0; border-radius: 0; background: none; box-shadow: none; }
+.place-cards.list .place-card:hover { background: var(--hover); }
+.place-cards.list .place-card-main { grid-template-columns: minmax(140px, max-content) minmax(0, 1fr); align-items: center; gap: 0 14px; }
+.place-cards.list .place-card-detail { -webkit-line-clamp: 1; }
+.place-cards.list .place-card-last { display: none; }
+.place-cards.list .place-card-icon .avatar, .place-cards.list .glyph { width: 24px; height: 24px; }
+.place-cards.list .place-card-meta { flex-direction: row; align-items: center; gap: 12px; }
+@media (max-width: 760px) { .place-cards.list .place-card-main { grid-template-columns: 1fr; } .browser-filter input { width: 110px; } }
+/* Where you are: one line, each segment going up, its arrow opening the places beside it. */
+.path-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; margin: 0 0 10px; color: var(--text-2); font-size: 13px; }
+.path-home { display: inline-flex; padding: 4px; border-radius: 6px; color: var(--text-2); }
+.path-home:hover { background: var(--hover); color: var(--text); }
+.path-item { display: inline-flex; align-items: center; }
+.path-seg { position: relative; display: inline-flex; align-items: center; border-radius: 6px; }
+.path-seg:hover, .path-seg:has([aria-expanded="true"]) { background: var(--hover); }
+.path-seg > a { padding: 2px 2px 2px 6px; color: var(--text-2); }
+.path-seg > a.current { color: var(--text); font-weight: 600; }
+.path-seg > a:hover { text-decoration: none; color: var(--text); }
+.path-more { display: inline-flex; padding: 4px 4px; border: 0; border-radius: 6px; background: none; color: var(--text-3); cursor: pointer; }
+.path-more:hover { color: var(--text); }
+.path-menu { left: 0; right: auto; max-height: min(420px, 60vh); overflow-y: auto; }
+.path-menu a span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .place-intro { margin: -4px 0 14px; color: var(--text-2); font-size: 13px; max-width: 72ch; }
 
 .page-chat:has(.channel-page) { max-width: 1280px; }

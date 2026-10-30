@@ -11,7 +11,7 @@ import { isConversation } from "@/lib/conversation";
 import type { Doc, Entry, WorkspaceSnapshot } from "@/lib/types";
 import { hashOf, navigate, onLink } from "@/router";
 import { Avatar, Empty, ErrorNote, SkeletonRows } from "@/ui/primitives";
-import { CardGroup, ListHead } from "@/ui/cards";
+import { Browser } from "@/ui/cards";
 import { ChatView } from "./chat";
 import { entryIcon } from "./files";
 
@@ -50,18 +50,18 @@ export function ChannelList({ place, snapshot, meta, me }: { place: Place; snaps
   const files = snapshot.directory.entries.filter(entry => entry.kind === "file" && entry.name.toLowerCase() !== "readme.md");
   const readme = snapshot.directory.docs?.find(doc => /^readme/i.test(doc.name));
   return <div className="channels">
-    <ListHead actions={<a className="button ghost small" href={filesHref(place, here, "folder")} onClick={onLink}><Rows3 size={14} />Files</a>}>{cards.length} {cards.length === 1 ? "channel" : "channels"} in {snapshot.directory.name}</ListHead>
-    {readme && intro(readme.content) && <p className="place-intro">{intro(readme.content)}</p>}
     {files.length > 0 && <a className="callout inbox" href={filesHref(place, here, "folder")} onClick={onLink}><Inbox size={18} /><span><strong>{files.length} {files.length === 1 ? "file" : "files"} in the inbox</strong><span>Dropped in {here}/ and waiting to be sorted into a channel</span></span><ChevronRight size={16} /></a>}
-    {GROUPS.map(group => <CardGroup key={group.key} title={group.title} note={group.note} cards={cards.filter(group.keep).map(card => ({
-      key: card.entry.path, href: filesHref(place, card.entry.path), done: card.done, fresh: card.unread, time: card.last?.time,
+    <Browser head={<>{cards.length} {cards.length === 1 ? "channel" : "channels"} in {snapshot.directory.name}</>} intro={readme ? intro(readme.content) : undefined} keepOrder
+      actions={<a className="button ghost small" href={filesHref(place, here, "folder")} onClick={onLink}><Rows3 size={14} />Files</a>}
+      groups={GROUPS.map(group => ({ key: group.key, title: group.title, note: group.note, cards: cards.filter(group.keep).map(card => ({
+      key: card.entry.path, name: card.entry.name, search: [card.entry.detail, card.entry.outputFormat, card.entry.status, card.entry.owner, card.last?.author, card.last?.content].filter(Boolean).join(" "), href: filesHref(place, card.entry.path), done: card.done, fresh: card.unread, time: card.last?.time,
       icon: <ChannelIcon card={{ kind: card.kind, name: card.entry.name }} />,
       title: (card.kind === "channel" ? "#" : "") + card.entry.name,
       labels: <><ChannelLabels status={card.entry.status} outputFormat={card.entry.outputFormat} />{card.entry.owner && <span className="label" title="Owner"><Avatar name={card.entry.owner} size={14} />{card.entry.owner}</span>}</>,
       detail: card.entry.detail,
       latest: card.last && { who: card.last.author || (card.last.role === "assistant" ? "quirqy" : "someone"), text: snippet(card.last.content) },
       empty: "No messages on the hub yet",
-    }))} />)}
+    })) }))} />
   </div>;
 }
 

@@ -1,6 +1,7 @@
 import { Bot, Building2, Download, FolderGit2, Github, Plus, User, Users } from "lucide-react";
-import { kindLabel, latestOf, newestBy, placeUrl, size, type AgentInfo, type SpaceMeta, type View } from "@/api";
-import { CardGroup, Glyph, ListHead } from "@/ui/cards";
+import { activeBy, kindLabel, latestOf, newestBy, placeUrl, size, type AgentInfo, type SpaceMeta, type View } from "@/api";
+import { Browser, Glyph } from "@/ui/cards";
+import { PathBar } from "@/shell/path-bar";
 import { hashOf, onLink } from "@/router";
 import { Ago, Avatar, CommandTabs, Empty, Popover, SkeletonRows } from "@/ui/primitives";
 import { ActivityList, HereNow, PageHeader, People, Tabs } from "./common";
@@ -19,7 +20,9 @@ export function SpacePage({ name, tab, view, error, me, seen }: { name: string; 
   const agentCount = meta.agentList.length;
   const canManage = !!me && meta.owners.includes(me);
   const byProject = newestBy(meta.activity, item => item.path);
+  const peopleByProject = activeBy(meta.activity, item => item.path);
   return <div className="page">
+    <PathBar place={{ space: name, project: "" }} path="" />
     <PageHeader
       leading={<Avatar name={name} size={72} kind={meta.kind} />}
       title={<>{meta.displayName}<span className="kind-badge">{KIND_ICON[meta.kind]}{kindLabel(meta.kind)}</span></>}
@@ -48,17 +51,17 @@ export function SpacePage({ name, tab, view, error, me, seen }: { name: string; 
       { key: "activity", label: "Activity", href: base + "#" + hashOf("activity") },
     ]} />
     {tab === "projects" && <>
-      {projects.length ? <>
-        <CardGroup title="Projects" note={`Each one is a git repository on the hub that ${meta.kind === "org" ? "the org's members" : name} push to.`} cards={projects.map(project => {
+      {projects.length || meta.collaborates.length ? <Browser head={<>{projects.length} {projects.length === 1 ? "project" : "projects"} in {name}</>} groups={[
+        { key: "projects", title: "Projects", note: `Each one is a git repository on the hub that ${meta.kind === "org" ? "the org's members" : name} push to.`, cards: projects.map(project => {
           const fullName = `${name}/${project.name}`;
-          return { key: project.name, href: placeUrl({ space: name, project: project.name }), icon: <Glyph><FolderGit2 size={17} /></Glyph>, title: project.name,
+          return { key: project.name, name: project.name, search: project.detail, people: peopleByProject.get(fullName), href: placeUrl({ space: name, project: project.name }), icon: <Glyph><FolderGit2 size={17} /></Glyph>, title: project.name,
             detail: project.detail || undefined, latest: latestOf(byProject.get(fullName)), time: project.modifiedAt, fresh: !!seen[fullName] && project.modifiedAt > seen[fullName] };
-        })} />
-      </> : <Empty icon={<FolderGit2 size={20} />} title="No projects yet"><p>Create one with <code>spacehub project create {name}/&lt;name&gt; --source . --push</code>.</p></Empty>}
-      <CardGroup title="Collaborates on" note="Projects of other spaces they may push to." compact cards={meta.collaborates.map(fullName => {
-        const [space, project] = fullName.split("/");
-        return { key: fullName, href: placeUrl({ space, project }), icon: <Glyph><FolderGit2 size={16} /></Glyph>, title: fullName };
-      })} />
+        }) },
+        { key: "collaborates", title: "Collaborates on", note: "Projects of other spaces they may push to.", compact: true, cards: meta.collaborates.map(fullName => {
+          const [space, project] = fullName.split("/");
+          return { key: fullName, name: fullName, href: placeUrl({ space, project }), icon: <Glyph><FolderGit2 size={16} /></Glyph>, title: fullName };
+        }) },
+      ]} /> : <Empty icon={<FolderGit2 size={20} />} title="No projects yet"><p>Create one with <code>spacehub project create {name}/&lt;name&gt; --source . --push</code>.</p></Empty>}
     </>}
     {tab === "agents" && hasAgents && <AgentList space={name} kind={meta.kind} agents={meta.agentList} canManage={canManage} />}
     {tab === "activity" && <ActivityList items={meta.activity} />}
@@ -83,13 +86,14 @@ function AgentList({ space, kind, agents, canManage }: { space: string; kind: st
   ]} note="An agent is a space with its own identity: its home project holds its instructions and memory, and it pushes to the spaces it is connected to." />;
   if (!agents.length) return <Empty icon={<Bot size={20} />} title="No agents yet"><p>Create one{kind === "org" ? " for this org" : ""}, or connect an agent you own so it can push here.</p><div className="empty-commands">{commands}</div></Empty>;
   return <>
-    <ListHead actions={canManage && <Popover label="Add an agent" icon={<Plus size={15} />}><div className="popover-title">Add an agent to {space}</div>{commands}</Popover>}>{agents.length} {agents.length === 1 ? "agent" : "agents"}{running ? <> · <span className="strip-here"><i className="online-dot" />{running} running</span></> : null}</ListHead>
-    {[{ key: "running", title: "Running", note: "Connected now, on the machine named.", keep: (agent: AgentInfo) => agent.running.length > 0 },
+    <Browser head={<>{agents.length} {agents.length === 1 ? "agent" : "agents"}{running ? <> · <span className="strip-here"><i className="online-dot" />{running} running</span></> : null}</>}
+      actions={canManage && <Popover label="Add an agent" icon={<Plus size={15} />}><div className="popover-title">Add an agent to {space}</div>{commands}</Popover>}
+      groups={[{ key: "running", title: "Running", note: "Connected now, on the machine named.", keep: (agent: AgentInfo) => agent.running.length > 0 },
       { key: "idle", title: "Not running", note: "Start one with spacehub agent run, or from Agenthub.", keep: (agent: AgentInfo) => !agent.running.length }].map(group =>
-      <CardGroup key={group.key} title={group.title} note={group.note} cards={agents.filter(group.keep).map(agent => ({
-        key: agent.name, href: placeUrl({ space: agent.name, project: "" }), icon: <Avatar name={agent.name} size={34} kind="agent" />, title: agent.name,
+      ({ key: group.key, title: group.title, note: group.note, cards: agents.filter(group.keep).map(agent => ({
+        key: agent.name, name: agent.name, search: `${agent.description} ${agent.parent} ${agent.spaces.join(" ")}`, href: placeUrl({ space: agent.name, project: "" }), icon: <Avatar name={agent.name} size={34} kind="agent" />, title: agent.name,
         labels: agent.running.length ? <span className="label done"><i className="online-dot" />{agent.running.map(r => r.host || "a machine").join(", ")}</span> : undefined,
         detail: agent.description || undefined, latest: { text: roleNote(agent) }, time: agent.running[0]?.since,
-      }))} />)}
+      })) }))} />
   </>;
 }

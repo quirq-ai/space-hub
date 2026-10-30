@@ -161,3 +161,16 @@ export function latestOf(item: ActivityItem | undefined): { who: string; text: s
   const line = activityLine(item);
   return { who: item.agent || "someone", text: PUSHES.has(item.kind) && item.text ? item.text : `${line.verb} ${line.where}` };
 }
+
+/** Who has been at work in each place, by `key`, newest first, each name once. */
+export function activeBy(items: ActivityItem[], key: (item: ActivityItem) => string): Map<string, string[]> {
+  const people = new Map<string, string[]>();
+  for (const item of items) {
+    const at = key(item);
+    if (!at || !item.agent) continue;
+    const names = people.get(at) ?? [];
+    if (!names.includes(item.agent)) names.push(item.agent);
+    people.set(at, names);
+  }
+  return people;
+}

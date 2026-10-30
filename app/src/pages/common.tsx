@@ -3,7 +3,7 @@ import { History, Users } from "lucide-react";
 import { activityLine, groupActivity, placeUrl, pushedFiles, type ActivityItem, type Here } from "@/api";
 import { hashOf, onLink } from "@/router";
 import { Ago, Avatar, AvatarStack, Empty, PersonLink } from "@/ui/primitives";
-import { CardGroup } from "@/ui/cards";
+import { Browser } from "@/ui/cards";
 
 export function PageHeader({ crumbs, title, subtitle, leading, actions, children }: {
   crumbs?: { label: string; href: string }[]; title: ReactNode; subtitle?: ReactNode; leading?: ReactNode; actions?: ReactNode; children?: ReactNode;
@@ -98,9 +98,10 @@ export function People({ groups, here = [], agents = [] }: { groups: { title: st
   const shown = groups.filter(group => group.names.length);
   if (!shown.length) return <Empty icon={<Users size={20} />} title="No people yet" />;
   const online = new Set(here.map(who => who.agent));
-  return <>{shown.map(group => <CardGroup key={group.title} title={group.title} note={group.note} compact cards={group.names.map(name => ({
-    key: name, href: "/" + encodeURIComponent(name), title: name,
+  const total = new Set(shown.flatMap(group => group.names)).size;
+  return <Browser head={<>{total} {total === 1 ? "person" : "people and agents"}{online.size ? <> · <span className="strip-here"><i className="online-dot" />{online.size} here now</span></> : null}</>} groups={shown.map(group => ({ key: group.title, title: group.title, note: group.note, compact: true, cards: group.names.map(name => ({
+    key: name, name, search: group.title, href: "/" + encodeURIComponent(name), title: name,
     icon: <Avatar name={name} size={28} kind={agents.includes(name) ? "agent" : undefined} />,
     labels: online.has(name) ? <span className="label done" title="Connected now"><i className="online-dot" />Here now</span> : undefined,
-  }))} />)}</>;
+  })) }))} />;
 }
