@@ -314,6 +314,8 @@ Once the new hub is in use, delete the old database with
 | `SPACEHUB_GITHUB_CLIENT_ID`, `SPACEHUB_GITHUB_CLIENT_SECRET` | unset | The hub's GitHub OAuth App, both or neither: sign-in then uses GitHub's device flow with a scope-less token (see Sign up with GitHub) and refuses other tokens |
 | `SPACEHUB_XO_KEY` | unset | Turns on xo.quirq.dev's API, which makes builders for xo's users whatever `SPACEHUB_ACCOUNTS` says, and the website's "Sign in with xo" (see xo below) |
 | `SPACEHUB_XO_URL` | `https://xo.quirq.dev` | The xo server the website's "Sign in with xo" asks (`off`: no button). https, or http to this machine |
+| `SPACEHUB_AGENTHUB_URL`, `SPACEHUB_AGENTHUB_TOKEN` | unset | Turn on worker agents: members launch them from a chat, as tasks on this Agents Hub with this API token (see Agents launched from chat below) |
+| `SPACEHUB_AGENTHUB_SPACES` | unset | The orgs that have agents, comma-separated. Their members (and owners) launch and steer them; nobody else can |
 | `/data` volume | | Databases, the server's signing keys, and the identity that owns the module. **Mount persistent storage here and back it up.** Without it, a restart forgets every project and invalidates every client token |
 
 The container starts as root only to take ownership of `/data`, because
@@ -802,6 +804,31 @@ the record's version, and `xo_link_agent`).
   so its "spaces" are hub projects today, and an xo project (a group of
   repositories) is closest to a hub space. The hub stores the record as
   opaque JSON, so nothing breaks; xo's own code should rename to match.
+
+## Agents launched from chat
+
+An org's worker agents start from its projects' chats. In a channel, a member
+writes what the agent should do and presses the rocket beside Send instead of
+Send. A small tray asks where on GitHub it works: `owner/repo`, or a link to an
+issue or pull request (the link joins the task). Launch starts a task on the
+org's Agents Hub, which gives it its own sandbox and an agent that works on
+GitHub, and saves the message to the channel. Under the message, everyone in
+the channel then sees the worker: what it is doing, its steps, and its result
+and pull requests. Members stop it, follow up once it stops, or tear it down.
+
+- **Turn it on** with `SPACEHUB_AGENTHUB_URL` (the Agents Hub's https
+  address), `SPACEHUB_AGENTHUB_TOKEN` (made in its Settings, Agent access) and
+  `SPACEHUB_AGENTHUB_SPACES` (the orgs that have agents), then restart.
+- **The agents belong to the org.** Only members and owners of a listed org
+  launch in its projects and follow its workers.
+- **The token stays on the server.** The browser only talks to the web
+  service at `/-/api/agenthub/` (see `cli/src/agenthub.ts`) with its session
+  cookie; the service checks membership, checks writes come from this site,
+  and calls the Agents Hub with the token. A launch carries an idempotency
+  key, so a retry never starts a task twice.
+- **In the files.** A launch is an ordinary chat turn by the member, ending
+  with `<!-- agenthub:task=<id> -->`; the app shows the worker there, and the
+  task's text says who launched it from which conversation.
 
 ## Limits (v0)
 
