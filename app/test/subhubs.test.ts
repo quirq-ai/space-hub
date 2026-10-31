@@ -7,7 +7,8 @@ const node: SubhubNode = { id: "office", space: "quirq", owner: "dev", label: "O
 
 test("the node tab belongs to a space without changing project routes", () => {
   assert.deepEqual(parseRoute("/quirq", "#/nodes"), { page: "space", place: { space: "quirq", project: "" }, tab: "nodes" });
-  assert.deepEqual(parseRoute("/quirq", "#/subhubs"), { page: "space", place: { space: "quirq", project: "" }, tab: "nodes" });
+  assert.deepEqual(parseRoute("/quirq", "#/subhubs"), { page: "home", tab: "subhubs" });
+  assert.deepEqual(parseRoute("/", "#/subhubs"), { page: "home", tab: "subhubs" });
   assert.deepEqual(parseRoute("/quirq/app", "#/activity"), { page: "project", place: { space: "quirq", project: "app" }, tab: "activity" });
 });
 

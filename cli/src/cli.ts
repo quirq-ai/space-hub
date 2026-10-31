@@ -22,6 +22,7 @@ import { cloneProject, findManifest, SpaceSync, writeManifest } from './spacesyn
 import { DEFAULT_HUB_HOST, githubTokenTarget, hubUrl, parseHubUrl, REMOTE } from './url';
 import { deviceSignIn } from './devicelogin';
 import { subhubCommand } from './subhub';
+import { instanceSubhubCommand } from './instancesubhub';
 
 quietSdkLogs();
 
@@ -60,6 +61,10 @@ SETUP
 NODES
   node run --space <space> --storage <dir>  Back up projects, queue work and serve reads
   node status|snapshots|restore|list|work  See spacehub node help
+
+SUB-HUBS
+  subhub backup|snapshots|verify|restore|serve  Entire Spacehub instance recovery
+                                             See spacehub subhub help
 
 SPACES
   space create <org> [-d <text>]           Create an org (you are its owner)
@@ -1350,7 +1355,8 @@ async function main() {
   if (!group || group === 'help' || group === '--help' || group === '-h') return out(HELP);
   if (group === '--version' || group === 'version') return out(`spacehub ${VERSION} (protocol ${PROTOCOL})`);
   if (group === 'doctor') return doctor();
-  if (group === 'node' || group === 'subhub' || group === 'sub-hub') return subhubCommand(sub, args);
+  if (group === 'node') return subhubCommand(sub, args);
+  if (group === 'subhub' || group === 'sub-hub') return instanceSubhubCommand(sub, args);
 
   if (group === 'auth') {
     switch (sub) {

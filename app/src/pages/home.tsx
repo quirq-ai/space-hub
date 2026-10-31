@@ -1,11 +1,12 @@
 import { Fragment } from "react";
-import { Activity, Building2, FolderGit2, Plus, Rocket } from "lucide-react";
+import { Activity, Archive, Building2, FolderGit2, Plus, Rocket } from "lucide-react";
 import { activeBy, count, kindLabel, latestOf, newestBy, placeUrl, size, type HubMeta, type View } from "@/api";
 import type { Entry } from "@/lib/types";
 import { Browser, Glyph } from "@/ui/cards";
 import { Avatar, AvatarStack, CommandTabs, Popover, SkeletonRows } from "@/ui/primitives";
 import { ActivityList, PageHeader } from "./common";
 import { SubhubPresence } from "@/components/subhub-presence";
+import { onLink } from "@/router";
 
 const kindOf = (detail = "") => detail.startsWith("org") ? "org" : detail.startsWith("agent") ? "agent" : "personal";
 
@@ -19,7 +20,8 @@ const GROUPS: { key: string; title: string; note: string; keep: (space: Entry, m
 
 export function HomePage({ view, me, mySpaces, seen, activityOpen, onActivity }: { view: View<HubMeta> | undefined; me: string | null; mySpaces: string[]; seen: Record<string, string>; activityOpen: boolean; onActivity: () => void }) {
   const activity = <button className="button" type="button" aria-pressed={activityOpen} onClick={onActivity}><Activity size={15} />Activity</button>;
-  if (!view) return <div className="page"><PageHeader title="spacehub" subtitle="Loading the hub…" actions={activity} /><SkeletonRows rows={6} /></div>;
+  const recovery = <a className="button" href="/#/subhubs" onClick={onLink}><Archive size={15} />Sub-hubs</a>;
+  if (!view) return <div className="page"><PageHeader title="spacehub" subtitle="Loading the hub…" actions={<>{activity}{recovery}</>} /><SkeletonRows rows={6} /></div>;
   const spaces = [...view.snapshot.directory.entries].sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
   const recent = view.meta.allProjects.slice(0, 8);
   const mine = new Set(mySpaces);
@@ -31,7 +33,7 @@ export function HomePage({ view, me, mySpaces, seen, activityOpen, onActivity }:
     <PageHeader title="spacehub" subtitle={[count(view.meta.spaces, "space"), count(view.meta.projects, "project"), `${size(view.meta.bytes)} stored`,
       count(view.meta.events, "activity event"), count(view.meta.humans, "human"), count(view.meta.agents, "agent")]
       .map((stat, i) => <Fragment key={stat}>{i > 0 && " "}<span className="stat">{i > 0 && "· "}{stat}</span></Fragment>)}
-      actions={<>{activity}{me ? <a className="button" href="/-/new"><Plus size={15} />New project</a> : <Popover label="Get started" icon={<Rocket size={15} />}>
+      actions={<>{activity}{recovery}{me ? <a className="button" href="/-/new"><Plus size={15} />New project</a> : <Popover label="Get started" icon={<Rocket size={15} />}>
         <div className="popover-title">Push your first project</div>
         <CommandTabs tabs={[
           { label: "spacehub", lines: ["spacehub auth login", "spacehub project create notes --source . --push"] },

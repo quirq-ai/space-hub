@@ -7,7 +7,7 @@ import type { Place } from "@/api";
  * server and its proxy only ever see those three paths.
  */
 export type Route =
-  | { page: "home" }
+  | { page: "home"; tab?: "subhubs" }
   | { page: "space"; place: Place; tab: "projects" | "agents" | "activity" | "people" | "nodes" }
   // as=folder shows a folder as files even when it is a channel or a list of channels.
   | { page: "project"; place: Place; tab: "files"; path: string; as: string }
@@ -23,8 +23,9 @@ export function parseRoute(pathname: string, hash: string): Route {
   const place = { space, project };
   const [tab = "", qs = ""] = hash.replace(/^#\/?/, "").split("?");
   const params = new URLSearchParams(qs);
+  if (!project && tab === "subhubs") return { page: "home", tab: "subhubs" };
   if (!space) return { page: "home" };
-  if (!project) return { page: "space", place, tab: tab === "nodes" || tab === "subhubs" ? "nodes" : tab === "activity" || tab === "people" || tab === "agents" ? tab : "projects" };
+  if (!project) return { page: "space", place, tab: tab === "nodes" || tab === "activity" || tab === "people" || tab === "agents" ? tab : "projects" };
   switch (tab) {
     case "code": return { page: "project", place, tab: "code", ref: params.get("ref") ?? "", path: params.get("path") ?? "" };
     case "commits": return { page: "project", place, tab: "commits", ref: params.get("ref") ?? "", path: params.get("path") ?? "", num: Number(params.get("page") ?? 1) || 1 };
@@ -55,6 +56,9 @@ export function navigate(url: string) {
 export function useRoute(): Route {
   const read = () => parseRoute(location.pathname, location.hash);
   const [route, setRoute] = useState(read);
+  useEffect(() => {
+    if (route.page === "home" && route.tab === "subhubs" && location.pathname !== "/") history.replaceState(null, "", "/#/subhubs");
+  }, [route]);
   useEffect(() => {
     const update = () => setRoute(read());
     addEventListener("popstate", update);

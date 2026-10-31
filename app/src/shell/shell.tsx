@@ -41,17 +41,18 @@ function UserMenu({ name }: { name: string }) {
   </div>;
 }
 
-export function TopBar({ me, signIn, live, onSearch, onMenu }: {
+export function TopBar({ me, signIn, live, onSearch, onMenu, recoveryOnly = false }: {
   me: { checked: boolean; name: string | null }; signIn: string; live: "live" | "offline" | "loading"; onSearch: () => void; onMenu: () => void;
+  recoveryOnly?: boolean;
 }) {
   return <header className="topbar">
     <button className="icon-button only-narrow" type="button" aria-label="Open navigation" onClick={onMenu}><Menu size={18} /></button>
-    <a className="logo" href="/" onClick={onLink} aria-label="spacehub home"><QuirqMark /><span>spacehub</span></a>
-    <button className="search-trigger" type="button" onClick={onSearch} aria-label="Search spaces, projects and files"><Search size={15} /><span>Search spaces, projects, files</span><kbd>⌘K</kbd></button>
+    <a className="logo" href={recoveryOnly ? "/#/subhubs" : "/"} onClick={onLink} aria-label={recoveryOnly ? "Sub-hubs home" : "spacehub home"}><QuirqMark /><span>spacehub</span></a>
+    {!recoveryOnly && <button className="search-trigger" type="button" onClick={onSearch} aria-label="Search spaces, projects and files"><Search size={15} /><span>Search spaces, projects, files</span><kbd>⌘K</kbd></button>}
     <span className="topbar-spacer" />
-    <span className={`live-pill ${live}`} title={live === "offline" ? "Reconnecting to the hub" : "Changes appear as they happen"}><i />{live === "offline" ? "Reconnecting" : "Live"}</span>
+    <span className={`live-pill ${live}`} title={live === "offline" ? recoveryOnly ? "Reconnecting to recovery" : "Reconnecting to the hub" : recoveryOnly ? "Full-instance recovery connection" : "Changes appear as they happen"}><i />{live === "offline" ? "Reconnecting" : "Live"}</span>
     <ThemePicker />
-    {!me.checked ? <span className="user-placeholder" aria-hidden="true" /> : me.name ? <UserMenu name={me.name} /> : <a className="button" href={signIn}><LogIn size={15} />Sign in</a>}
+    {recoveryOnly ? <span className="label">Local recovery</span> : !me.checked ? <span className="user-placeholder" aria-hidden="true" /> : me.name ? <UserMenu name={me.name} /> : <a className="button" href={signIn}><LogIn size={15} />Sign in</a>}
   </header>;
 }
 
@@ -103,9 +104,10 @@ function Item({ item, rail, onClose }: { item: NavItem; rail: boolean; onClose: 
  * collapsible lists (the current space's projects, recent ones) that expand
  * on request, and a footer pinned to the bottom. It folds into an icon rail.
  */
-export function Sidebar({ switcher, primary, sections, footer, open, onClose, rail, onRail, onSearch }: {
+export function Sidebar({ switcher, primary, sections, footer, open, onClose, rail, onRail, onSearch, recoveryOnly = false }: {
   switcher: { current: SpaceOption | null; options: SpaceOption[] }; primary: NavItem[]; sections: SideSection[]; footer: NavItem[];
   open: boolean; onClose: () => void; rail: boolean; onRail: () => void; onSearch: () => void;
+  recoveryOnly?: boolean;
 }) {
   const [state, setState] = useState(readSide);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -116,14 +118,14 @@ export function Sidebar({ switcher, primary, sections, footer, open, onClose, ra
   });
   return <>
     <nav className={`sidebar${open ? " open" : ""}`} aria-label="Navigation">
-      <SpaceSwitcher current={switcher.current} options={switcher.options} rail={rail} />
+      {!recoveryOnly && <SpaceSwitcher current={switcher.current} options={switcher.options} rail={rail} />}
       <div className="nav-group">
         {primary.slice(0, 1).map(item => <Item key={item.key} item={item} rail={rail} onClose={onClose} />)}
-        <button type="button" className="nav-item" onClick={() => { onClose(); onSearch(); }} title={rail ? "Search" : undefined}><span className="nav-icon"><Search size={16} /></span><span className="nav-label">Search</span><kbd className="nav-kbd">⌘K</kbd></button>
+        {!recoveryOnly && <button type="button" className="nav-item" onClick={() => { onClose(); onSearch(); }} title={rail ? "Search" : undefined}><span className="nav-icon"><Search size={16} /></span><span className="nav-label">Search</span><kbd className="nav-kbd">⌘K</kbd></button>}
         {primary.slice(1).map(item => <Item key={item.key} item={item} rail={rail} onClose={onClose} />)}
       </div>
       <div className="side-scroll">
-        {sections.filter(section => section.items.length).map(section => {
+        {!recoveryOnly && sections.filter(section => section.items.length).map(section => {
           const collapsed = !!state.collapsed[section.key];
           const all = expanded[section.key];
           const active = section.items.find(item => item.active);
@@ -143,7 +145,7 @@ export function Sidebar({ switcher, primary, sections, footer, open, onClose, ra
         })}
       </div>
       <div className="side-foot">
-        {footer.map(item => <Item key={item.key} item={item} rail={rail} onClose={onClose} />)}
+        {!recoveryOnly && footer.map(item => <Item key={item.key} item={item} rail={rail} onClose={onClose} />)}
         <button type="button" className="nav-item rail-toggle only-wide" onClick={onRail} aria-label={rail ? "Expand the sidebar" : "Collapse the sidebar"} title={rail ? "Expand the sidebar" : "Collapse the sidebar"}>
           <span className="nav-icon">{rail ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</span><span className="nav-label">Collapse</span>
         </button>

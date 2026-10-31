@@ -33,10 +33,12 @@ import { accountsSetting, handleSignIn, signInConfig } from './signin';
 import { handleXo, xoConfig } from './xo';
 import { CALLBACK_ROUTE, finishSignIn, offerFor, START_ROUTE, startSignIn, STATE_COOKIE, WAIT_SECONDS, xoSignInConfig } from './xosignin';
 import { appDir, handleApp } from './app';
-import { Reply } from './admin';
+import { Reply, select } from './admin';
 import { agentHubConfig, handleAgentHub } from './agenthub';
 import { SubhubStore } from './subhubstore';
 import { handleSubhubControl } from './subhubcontrol';
+import { InstanceVault } from './instancevault';
+import { handleInstanceRecovery, recoveryRemote } from './instancerecovery';
 
 quietSdkLogs();
 
@@ -68,6 +70,12 @@ if (SUBHUBS) {
 // Spaces linked to GitHub sync as the hub admin, whose token the entrypoint
 // hands over.
 const ADMIN_TOKEN = process.env.SPACEHUB_ADMIN_TOKEN ?? '';
+const RECOVERY_DIR = process.env.SPACEHUB_RECOVERY_DIR ?? '';
+const RECOVERY_REMOTE = recoveryRemote(process.env.SPACEHUB_RECOVERY_URL, process.env.SPACEHUB_RECOVERY_TOKEN);
+const RECOVERY_VAULT = RECOVERY_DIR ? new InstanceVault(RECOVERY_DIR) : null;
+RECOVERY_VAULT?.initialize();
+// Explicit deployment-level delegation; org membership never grants it.
+const RECOVERY_OPERATORS = new Set((process.env.SPACEHUB_RECOVERY_OPERATORS ?? '').split(',').map(name => name.trim()).filter(Boolean));
 const SYNC = ADMIN_TOKEN
   ? new GithubSync({
       server: SERVER,
@@ -220,6 +228,23 @@ async function subhubActor(req: http.IncomingMessage, space: string, ownerOnly: 
     if (!ownerOnly && agent?.name === space) return actor;
     return !ownerOnly && (await spaceRoles(conn, space)).some(role => role.member === actor) ? actor : null;
   }).catch(() => null);
+}
+
+async function recoveryOperator(req: http.IncomingMessage): Promise<boolean> {
+  const bearer = /^Bearer (\S+)$/.exec(req.headers.authorization ?? '')?.[1];
+  if (req.headers.origin && !sameOrigin(req)) return false;
+  if (!bearer && req.method !== 'GET' && req.method !== 'HEAD' && !sameOrigin(req)) return false;
+  const token = bearer ?? cookieValue(req, 'spacehub_session');
+  if (!token) return false;
+  try {
+    return await withConn(token, async (conn, identity) => {
+      const user = await findUser(conn, identity);
+      if (user && RECOVERY_OPERATORS.has(user.username)) return true;
+      if (!ADMIN_TOKEN) return false;
+      const rows = await select({ adminToken: ADMIN_TOKEN, http: INTERNAL_HTTP, db: DB }, "SELECT value FROM hub_state WHERE key = 'admin'");
+      return rows[0]?.value === identity.toHexString();
+    });
+  } catch { return false; }
 }
 
 // ---------------------------------------------------------------- GitHub
@@ -428,6 +453,13 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   if (await handleXo(XO, req, res)) return;
   // Called by the CLI with a GitHub token, not from the site's forms.
   if (await handleSignIn(SIGNIN, req, res)) return;
+  if (await handleInstanceRecovery({ vault: RECOVERY_VAULT, authorize: recoveryOperator,
+    source: process.env.SPACEHUB_PUBLIC_URL ?? DB,
+    storage: RECOVERY_DIR,
+    containers: (process.env.SPACEHUB_RECOVERY_CONTAINERS ?? '').split(',').map(name => name.trim()).filter(Boolean),
+    restoreRoot: process.env.SPACEHUB_RESTORE_ROOT ?? '',
+    remote: RECOVERY_REMOTE,
+  }, req, res, url)) return;
   if (await handleSubhubControl(SUBHUBS, {
     authorize: subhubActor,
     currentHead: project => withConn(undefined, async conn => { const row = await findProject(conn, project); return row ? (await listRefs(conn, row.id)).find(ref => ref.name === `refs/heads/${row.defaultBranch}`)?.oid ?? null : null; }),
