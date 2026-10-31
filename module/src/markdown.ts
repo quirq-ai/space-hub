@@ -7,6 +7,8 @@ import { esc } from './style';
 // Returns null for targets that must not become links (javascript: etc).
 export type Resolve = (url: string, image: boolean) => { href: string; inline: boolean } | null;
 
+// An image link to a video plays in place.
+const VIDEO = /\.(mp4|m4v|webm|mov|ogv)(?:[?#]|$)/i;
 const LIST_ITEM = /^\s*([-*+]|\d{1,9}[.)])\s+/;
 // Inside a paragraph only bullets and lists numbered from 1 start a new list.
 const INTERRUPTS_PARAGRAPH = /^\s*([-*+]|1[.)])\s+/;
@@ -27,7 +29,9 @@ function inline(src: string, resolve: Resolve): string {
     const target = resolve(url, true);
     if (!target) return hold(esc(alt));
     return hold(
-      target.inline
+      target.inline && VIDEO.test(target.href)
+        ? `<video src="${esc(target.href)}" controls preload="metadata" playsinline aria-label="${esc(alt)}"></video>`
+        : target.inline
         ? `<img src="${esc(target.href)}" alt="${esc(alt)}">`
         : `<a href="${esc(target.href)}">${esc(alt || 'image')}</a>`
     );

@@ -23,7 +23,7 @@ import { findUser } from './conn';
 import { handleAvatar } from './avatar';
 
 export const APP_CSP =
-  "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-src 'self' https:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+  "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self'; connect-src 'self'; frame-src 'self' https:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 const TYPES: Record<string, string> = {
   '.js': 'text/javascript; charset=utf-8',

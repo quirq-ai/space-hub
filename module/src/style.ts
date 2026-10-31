@@ -94,8 +94,8 @@ details.menu .pop{position:absolute;z-index:10;top:calc(100% + 6px);left:0;min-w
 .md h1,.md h2{border-bottom:1px solid var(--line);padding-bottom:.3em;margin:24px 0 16px;font-weight:650}.md h1{font-size:1.8em}.md h2{font-size:1.4em}.md h3{font-size:1.2em}
 .md pre{background:var(--bg);border:1px solid var(--line);border-radius:8px}.md code{background:var(--fill);padding:.15em .35em;border-radius:4px}.md pre code{background:none;padding:0}
 .md table{width:auto;margin:12px 0;display:block;overflow-x:auto}.md td,.md th{border:1px solid var(--line);padding:6px 13px}.md th{background:var(--bg)}
-.md blockquote{margin:0 0 16px;padding:0 1em;color:var(--muted);border-left:3px solid var(--line-strong)}.md img{max-width:100%}
-.img{padding:24px;text-align:center;background:var(--bg)}.img img{max-width:100%}
+.md blockquote{margin:0 0 16px;padding:0 1em;color:var(--muted);border-left:3px solid var(--line-strong)}.md img,.md video{max-width:100%}
+.img{padding:24px;text-align:center;background:var(--bg)}.img img,.img video{max-width:100%}.img video{max-height:70vh}
 .guide-box{padding:18px 22px;margin-bottom:24px}.guide-lead{margin:0;font-size:15px;flex:1;min-width:240px;color:var(--muted)}
 .guide-head{display:flex;gap:12px 24px;align-items:flex-start;flex-wrap:wrap;margin:0 0 14px}
 /* The app's page pieces, as app/src/app.css draws them, for pages built like the app's (the guide). */
@@ -166,4 +166,4 @@ export function sideFor(viewer: string | null, current: 'home' | 'guide' | 'buil
 
 // Scripts and connections only to this site: /-/live.js and its stream.
 export const PAGE_CSP =
-  "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+  "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; media-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";

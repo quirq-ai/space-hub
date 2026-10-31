@@ -57,6 +57,27 @@ export function readObject(db: Db, projectId: bigint, oid: string): { kind: stri
   return { kind: row.kind, data };
 }
 
+export function objectSize(db: Db, projectId: bigint, oid: string): number | null {
+  const row = db.gitObject.key.find(objectKey(projectId, oid));
+  return row ? Number(row.size) : null;
+}
+
+/** Bytes start to end (exclusive) of an object, reading only the chunks they fall in. */
+export function readObjectRange(db: Db, projectId: bigint, oid: string, start: number, end: number): Uint8Array | null {
+  const row = db.gitObject.key.find(objectKey(projectId, oid));
+  if (!row) return null;
+  end = Math.min(end, Number(row.size));
+  if (row.chunks === 0) return row.data.slice(start, end);
+  const data = new Uint8Array(Math.max(0, end - start));
+  for (let idx = Math.floor(start / CHUNK_SIZE); idx * CHUNK_SIZE < end; idx++) {
+    const chunk = db.objectChunk.key.find(`${projectId}:${oid}:${idx}`);
+    if (!chunk) return null;
+    const at = idx * CHUNK_SIZE;
+    data.set(chunk.data.subarray(Math.max(start, at) - at, Math.min(end, at + chunk.data.length) - at), Math.max(start, at) - start);
+  }
+  return data;
+}
+
 // "parent <oid>" lines of a commit header, which ends at the first blank line.
 export function commitParents(data: Uint8Array): string[] {
   const parents: string[] = [];

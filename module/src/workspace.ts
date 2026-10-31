@@ -41,7 +41,8 @@ const TEXT_EXTENSIONS = new Set([
   'proto', 'diff', 'patch', 'r', 'rmd', 'tex', 'dockerfile', 'lock',
 ]);
 const TEXT_NAMES = new Set(['dockerfile', 'makefile', 'license', 'readme', 'changelog']);
-const IMAGES = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp']);
+const IMAGES = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg', 'bmp', 'ico']);
+const VIDEOS = new Set(['mp4', 'm4v', 'webm', 'mov', 'ogv']);
 
 const decoder = new TextDecoder('utf-8');
 const encoder = new TextEncoder();
@@ -75,7 +76,7 @@ export interface Doc {
 
 export interface FileView extends Entry {
   kind: 'file';
-  format: 'url' | 'jsonl' | 'json' | 'markdown' | 'text' | 'image' | 'pdf' | 'unsupported';
+  format: 'url' | 'jsonl' | 'json' | 'markdown' | 'text' | 'image' | 'video' | 'pdf' | 'unsupported';
   content?: string;
   data?: unknown;
   error?: string;
@@ -326,6 +327,7 @@ export function fileFormat(entry: Entry): FileView['format'] {
   if (entry.extension === 'json') return 'json';
   if (['md', 'markdown', 'mdx'].includes(entry.extension)) return 'markdown';
   if (IMAGES.has(entry.extension)) return 'image';
+  if (VIDEOS.has(entry.extension)) return 'video';
   if (entry.extension === 'pdf') return 'pdf';
   if (TEXT_EXTENSIONS.has(entry.extension) || TEXT_NAMES.has(entry.name.toLowerCase())) return 'text';
   return 'unsupported';
@@ -345,6 +347,8 @@ function fileView(entry: Entry, read: () => Uint8Array): FileView {
   const format = fileFormat(entry);
   const view: FileView = { ...entry, kind: 'file', format };
   if (format === 'unsupported') return { ...view, error: 'This file type has no preview. Its name and details are still shown.' };
+  // A video streams from raw in byte ranges, so no size is too large to play.
+  if (format === 'video') return view;
   if (format === 'image' || format === 'pdf') return entry.size > MAX_PREVIEW_BYTES ? { ...view, error: 'This file is larger than the 20 MB preview limit.' } : view;
   if (entry.size > MAX_TEXT_BYTES) return { ...view, error: 'This file is larger than the 2 MB text preview limit.' };
   const content = utf8(read());

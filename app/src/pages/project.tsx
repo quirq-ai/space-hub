@@ -1,5 +1,5 @@
 import { Bot, Boxes, Download, FolderGit2, GitBranch, HardDrive } from "lucide-react";
-import { placeUrl, size, type Place, type ProjectMeta, type View } from "@/api";
+import { placeUrl, rawUrl, size, type Place, type ProjectMeta, type View } from "@/api";
 import { hashOf, onLink, type Route } from "@/router";
 import { Ago, Avatar, AvatarStack, CommandTabs, ErrorNote, Popover, Skeleton } from "@/ui/primitives";
 import { ActivityList, HereNow, PageHeader, People, Tabs } from "./common";
@@ -8,6 +8,7 @@ import { DepsTab } from "./deps";
 import { FilesTab, isChannel } from "./files";
 import { PathBar } from "@/shell/path-bar";
 import { GoalChip, GoalPanel } from "./goal";
+import { RawFiles } from "@/components/content-view";
 
 type ProjectRoute = Extract<Route, { page: "project" }>;
 
@@ -20,7 +21,7 @@ export function ProjectPage({ route, view, error, me, signIn, refresh }: { route
   const path = route.tab === "files" ? route.path : "";
   if (!meta && error) return <div className="page"><PathBar place={place} path={path} /><PageHeader title={place.project} /><ErrorNote message={error} retry={refresh} /></div>;
   const chatty = route.tab === "files" && view && (view.snapshot.file?.format === "json" || (!view.snapshot.file && route.as !== "folder" && isChannel(view.snapshot)));
-  return <div className={`page${chatty ? " page-chat" : ""}`}>
+  return <RawFiles.Provider value={meta ? file => rawUrl(place, meta.defaultBranch, file) : undefined}><div className={`page${chatty ? " page-chat" : ""}`}>
     <PathBar place={place} path={path} />
     <PageHeader
       leading={<span className="project-mark"><FolderGit2 size={22} /></span>}
@@ -55,7 +56,7 @@ export function ProjectPage({ route, view, error, me, signIn, refresh }: { route
         { title: "Collaborators", names: meta.collaborators, note: "They push to this project." },
       ]} />
     </>}
-  </div>;
+  </div></RawFiles.Provider>;
 }
 
 const MODES: Record<string, string> = { watch: "watching", sync: "syncing", autosync: "editing", agent: "running", app: "in the app" };

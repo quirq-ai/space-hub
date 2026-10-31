@@ -4,7 +4,9 @@ import { describe, expect, it } from 'vitest';
 import { ConnectionId } from 'spacetimedb';
 import { createModuleTestHarness, TestAuth } from 'spacetimedb/server/test-utils';
 import spacetimedb, * as mod from '../src/index';
-import { CHUNK_SIZE, objectKey, readObject, type Db } from '../src/store';
+import { CHUNK_SIZE, objectKey, readObject, readObjectRange, type Db } from '../src/store';
+import { MAX_RANGE, byteRange, renderUi } from '../src/ui';
+import { renderMarkdown } from '../src/markdown';
 import { hashObject, serializeTree } from '../src/chat';
 import { avatarOf, codeView, parseQuery, parseTree, workspace, type Meta, type Snapshot } from '../src/workspace';
 
@@ -20,6 +22,7 @@ type Obj = { oid: string; kind: string; data: Uint8Array };
 type Files = Record<string, string | Uint8Array | { symlink: string }>;
 const CONVERSATION = JSON.stringify({ type: 'conversation', title: 'quirq chat', messages: [{ role: 'assistant', content: 'Hi from the hub.' }] });
 const PNG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0]);
+const MP4 = new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112, 109, 112, 52, 50]);
 
 function build(files: Files, objects: Obj[]): string {
   const folders = new Map<string, Files>();
@@ -70,6 +73,7 @@ function hub() {
     'Chat/index.json': CONVERSATION,
     'Activity/example.jsonl': '{"author":"suraj","content":"first"}\n',
     'Library/logo.png': PNG,
+    'Library/clip.mp4': MP4,
     '.private/token.txt': 'secret',
     'link-out': { symlink: '/etc/passwd' },
   });
@@ -130,6 +134,7 @@ describe('workspace API', () => {
     const image = view({ space: 'quirq', project: 'quirq', path: 'Library/logo.png' }).snapshot.file!;
     expect(image).toMatchObject({ format: 'image', size: PNG.length });
     expect(image.content).toBeUndefined();
+    expect(view({ space: 'quirq', project: 'quirq', path: 'Library/clip.mp4' }).snapshot.file).toMatchObject({ format: 'video', size: MP4.length });
 
     for (const [path, code] of [['.private/token.txt', 403], ['../x', 400], ['link-out', 404], ['missing.md', 404]] as const) {
       expect(status(() => view({ space: 'quirq', project: 'quirq', path }))).toBe(code);
@@ -148,6 +153,60 @@ describe('workspace API', () => {
     expect(after.revision).not.toBe(before.revision);
   });
 });
+
+describe('raw files', () => {
+  const raw = (db: Db, path: string, range?: string) =>
+    renderUi(db, { uri: '/', forwardedUri: `/quirq/quirq/raw/main/${path}`, cookie: null, proto: 'https', range, now: 1_800_000_100 });
+
+  it('read the bytes a Range header asks for, at most MAX_RANGE of them', () => {
+    expect(byteRange(null, 100)).toBeNull();
+    expect(byteRange('bytes=0-9', 100)).toEqual({ start: 0, end: 10 });
+    expect(byteRange('bytes=90-', 100)).toEqual({ start: 90, end: 100 });
+    expect(byteRange('bytes=-10', 100)).toEqual({ start: 90, end: 100 });
+    expect(byteRange('bytes=0-', MAX_RANGE * 3)).toEqual({ start: 0, end: MAX_RANGE });
+    expect(byteRange('bytes=100-', 100)).toBe('unsatisfiable');
+    // Several ranges, or a backwards one, get the whole file.
+    expect(byteRange('bytes=0-1,5-6', 100)).toBeNull();
+    expect(byteRange('bytes=9-1', 100)).toBeNull();
+  });
+
+  it('play a video in byte ranges, across chunks, reading only what each asks for', () => {
+    const { db, push } = hub();
+    const video = { kind: 'blob', data: new Uint8Array(CHUNK_SIZE * 2 + 100).map((_, i) => i % 251) } as Obj;
+    video.oid = hashObject('blob', video.data);
+    push({ 'README.md': '# quirq', 'Library/talk.webm': video.data }, [video]);
+
+    const whole = raw(db, 'Library/talk.webm');
+    expect(whole.status).toBe(200);
+    expect(whole.headers).toMatchObject({ 'content-type': 'video/webm', 'accept-ranges': 'bytes' });
+    expect(whole.body).toEqual(video.data);
+
+    const across = raw(db, 'Library/talk.webm', `bytes=${CHUNK_SIZE - 5}-${CHUNK_SIZE + 4}`);
+    expect(across.status).toBe(206);
+    expect(across.headers['content-range']).toBe(`bytes ${CHUNK_SIZE - 5}-${CHUNK_SIZE + 4}/${video.data.length}`);
+    expect(across.body).toEqual(video.data.slice(CHUNK_SIZE - 5, CHUNK_SIZE + 5));
+
+    const tail = raw(db, 'Library/talk.webm', 'bytes=-50');
+    expect(tail.body).toEqual(video.data.slice(-50));
+    expect(raw(db, 'Library/talk.webm', `bytes=${video.data.length}-`)).toMatchObject({ status: 416, headers: { 'content-range': `bytes */${video.data.length}` } });
+    expect(readObjectRange(db, project(db).id, video.oid, 10, 20)).toEqual(video.data.slice(10, 20));
+  });
+
+  it('serve images and small files with their types, and nothing as a page', () => {
+    const { db } = hub();
+    expect(raw(db, 'Library/logo.png').headers['content-type']).toBe('image/png');
+    expect(raw(db, 'Library/clip.mp4', 'bytes=0-1')).toMatchObject({ status: 206, body: MP4.slice(0, 2), headers: { 'content-type': 'video/mp4', 'content-range': `bytes 0-1/${MP4.length}` } });
+    expect(raw(db, 'README.md').headers).toMatchObject({ 'content-type': 'text/plain; charset=utf-8', 'content-security-policy': "default-src 'none'; sandbox" });
+  });
+
+  it('show a Markdown image link to a video as a player', () => {
+    const resolve = (url: string) => ({ href: `/quirq/quirq/raw/main/${url}`, inline: true });
+    expect(renderMarkdown('![The demo](media/demo.mp4)', resolve)).toContain('<video src="/quirq/quirq/raw/main/media/demo.mp4" controls');
+    expect(renderMarkdown('![Logo](media/logo.png)', resolve)).toContain('<img src="/quirq/quirq/raw/main/media/logo.png" alt="Logo">');
+  });
+});
+
+const project = (db: Db) => db.project.fullName.find('quirq/quirq')!;
 
 describe('append_chat', () => {
   it('commits turns to a log beside the conversation, as the caller', () => {

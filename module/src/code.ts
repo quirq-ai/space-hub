@@ -9,7 +9,7 @@
 //   GET /api?space=&project=&view=commit&oid=
 //   GET /api?space=&project=&view=files&ref=
 import { DELETE, INSERT, diffLines, toHunks } from './diff';
-import { objectKey, readObject, type Db } from './store';
+import { objectKey, objectSize, readObject, readObjectRange, type Db } from './store';
 import { NotFound, Renderer, type Change, type Commit } from './ui';
 
 const PAGE_SIZE = 30;
@@ -131,17 +131,20 @@ export function treeView(db: Db, project: Project, ref: string, path: string, no
     };
   }
   if (target.type !== 'blob') throw new CodeError(`${path} is a submodule.`, 400);
-  const obj = readObject(db, project.id, target.oid);
-  if (!obj) throw new CodeError(`The hub is missing ${path}.`, 500);
-  const binary = isBinary(obj.data);
+  // A large file, a video say, is read only as far as its first bytes.
+  const length = objectSize(db, project.id, target.oid);
+  const head = length === null ? null : readObjectRange(db, project.id, target.oid, 0, 8000);
+  if (length === null || !head) throw new CodeError(`The hub is missing ${path}.`, 500);
+  const binary = isBinary(head);
+  const text = !binary && length <= MAX_SHOWN_BYTES ? readObject(db, project.id, target.oid)?.data : undefined;
   const { byName } = r.lastChanges(project, commit.oid, segs.slice(0, -1), [segs[segs.length - 1]]);
   const last = byName.get(segs[segs.length - 1]);
   return {
     ...base,
     kind: 'blob' as const,
-    size: obj.data.length,
+    size: length,
     binary,
-    text: !binary && obj.data.length <= MAX_SHOWN_BYTES ? decoder.decode(obj.data) : null,
+    text: text ? decoder.decode(text) : null,
     last: last ? summary(last) : null,
   };
 }

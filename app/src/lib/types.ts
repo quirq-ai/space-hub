@@ -28,7 +28,7 @@ export interface Doc {
 
 export interface FileView extends Entry {
   kind: "file";
-  format: "url" | "jsonl" | "json" | "markdown" | "text" | "image" | "pdf" | "unsupported";
+  format: "url" | "jsonl" | "json" | "markdown" | "text" | "image" | "video" | "pdf" | "unsupported";
   content?: string;
   data?: unknown;
   error?: string;

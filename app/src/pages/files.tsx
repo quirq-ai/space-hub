@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
-import { BookOpen, Boxes, ChevronRight, Code2, File, FileCode2, FileImage, FileText, Folder, FolderOpen, Lightbulb, MessageCircle, PanelsTopLeft, Shapes, SquareCheck, type LucideIcon } from "lucide-react";
+import { BookOpen, Boxes, ChevronRight, Code2, File, FileCode2, FileImage, FileText, FileVideo, Folder, FolderOpen, Lightbulb, MessageCircle, PanelsTopLeft, Shapes, SquareCheck, type LucideIcon } from "lucide-react";
 import type { Entry } from "@/lib/types";
+import { mediaOf } from "@/lib/media";
 import { isConversation } from "@/lib/conversation";
 import { chatLogPath } from "@/lib/chat-log";
 import { FileContent } from "@/components/content-view";
@@ -22,8 +23,9 @@ export const SECTION_ORDER = ["chat", "activity", "insights", "vision", "library
 
 export function entryIcon(entry: Entry): LucideIcon {
   if (entry.kind === "directory") return SECTION_ICONS.get(entry.name.toLowerCase()) || Folder;
+  const media = mediaOf(entry.name);
+  if (media) return media === "video" ? FileVideo : FileImage;
   if (/json|js|ts|py|css|html|csv|yaml|toml/.test(entry.extension)) return FileCode2;
-  if (/png|jpg|jpeg|gif|webp|avif/.test(entry.extension)) return FileImage;
   return /md|txt|pdf/.test(entry.extension) ? FileText : File;
 }
 
