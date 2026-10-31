@@ -822,6 +822,8 @@ check "agent run checks out its home and every connected space" wait_for 30 agen
 agent_here() { as alice spacehub space who "$AT" | grep -q "^$AG  *agent"; }
 check "it shows as running in the space" wait_for 15 agent_here
 page_has "and on its page, with its host" "$AG" "e2e-host"
+app_has "the home page's Agents tab lists it, running there" "" "\"name\":\"$AG\",\"description\":\"e2e agent\",\"parent\":\"$ALICE\""
+app_has "with its host" "" '"host":"e2e-host"'
 echo "found something" >"$AW/$AT/work/finding.txt"
 # The commit is read first, so a check cannot pass between the commit and its push.
 agent_pushed() { local head; head="$(git -C "$AW/$AT/work" rev-parse HEAD)"; git -C "$AW/$AT/work" log -1 --format=%s "$head" | grep -q finding && [[ "$(as alice git ls-remote "$HUB/$AT/work" refs/heads/main | cut -f1)" == "$head" ]]; }
