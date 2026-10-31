@@ -14,6 +14,10 @@
 //
 // A backup is hub.json plus data/, the data folder as it was: restored, that
 // folder is the hub's /data again (run the same image with it mounted).
+//
+// The last attempt, and why it failed, is kept beside the vault
+// (last-backup.json) and shown to operators in Settings, since a failure
+// otherwise only reaches the server's log.
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -27,9 +31,9 @@ export interface HubBackupConfig {
   source: string; // the hub, as backups name it
 }
 
-// Not part of a backup: the vault and sub-hub state, logs and caches, and
-// the running server's pid file.
-const SKIP = new Set(['.spacehub', 'data/logs', 'data/cache', 'data/spacetime.pid']);
+// Not part of a backup: the vault and sub-hub state, logs and caches, the
+// running server's pid file, and a volume's own lost+found.
+const SKIP = new Set(['.spacehub', 'data/logs', 'data/cache', 'data/spacetime.pid', 'lost+found']);
 const COMMIT_LOG = /^data\/replicas\/[^/]+\/clog$/;
 
 export function hubBackupConfig(env: NodeJS.ProcessEnv = process.env, source = 'spacehub'): HubBackupConfig | null {
@@ -72,11 +76,14 @@ async function copyTree(from: string, to: string, rel: string, logs: string[]) {
   }
 }
 
-async function bytesOf(dir: string): Promise<number> {
+// What a backup copies, in bytes: the same folders copyTree skips are left out.
+async function bytesOf(dir: string, rel = ''): Promise<number> {
   let total = 0;
   for (const entry of await fsp.readdir(dir, { withFileTypes: true })) {
+    const name = rel ? `${rel}/${entry.name}` : entry.name;
+    if (SKIP.has(name)) continue;
     const at = path.join(dir, entry.name);
-    if (entry.isDirectory()) total += await bytesOf(at);
+    if (entry.isDirectory()) total += await bytesOf(at, name);
     else if (entry.isFile()) total += (await fsp.stat(at).catch(() => ({ size: 0 }))).size;
   }
   return total;
@@ -86,9 +93,12 @@ async function bytesOf(dir: string): Promise<number> {
 export async function backupHub(cfg: HubBackupConfig, now = Date.now()): Promise<Snapshot> {
   cfg.vault.initialize();
   // Room for the copy and its place in the vault, with some to spare.
-  const need = (await bytesOf(cfg.root)) * 2 + 256 * 1024 ** 2;
-  const free = await fsp.statfs(cfg.vault.storageDir);
-  if (free.bavail * free.bsize < need) throw new Error(`not enough free disk for a backup (${Math.ceil(need / 1024 ** 2)} MB needed)`);
+  const used = await bytesOf(cfg.root);
+  const need = used * 2 + 256 * 1024 ** 2;
+  const stat = await fsp.statfs(cfg.vault.storageDir);
+  const free = stat.bavail * stat.bsize;
+  const mb = (n: number) => Math.ceil(n / 1024 ** 2);
+  if (free < need) throw new Error(`not enough free disk: the data is ${mb(used)} MB, a backup needs ${mb(need)} MB free and ${mb(free)} MB is`);
   const staging = path.join(path.dirname(cfg.vault.storageDir), `backup-staging-${now}`);
   fs.mkdirSync(path.join(staging, 'data'), { recursive: true, mode: 0o700 });
   try {
@@ -113,27 +123,66 @@ export async function backupHub(cfg: HubBackupConfig, now = Date.now()): Promise
   }
 }
 
-/** Back up a minute after start, then every `everyMs`, one at a time. Returns a stop function. */
-export function startHubBackups(cfg: HubBackupConfig, log: (line: string) => void = line => process.stderr.write(`${line}\n`)) {
-  let running = false;
+export interface HubBackupResult { at: number; ms: number; ok: boolean; snapshot?: string; bytes?: number; error?: string }
+export interface HubBackupState { everyMinutes: number; keep: number; running: boolean; startedAt?: number; nextAt: number; last?: HubBackupResult }
+export interface HubBackups { state(): HubBackupState; now(): boolean; stop(): void }
+
+const FIRST_MS = 60_000;
+
+function readLast(file: string): HubBackupResult | undefined {
+  try {
+    const value = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return value && typeof value.at === 'number' && typeof value.ok === 'boolean' ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Back up a minute after start, then every `everyMs`, one at a time; `now()`
+ * starts one at once unless one is running. Each result is kept beside the
+ * vault, so the last one is known after a restart too.
+ */
+export function startHubBackups(cfg: HubBackupConfig, log: (line: string) => void = line => process.stderr.write(`${line}\n`), firstMs = FIRST_MS): HubBackups {
+  const lastFile = path.join(path.dirname(cfg.vault.storageDir), 'last-backup.json');
+  let last = readLast(lastFile);
+  let startedAt: number | undefined;
   const run = async () => {
-    if (running) return;
-    running = true;
+    if (startedAt !== undefined) return;
+    const at = (startedAt = Date.now());
     try {
-      const s = await backupHub(cfg);
+      const s = await backupHub(cfg, at);
+      last = { at, ms: Date.now() - at, ok: true, snapshot: s.id, bytes: s.bytes };
       log(`spacehub-web: backed up the hub: ${s.id} (${Math.ceil(s.bytes / 1024 ** 2)} MB, keeping ${cfg.keep})`);
     } catch (err) {
-      log(`spacehub-web: hub backup failed, earlier backups are kept: ${err instanceof Error ? err.message : String(err)}`);
+      const error = (err instanceof Error ? err.message : String(err)).slice(0, 500);
+      last = { at, ms: Date.now() - at, ok: false, error };
+      log(`spacehub-web: hub backup failed, earlier backups are kept: ${error}`);
     } finally {
-      running = false;
+      startedAt = undefined;
+      try {
+        fs.writeFileSync(lastFile, JSON.stringify(last) + '\n', { mode: 0o600 });
+      } catch (err) {
+        log(`spacehub-web: could not keep the last backup's result: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
   };
-  const first = setTimeout(run, 60_000);
-  const timer = setInterval(run, cfg.everyMs);
-  first.unref();
+  let nextAt = Date.now() + firstMs;
+  const tick = () => {
+    nextAt = Date.now() + cfg.everyMs;
+    timer = setTimeout(tick, cfg.everyMs);
+    timer.unref();
+    void run();
+  };
+  let timer = setTimeout(tick, firstMs);
   timer.unref();
-  return () => {
-    clearTimeout(first);
-    clearInterval(timer);
+  return {
+    state: () => ({ everyMinutes: cfg.everyMs / 60_000, keep: cfg.keep, running: startedAt !== undefined, ...(startedAt !== undefined ? { startedAt } : {}), nextAt, ...(last ? { last } : {}) }),
+    now: () => {
+      if (startedAt !== undefined) return false;
+      void run();
+      return true;
+    },
+    stop: () => clearTimeout(timer),
   };
 }

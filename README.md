@@ -797,7 +797,17 @@ docker run -d -p 3000:3000 -v /srv/recovered/data:/data <the same spacehub image
 
 Builders sign in with their old tokens: the signing keys come back with the
 data. A backup needs about twice the data folder's size free next to the
-vault; without it, the hub skips that backup and says so in its log.
+vault; without it, the hub skips that backup.
+
+Settings shows how the last backup went (when, its size, or why it failed),
+when the next one is due, and a **Back up now** button for recovery
+operators. The last result is kept in `last-backup.json` next to the vault,
+so it survives a restart. As an API, with an operator's token:
+
+```sh
+curl -H "Authorization: Bearer $(spacehub auth token)" https://hub.example/-/api/instance-recovery/status     # hubBackup: the schedule and last result
+curl -X POST -H "Authorization: Bearer $(spacehub auth token)" https://hub.example/-/api/instance-recovery/hub-backup  # start one now (409 while one runs)
+```
 
 ### Deployment operator: provide complete source backups
 

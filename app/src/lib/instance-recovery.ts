@@ -6,10 +6,14 @@ export type InstanceSnapshot = {
   id: string; createdAt: number; source: string; services: string[]; scope: "instance";
   consistency: InstanceConsistency; coverage: InstanceCoverage; files: number; bytes: number; sha256: string;
 };
+/** The hub's own scheduled copies of its data (cli/src/hubbackup.ts), and how the last one went. */
+export type HubBackupResult = { at: number; ms: number; ok: boolean; snapshot?: string; bytes?: number; error?: string };
+export type HubBackupState = { everyMinutes: number; keep: number; running: boolean; startedAt?: number; nextAt: number; last?: HubBackupResult };
 export type InstanceRecoveryStatus = {
   scope: "instance"; source: string; available: boolean; canManage: boolean;
   cli: { storage: string; restoreRoot: string }; error?: string;
   sourceAvailable?: boolean; sourceError?: string; machineName?: string;
+  hubBackup?: HubBackupState;
 };
 export type InstanceConnection = {
   id: string; name: string; connectedAt: number; lastSeen: number; online: boolean;

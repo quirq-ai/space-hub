@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { backupHub, hubBackupConfig } from '../src/hubbackup.ts';
+import { backupHub, hubBackupConfig, startHubBackups } from '../src/hubbackup.ts';
 import { InstanceConnections } from '../src/instanceconnections.ts';
 import { handleInstanceRecovery } from '../src/instancerecovery.ts';
 import { runInstanceSubhub } from '../src/instanceruntime.ts';
@@ -109,4 +109,63 @@ test('a sub-hub copies the hub\'s live backups and keeps only its --keep newest'
   await sync();
   assert.deepEqual(local(), [4_000, 3_000], 'the oldest goes as a new one arrives');
   assert.equal(connections.list()[0].name, 'laptop');
+});
+
+test('the last attempt is kept with its reason, across a restart; operators see it and start one at once', async t => {
+  const { tmp, root } = dataRoot(t);
+  // A volume's lost+found is left out, even when the hub cannot read it.
+  fs.mkdirSync(path.join(root, 'lost+found'), { mode: 0o000 });
+  const cfg = hubBackupConfig({ SPACEHUB_DATA_ROOT: root }, 'hub.example')!;
+  const lines: string[] = [];
+  let backups = startHubBackups(cfg, line => lines.push(line), 60_000);
+  t.after(() => backups.stop());
+  const connections = new InstanceConnections(path.join(tmp, 'connections'));
+  connections.initialize();
+  const server = http.createServer((req, res) => {
+    void handleInstanceRecovery({
+      vault: cfg.vault, connections, source: 'hub.example', storage: cfg.vault.storageDir, containers: [], restoreRoot: '', hubBackups: backups,
+      authorize: async r => r.headers.authorization === `Bearer ${OPERATOR}`,
+    }, req, res, new URL(req.url!, 'http://local'));
+  });
+  await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const hub = `http://127.0.0.1:${(server.address() as AddressInfo).port}/-/api/instance-recovery`;
+  const call = async (route: string, method = 'GET', token = OPERATOR) => {
+    const res = await fetch(hub + route, { method, headers: { authorization: `Bearer ${token}` } });
+    return { status: res.status, body: await res.json() };
+  };
+  const settled = async () => { for (let i = 0; i < 200 && backups.state().running; i++) await new Promise(r => setTimeout(r, 10)); };
+
+  const before = await call('/status');
+  assert.equal(before.body.hubBackup.everyMinutes, 60);
+  assert.equal(before.body.hubBackup.running, false);
+  assert.equal(before.body.hubBackup.last, undefined, 'nothing tried yet');
+  assert.ok(before.body.hubBackup.nextAt > Date.now());
+
+  const started = await call('/hub-backup', 'POST');
+  assert.equal(started.status, 202);
+  assert.equal(started.body.running, true);
+  assert.equal((await call('/hub-backup', 'POST')).status, 409, 'one at a time');
+  await settled();
+  const ok = (await call('/status')).body.hubBackup.last;
+  assert.equal(ok.ok, true);
+  assert.equal(ok.snapshot, cfg.vault.list()[0].id);
+
+  // Something the hub cannot back up: the reason is kept and shown.
+  fs.symlinkSync('/etc/hosts', path.join(root, 'data', 'odd-link'));
+  backups.now();
+  await settled();
+  const failed = (await call('/status')).body.hubBackup.last;
+  assert.equal(failed.ok, false);
+  assert.match(failed.error, /not a file or folder: data\/odd-link/);
+  assert.ok(lines.some(line => line.includes('hub backup failed')));
+
+  // A restarted hub still knows the last result.
+  backups.stop();
+  backups = startHubBackups(cfg, () => undefined, 60_000);
+  assert.equal(backups.state().last?.error, failed.error);
+
+  assert.equal((await call('/hub-backup', 'POST', 'not-an-operator')).status, 403);
+  assert.equal((await call('/hub-backup')).status, 405);
+  fs.chmodSync(path.join(root, 'lost+found'), 0o700);
 });

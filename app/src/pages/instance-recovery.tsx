@@ -2,7 +2,7 @@ import { useEffect, useId, useState, type FormEvent } from "react";
 import { Archive, ArrowDownToLine, Check, Clock, Database, FolderOpen, HardDrive, Laptop, RefreshCw, ServerCog, ShieldCheck } from "lucide-react";
 import { size } from "@/api";
 import { useInstanceRecovery } from "@/hooks/use-instance-recovery";
-import { instanceBackupCommand, instanceConnectionLabel, instancePost, instanceRemoteRestoreCommand, instanceRestoreBody, instanceRestoreCommand, instanceRunCommand, instanceSnapshotsCommand, instanceVerifyCommand, latestInstanceSnapshot, type CommandShell, type InstanceConnection, type InstanceCoverage, type InstanceRecoveryStatus, type InstanceRestore, type InstanceSnapshot, type InstanceVerification } from "@/lib/instance-recovery";
+import { instanceBackupCommand, instanceConnectionLabel, instancePost, instanceRemoteRestoreCommand, instanceRestoreBody, instanceRestoreCommand, instanceRunCommand, instanceSnapshotsCommand, instanceVerifyCommand, latestInstanceSnapshot, type CommandShell, type HubBackupState, type InstanceConnection, type InstanceCoverage, type InstanceRecoveryStatus, type InstanceRestore, type InstanceSnapshot, type InstanceVerification } from "@/lib/instance-recovery";
 import { Ago, CommandTabs, Empty, ErrorNote, SkeletonRows } from "@/ui/primitives";
 import { onLink } from "@/router";
 
@@ -10,6 +10,7 @@ type Section = "overview" | "backups" | "restore";
 const messageOf = (error: unknown) => error instanceof Error ? error.message : "The full-instance recovery request could not be completed.";
 function commandOf(build: () => string) { try { return build(); } catch { return ""; } }
 const iso = (at: number) => new Date(at).toISOString();
+const took = (ms: number) => (ms < 60_000 ? `${Math.max(1, Math.round(ms / 1000))} s` : `${Math.round(ms / 60_000)} min`);
 
 /** CLI connections report automatic backups; only this recovery service's vault is writable here. */
 export function InstanceRecoveryPage({ onConnectionState }: { onConnectionState?: (state: "live" | "offline" | "loading") => void }) {
@@ -62,6 +63,7 @@ export function InstanceRecoveryPage({ onConnectionState }: { onConnectionState?
 
     {section === "overview" && <>
       <div className="subhub-stats instance-stats"><div className="subhub-stat"><span><Laptop size={17} />Sub-hubs online</span><strong className="instance-stat-text">{peers.error ? "Unavailable" : peers.loading && !peers.data ? "Checking…" : `${online.length} / ${connections.length}`}</strong></div><div className="subhub-stat"><span><Archive size={17} />Last reported backup</span><strong className="instance-stat-text">{latest ? <Ago iso={iso(latest.createdAt)} /> : "No backup yet"}</strong></div><div className="subhub-stat"><span><ServerCog size={17} />Backup source</span><strong className="instance-stat-text">{status.loading && !status.data ? "Checking…" : status.data?.sourceAvailable === true ? "Configured" : status.data?.sourceAvailable === false ? "Waiting" : "Not reported"}</strong></div></div>
+      {status.data?.hubBackup && <div className="instance-connections"><HubBackupCard state={status.data.hubBackup} canManage={canManage} onStarted={status.refresh} /></div>}
       {status.data?.sourceAvailable === false && <div className="instance-waiting"><Clock size={18} /><div><strong>Waiting for backup source</strong><p>{status.data.sourceError || "Automatic backups will begin when this hub’s backup source is available."}</p></div></div>}
       {peers.loading && !peers.data ? <SkeletonRows rows={2} /> : connections.length ? <div className="instance-connections">{connections.map(peer => <SubhubConnectionCard key={peer.id} connection={peer} unavailable={!!peers.error} />)}</div> : peers.data && !peers.error ? <Empty icon={<Laptop size={23} />} title="No Sub-hubs connected"><p>Run the CLI on a backup machine. It connects to your configured hub and keeps backups automatically.</p></Empty> : null}
       <ConnectionSetup />
@@ -92,6 +94,19 @@ export function InstanceRecoveryPage({ onConnectionState }: { onConnectionState?
       </form>}
     </>}
   </section>;
+}
+
+/** The hub copying its own data on a schedule: when it last tried, why that failed, and starting one now. */
+function HubBackupCard({ state, canManage, onStarted }: { state: HubBackupState; canManage: boolean; onStarted: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const start = async () => {
+    setBusy(true); setError("");
+    try { await instancePost<HubBackupState>("/hub-backup"); onStarted(); } catch (caught) { setError(messageOf(caught)); } finally { setBusy(false); }
+  };
+  const last = state.last;
+  const label = state.running ? "Backing up" : !last ? "Not run yet" : last.ok ? "Last one worked" : "Last one failed";
+  return <article className="instance-connection"><div className="subhub-heading"><div className="instance-connection-name"><Database size={20} /><h3>This hub’s own backups</h3></div><span className={`label ${!state.running && last ? (last.ok ? "done" : "warn") : ""}`}>{label}</span></div><dl><div><dt>Last attempt</dt><dd>{last ? <><Ago iso={iso(last.at)} /><span className="instance-backup-fact">{last.ok ? `${size(last.bytes ?? 0)} in ${took(last.ms)}` : `failed after ${took(last.ms)}`}</span></> : "None yet"}</dd></div><div><dt>{state.running ? "Running" : "Next"}</dt><dd>{state.running && state.startedAt ? <>Started <Ago iso={iso(state.startedAt)} /></> : new Date(state.nextAt).toLocaleString()}</dd></div><div><dt>Schedule</dt><dd>Every {state.everyMinutes} min, keeping {state.keep}</dd></div></dl>{last && !last.ok && last.error && <p className="instance-connection-error">{last.error}</p>}{error && <ErrorNote message={error} />}{canManage && <div className="subhub-actions"><button className="button" type="button" disabled={busy || state.running} onClick={() => void start()}><Archive size={14} />{state.running ? "Backing up…" : busy ? "Starting…" : "Back up now"}</button></div>}</article>;
 }
 
 export function SubhubConnectionCard({ connection, unavailable = false }: { connection: InstanceConnection; unavailable?: boolean }) {
