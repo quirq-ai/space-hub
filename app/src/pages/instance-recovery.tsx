@@ -4,13 +4,12 @@ import { size } from "@/api";
 import { useInstanceRecovery } from "@/hooks/use-instance-recovery";
 import { instanceBackupCommand, instancePost, instanceRestoreBody, instanceRestoreCommand, instanceSnapshotsCommand, instanceVerifyCommand, type CommandShell, type InstanceCoverage, type InstanceRecoveryStatus, type InstanceRestore, type InstanceSnapshot, type InstanceVerification } from "@/lib/instance-recovery";
 import { Ago, CommandTabs, Empty, ErrorNote, SkeletonRows } from "@/ui/primitives";
-import { PageHeader } from "./common";
 
 type Section = "overview" | "backups" | "restore";
 const messageOf = (error: unknown) => error instanceof Error ? error.message : "The full-instance recovery request could not be completed.";
 function commandOf(build: () => string) { try { return build(); } catch { return ""; } }
 
-/** Instance recovery is global. Space membership and node project catalogs do not grant recovery access. */
+/** Full-instance recovery is an operator section of global Settings. */
 export function InstanceRecoveryPage({ onConnectionState }: { onConnectionState?: (state: "live" | "offline" | "loading") => void }) {
   const status = useInstanceRecovery<InstanceRecoveryStatus>("/status");
   const catalog = useInstanceRecovery<{ snapshots: InstanceSnapshot[] }>("/snapshots");
@@ -49,11 +48,9 @@ export function InstanceRecoveryPage({ onConnectionState }: { onConnectionState?
     catch (caught) { setActionError(messageOf(caught)); } finally { setBusy(""); }
   };
   const empty = <Empty icon={<Archive size={23} />} title="No full-instance backup yet"><p>Back up this entire Spacehub instance from its Docker host to a dedicated local vault.</p>{canManage && <button className="button" type="button" onClick={() => setBackupFlow(true)}>Back up instance</button>}</Empty>;
-  return <div className="page subhubs instance-recovery">
-    <PageHeader crumbs={[{ label: "Home", href: "/" }]} leading={<span className="instance-mark"><Archive size={24} /></span>} title="Sub-hubs" subtitle="Backup and restore this entire Spacehub instance"
-      actions={<><button className="button" type="button" onClick={refresh}><RefreshCw size={14} />Refresh</button>{canManage && <button className="button primary" type="button" onClick={() => setBackupFlow(true)}><Archive size={15} />Back up instance</button>}</>}>
-      <div className="meta-strip"><span className="label">Full instance</span>{source && <span><ServerCog size={14} />{source}</span>}<span className="quiet">Managed by the hub operator</span></div>
-    </PageHeader>
+  return <section className="subhubs instance-recovery" aria-label="Sub-hubs">
+    <header className="subhub-heading"><div><h2><Archive size={20} />Sub-hubs</h2><p className="quiet">Backup and restore this entire Spacehub instance</p></div><div className="subhub-actions"><button className="button" type="button" onClick={refresh}><RefreshCw size={14} />Refresh</button>{canManage && <button className="button primary" type="button" onClick={() => setBackupFlow(true)}><Archive size={15} />Back up instance</button>}</div></header>
+    <div className="meta-strip"><span className="label">Full instance</span>{source && <span><ServerCog size={14} />{source}</span>}<span className="quiet">Managed by the hub operator</span></div>
     <nav className="subhub-sections" aria-label="Full-instance recovery sections">{([{ key: "overview", label: "Overview", Icon: HardDrive }, { key: "backups", label: "Backups", Icon: Archive }, { key: "restore", label: "Restore", Icon: ArrowDownToLine }] as const).map(({ key, label, Icon }) => <button key={key} type="button" className={section === key ? "on" : ""} aria-current={section === key ? "page" : undefined} onClick={() => { setSection(key); setActionError(""); }}><Icon size={15} />{label}</button>)}</nav>
     {error && <ErrorNote message={error} retry={refresh} />}
     {actionError && <ErrorNote message={actionError} />}
@@ -78,7 +75,7 @@ export function InstanceRecoveryPage({ onConnectionState }: { onConnectionState?
       <button className="button primary" type="submit" disabled={!canManage || !available || !!error || !!busy || !directory.trim()}><ArrowDownToLine size={15} />{busy === "restore" ? "Restoring files…" : "Restore to new directory"}</button>
     </form>}</>}
     {backupFlow && <BackupCommandDialog config={status.data?.cli} onClose={() => setBackupFlow(false)} />}
-  </div>;
+  </section>;
 }
 
 function Coverage({ coverage }: { coverage?: InstanceCoverage }) {

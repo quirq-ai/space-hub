@@ -20,8 +20,7 @@ private configuration, and exact runtime images. Include every service in
 the deployment, including its TLS proxy. No --space or project filter.
 --allow-stop permits a cold backup's maintenance window; initially running
 containers are restarted afterward. Restore writes a new directory only;
-it never replaces or starts the running instance.
-Nodes have separate commands: spacehub node help.`;
+it never replaces or starts the running instance.`;
 
 function flag(args: string[], name: string) {
   const at = args.indexOf(name); if (at < 0) return undefined;
@@ -75,7 +74,7 @@ async function serve(args: string[]) {
       if (await handleInstanceRecovery({ vault, authorize: authorized, source, storage, containers, restoreRoot }, req, res, url)) return;
       if (url.pathname === '/-/recovery-entry.js' && req.method === 'GET') {
         res.writeHead(200, { 'content-type': 'text/javascript', 'cache-control': 'no-store' });
-        res.end("if (!location.hash) history.replaceState(null, '', '/#/subhubs');"); return;
+        res.end("if (!location.hash) history.replaceState(null, '', '/#/settings');"); return;
       }
       if (url.pathname === '/-/api/me') { res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end('{"name":null,"recoveryOnly":true}'); return; }
       if (url.pathname === '/-/api/view') { res.writeHead(503, { 'content-type': 'application/json' }); res.end('{"error":"This standalone recovery UI does not load orgs or projects."}'); return; }
@@ -90,7 +89,7 @@ async function serve(args: string[]) {
     })().catch(() => { if (!res.headersSent) { res.writeHead(500); res.end('Recovery service request failed'); } else res.destroy(); });
   });
   await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(Number(address[2]), '127.0.0.1', resolve); });
-  process.stderr.write(`Sub-hubs recovery UI: ${origin}/#/subhubs\nVault: ${storage}\n`);
+  process.stderr.write(`Sub-hubs recovery UI: ${origin}/#/settings\nVault: ${storage}\n`);
   await new Promise<void>(resolve => {
     const stop = () => { server.closeAllConnections(); server.close(() => resolve()); };
     process.once('SIGINT', stop); process.once('SIGTERM', stop);

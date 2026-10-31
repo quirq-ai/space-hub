@@ -21,7 +21,6 @@ import { git } from './git';
 import { cloneProject, findManifest, SpaceSync, writeManifest } from './spacesync';
 import { DEFAULT_HUB_HOST, githubTokenTarget, hubUrl, parseHubUrl, REMOTE } from './url';
 import { deviceSignIn } from './devicelogin';
-import { subhubCommand } from './subhub';
 import { instanceSubhubCommand } from './instancesubhub';
 
 quietSdkLogs();
@@ -57,10 +56,6 @@ SETUP
   doctor          Check this machine: where the CLI is installed and whether your shell
                     finds it (with the PATH line to add if not), whether the install
                     survives a restart, the CLI vs the hub, and who you are signed in as
-
-NODES
-  node run --space <space> --storage <dir>  Back up projects, queue work and serve reads
-  node status|snapshots|restore|list|work  See spacehub node help
 
 SUB-HUBS
   subhub backup|snapshots|verify|restore|serve  Entire Spacehub instance recovery
@@ -1355,7 +1350,6 @@ async function main() {
   if (!group || group === 'help' || group === '--help' || group === '-h') return out(HELP);
   if (group === '--version' || group === 'version') return out(`spacehub ${VERSION} (protocol ${PROTOCOL})`);
   if (group === 'doctor') return doctor();
-  if (group === 'node') return subhubCommand(sub, args);
   if (group === 'subhub' || group === 'sub-hub') return instanceSubhubCommand(sub, args);
 
   if (group === 'auth') {

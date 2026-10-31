@@ -670,12 +670,11 @@ a.label:hover { text-decoration: none; filter: brightness(.96); }
 .label.goal-label .meter { background: var(--line-strong); }
 @media (max-width: 640px) { .goal-panel { padding: 14px; } .goal-text { font-size: 17px; } .meter.large { width: 40%; } }
 
-/* Connected storage and work machines, kept separate from people and agents. */
-.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+/* Full-instance backup and recovery controls inside Settings. */
 .subhubs { min-width: 0; padding: 4px 0 24px; }
 .subhub-heading, .subhub-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .subhub-actions { justify-content: flex-start; }
-.subhub-heading h2 { margin: 0; font-size: 20px; letter-spacing: -.025em; }
+.subhub-heading h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 20px; letter-spacing: -.025em; }
 .subhub-heading p, .subhub-section-heading p { margin: 5px 0 0; font-size: 13px; line-height: 1.5; }
 .subhub-sections { display: flex; gap: 4px; margin: 20px 0; padding: 4px; width: fit-content; max-width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: 9px; background: var(--fill); }
 .subhub-sections button { display: inline-flex; align-items: center; gap: 7px; flex: none; padding: 8px 13px; border: 0; border-radius: 6px; color: var(--text-2); background: transparent; font: 500 13px var(--font); cursor: pointer; }
@@ -686,81 +685,23 @@ a.label:hover { text-decoration: none; filter: brightness(.96); }
 .subhub-stat > span { display: flex; gap: 8px; align-items: center; color: var(--text-2); font-size: 12px; }
 .subhub-stat > span svg { color: var(--text-3); }
 .subhub-stat strong { display: block; margin-top: 12px; font-size: 28px; font-weight: 600; line-height: 1.15; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
-.subhub-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr)); gap: 14px; }
-.subhub-node { padding: 20px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--panel); min-width: 0; }
-.subhub-node-heading { display: flex; align-items: center; gap: 10px; }
-.subhub-node-heading > div { flex: 1; min-width: 0; }
-.subhub-node h3 { margin: 0 0 3px; font-size: 15px; overflow-wrap: anywhere; }
-.subhub-node-heading .mono { font: 11px var(--mono); }
-.subhub-node-icon, .subhub-event-icon { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 36px; height: 36px; border-radius: 9px; background: var(--accent-soft); color: var(--accent-text); }
-.subhub-event-icon { width: 28px; height: 28px; border-radius: 7px; }
-.activity.compact .subhub-event-icon { width: 20px; height: 20px; border-radius: 5px; }
-.subhub-node-meta, .subhub-work-meta { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 16px 0; color: var(--text-2); font-size: 12px; }
-.subhub-node-meta > span, .subhub-work-meta > span { display: inline-flex; align-items: center; gap: 5px; }
-.subhub-capacity > div { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--text-2); }
-.subhub-capacity meter { display: block; width: 100%; height: 9px; margin-top: 5px; border: 0; border-radius: 5px; background: var(--fill); accent-color: var(--accent); }
-.subhub-capacity meter::-webkit-meter-bar { border: 0; background: var(--fill); border-radius: 5px; }
-.subhub-capacity meter::-webkit-meter-optimum-value { background: var(--accent); border-radius: 5px; }
-.subhub-capacity p { margin: 7px 0 0; font-size: 11px; color: var(--text-3); }
-.subhub-node-controls { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; border-top: 1px solid var(--line); margin-top: 16px; padding-top: 14px; }
-.subhub-inline-label { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-2); }
-.subhub-node-controls .button, .subhub-node-controls select { font-size: 11px; padding: 5px 8px; min-height: 30px; }
-.subhub-node-errors { padding-left: 16px; color: var(--red); font-size: 12px; overflow-wrap: anywhere; }
 .subhub-section-heading { margin-bottom: 18px; }
-.subhub-section-heading h3, .subhub-form h3, .subhub-recent h3 { margin: 0; font-size: 15px; }
-.subhub-table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--panel); }
-.subhub-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }
-.subhub-table th { background: var(--fill); color: var(--text-2); font-size: 11px; font-weight: 500; white-space: nowrap; }
-.subhub-table th, .subhub-table td { padding: 12px 16px; border-bottom: 1px solid var(--line); vertical-align: middle; }
-.subhub-table tr:last-child td { border-bottom: 0; }
-.subhub-table th:last-child, .subhub-table td:last-child { text-align: right; }
-.subhub-cell-note { display: block; margin-top: 4px; color: var(--text-3); font-size: 11px; }
-.subhub-cell-note.mono { font-family: var(--mono); }
-.subhub-note, .subhub-feed-note { color: var(--text-3); font-size: 12px; line-height: 1.6; margin: 14px 0; }
+.subhub-section-heading h3, .subhub-form h3 { margin: 0; font-size: 15px; }
+.subhub-note { color: var(--text-3); font-size: 12px; line-height: 1.6; margin: 14px 0; }
 .subhub-note code { font-size: 11px; overflow-wrap: anywhere; }
-.subhub-feed-note { margin: 10px 0; font-size: 11px; }
-.subhub-recent { margin-top: 26px; }
-.subhub-recent ol { list-style: none; margin: 12px 0 0; padding: 0; }
-.subhub-recent li { display: flex; align-items: flex-start; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--line); font-size: 12px; }
-.subhub-recent li > div { flex: 1; min-width: 0; }
-.subhub-recent li p { margin: 4px 0 0; color: var(--text-2); overflow-wrap: anywhere; }
-.subhub-recent li > time { flex: none; color: var(--text-3); font-size: 11px; }
-.subhub-presence { display: inline-flex; align-items: center; gap: 5px; }
-.subhub-presence .online-dot { width: 5px; height: 5px; }
-.subhub-presence-list { margin: 16px 0 24px; }
 .subhub-dialog { width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; padding: 24px; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--panel); color: var(--text); box-shadow: 0 20px 80px #0003; }
 .subhub-dialog::backdrop { background: #0006; backdrop-filter: blur(3px); }
 .subhub-dialog-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
 .subhub-dialog-heading h2 { font-size: 20px; margin: 0; letter-spacing: -.025em; }
 .subhub-dialog-heading p { font-size: 12px; margin: 7px 0 0; line-height: 1.5; }
 .subhub-form { display: grid; gap: 14px; }
-.subhub-form label, .subhub-filter label { display: grid; gap: 7px; font-size: 12px; font-weight: 500; color: var(--text-2); }
+.subhub-form label { display: grid; gap: 7px; font-size: 12px; font-weight: 500; color: var(--text-2); }
 .subhub-form label .quiet { font-weight: 400; font-size: 11px; line-height: 1.5; }
 .subhubs input, .subhubs select, .subhubs textarea, .subhub-dialog input, .subhub-dialog select { min-width: 0; max-width: 100%; padding: 9px 11px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--bg); color: var(--text); font: 13px var(--font); }
 .subhubs textarea { resize: vertical; line-height: 1.5; }
 .subhubs input:focus-visible, .subhubs select:focus-visible, .subhubs textarea:focus-visible, .subhub-dialog input:focus-visible, .subhub-dialog select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .subhubs :disabled { opacity: .55; cursor: not-allowed; }
-.subhub-inline-form { display: flex; align-items: center; gap: 7px; margin-top: 12px; }
-.subhub-inline-form input { flex: 1; width: 0; }
-.subhub-work-form, .subhub-upload { margin: 16px 0 20px; padding: 20px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg); }
 .subhub-form > .button { justify-self: start; }
-.subhub-filter { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
-.subhub-filter label { min-width: min(100%, 240px); }
-.subhub-work-list { display: grid; gap: 12px; }
-.subhub-work { padding: 18px 20px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--panel); }
-.subhub-work h4 { margin: 0 0 5px; font-size: 15px; }
-.subhub-work .subhub-heading a { font-size: 12px; }
-.subhub-work-text { margin: 12px 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-2); font-size: 13px; line-height: 1.6; }
-.subhub-work-meta { margin: 12px 0; color: var(--text-3); }
-.subhub-work .subhub-actions { margin-top: 12px; }
-.subhub-work details { margin: 12px 0; font-size: 12px; }
-.subhub-work summary { cursor: pointer; }
-.subhub-drive-search { margin: 0 0 16px; }
-.subhub-file-path { overflow-wrap: anywhere; }
-.subhub-upload { max-width: 600px; margin-top: 24px; }
-.subhub-upload input[type="file"] { font-size: 12px; padding: 8px; }
-.subhub-replace-note { margin: 0; padding: 10px 12px; border-radius: 6px; color: var(--amber); background: var(--amber-soft); font-size: 12px; line-height: 1.5; }
-.subhub-success { display: flex; align-items: center; gap: 7px; margin: 0; color: var(--green); font-size: 12px; }
 @media (max-width: 640px) {
   .subhub-stats { grid-template-columns: 1fr; gap: 8px; }
   .subhub-stat { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; }
@@ -768,14 +709,11 @@ a.label:hover { text-decoration: none; filter: brightness(.96); }
   .subhub-sections { width: 100%; }
   .subhub-sections button { flex: 1; justify-content: center; padding: 8px; gap: 5px; font-size: 12px; }
   .subhub-sections button svg { display: none; }
-  .subhub-node, .subhub-work, .subhub-work-form, .subhub-upload { padding: 16px; }
-  .subhub-table th, .subhub-table td { padding: 10px 12px; }
   .subhub-dialog { padding: 20px; }
-  .subhub-recent li > time { max-width: 65px; text-align: right; }
 }
 
-/* Hub-wide recovery has its own scope, apart from space-owned nodes. */
-.page.instance-recovery { width: 100%; min-width: 0; padding: 22px 36px 32px; }
+/* Full-instance recovery details. */
+.page.settings-page { width: 100%; min-width: 0; padding: 22px 36px 32px; }
 .instance-recovery .page-header, .instance-recovery .page-title-row, .instance-stats, .instance-stats .subhub-stat, .instance-vault, .instance-backup, .instance-restore { min-width: 0; max-width: 100%; }
 .instance-recovery .page-title { overflow-wrap: anywhere; }
 .instance-mark { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 48px; height: 48px; border-radius: 12px; color: var(--accent-text); background: var(--accent-soft); }
@@ -813,7 +751,7 @@ a.label:hover { text-decoration: none; filter: brightness(.96); }
 .instance-review { display: flex; align-items: flex-start; gap: 9px; margin: 20px 0 14px; color: var(--text-2); font-size: 12px; line-height: 1.6; cursor: pointer; }
 .instance-review input { margin-top: 3px; flex: none; accent-color: var(--accent); }
 @media (max-width: 640px) {
-  .page.instance-recovery { padding: 16px 16px 20px; }
+  .page.settings-page { padding: 16px 16px 20px; }
   .instance-recovery .page-title-row { flex-wrap: wrap; }
   .instance-recovery .page-actions { flex-basis: 100%; }
   .instance-recovery .subhub-sections { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); min-width: 0; overflow: visible; }

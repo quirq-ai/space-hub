@@ -9,7 +9,6 @@ import { FilesTab, isChannel } from "./files";
 import { PathBar } from "@/shell/path-bar";
 import { GoalChip, GoalPanel } from "./goal";
 import { RawFiles } from "@/components/content-view";
-import { SubhubPresence } from "@/components/subhub-presence";
 
 type ProjectRoute = Extract<Route, { page: "project" }>;
 
@@ -47,10 +46,9 @@ export function ProjectPage({ route, view, error, me, signIn, refresh }: { route
     {route.tab === "commit" && <CommitTab place={place} oid={route.oid} />}
     {route.tab === "deps" && <DepsTab place={place} />}
     {route.tab === "branches" && <BranchesTab place={place} />}
-    {meta && route.tab === "activity" && <ActivityList items={meta.activity} space={place.space} project={meta.fullName} />}
+    {meta && route.tab === "activity" && <ActivityList items={meta.activity} />}
     {meta && route.tab === "people" && <>
       {meta.here.length > 0 && <><h2 className="section-title">Here now</h2><HereNow here={meta.here} /></>}
-      <SubhubPresence space={place.space} project={meta.fullName} />
       <People here={meta.here} agents={meta.agents} groups={[
         { title: "Owners", names: meta.owners, note: `They manage ${place.space}.` },
         { title: "Members", names: meta.members, note: `They push to every project of ${place.space}.` },
@@ -76,7 +74,6 @@ function ProjectStrip({ place, meta }: { place: Place; meta: ProjectMeta }) {
     {people.length > 0 && <a href={placeUrl(place, hashOf("people"))} onClick={onLink} title={people.join(", ")}><AvatarStack names={people} max={5} size={20} /><span>{people.length} {people.length === 1 ? "person" : "people"}</span></a>}
     {meta.agents.length > 0 && <a href={placeUrl(place, hashOf("people"))} onClick={onLink} title={meta.agents.join(", ")}><Bot size={14} />{meta.agents.length} {meta.agents.length === 1 ? "agent" : "agents"}</a>}
     {here.length > 0 && <span className="strip-here" title={meta.here.map(who => `${who.agent} · ${MODES[who.mode] ?? who.mode}`).join("\n")}><i className="online-dot" />{here.length} here now</span>}
-    <SubhubPresence space={place.space} project={meta.fullName} compact />
   </div>;
 }
 

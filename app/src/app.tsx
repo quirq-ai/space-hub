@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Archive, BookOpen, Hash, Folder, FolderGit2, History, Home, Server, Users, User } from "lucide-react";
+import { BookOpen, Hash, Folder, FolderGit2, History, Home, Settings, Users, User } from "lucide-react";
 import { placeUrl, viewUrl, type HubMeta, type Place, type ProjectMeta, type SpaceMeta, type View } from "@/api";
 import { useLive } from "@/hooks/use-live";
 import { channelSeenKey, ChannelsContext, useChannels } from "@/hooks/use-channels";
@@ -13,7 +13,7 @@ import { ActivityFeed, HomePage } from "@/pages/home";
 import { SpacePage } from "@/pages/space";
 import { ProjectPage } from "@/pages/project";
 import { SECTION_ICONS, SECTION_ORDER } from "@/pages/files";
-import { InstanceRecoveryPage } from "@/pages/instance-recovery";
+import { SettingsPage } from "@/pages/settings";
 
 const HUB: Place = { space: "", project: "" };
 const SEEN = "spacehub:seen:v1";
@@ -29,7 +29,7 @@ export function App() {
   const route = useRoute();
   const me = useMe();
   const recoveryOnly = me.recoveryOnly;
-  const recovery = recoveryOnly || (route.page === "home" && route.tab === "subhubs");
+  const recovery = recoveryOnly || (route.page === "home" && route.tab === "settings");
   const place = recovery || route.page === "home" ? HUB : route.place;
   const filesPath = route.page === "project" && route.tab === "files" ? route.path : "";
   const live = useLive<View>(recovery ? undefined : viewUrl(place, filesPath));
@@ -69,7 +69,7 @@ export function App() {
     if (location.hash === "#search") { history.replaceState(null, "", location.pathname); setSearching(true); }
   }, [recoveryOnly]);
   useEffect(() => {
-    if (recoveryOnly && (route.page !== "home" || route.tab !== "subhubs")) navigate("/#/subhubs");
+    if (recoveryOnly && (route.page !== "home" || route.tab !== "settings")) navigate("/#/settings");
   }, [recoveryOnly, route]);
   useEffect(() => {
     if (recoveryOnly) return;
@@ -86,7 +86,7 @@ export function App() {
     if (route.page !== "home") { markSeen(route.page === "project" ? placeKey : place.space); setSeen(readSeen()); }
   }, [route.page, placeKey, place.space, recoveryOnly]);
   useEffect(() => {
-    document.title = recovery ? "Sub-hubs · spacehub" : route.page === "home" ? "spacehub" : `${route.page === "project" ? placeKey : place.space} · spacehub`;
+    document.title = recovery ? "Settings · spacehub" : route.page === "home" ? "spacehub" : `${route.page === "project" ? placeKey : place.space} · spacehub`;
   }, [route.page, placeKey, place.space, recovery]);
 
   const signIn = `/-/login?next=${encodeURIComponent(location.pathname + location.hash)}`;
@@ -100,9 +100,7 @@ export function App() {
   };
   const primary = [
     ...(!recoveryOnly ? [{ key: "home", label: "Home", href: "/", icon: <Home size={16} />, active: route.page === "home" && !recovery }] : []),
-    { key: "instance-recovery", label: "Sub-hubs", href: "/#/subhubs", icon: <Archive size={16} />, active: recovery },
     ...(me.name && !recoveryOnly ? [{ key: "me", label: "Your profile", href: placeUrl({ space: me.name, project: "" }), icon: <User size={16} />, active: route.page === "space" && place.space === me.name }] : []),
-    ...(place.space && !recoveryOnly ? [{ key: "nodes", label: "Nodes", href: placeUrl({ space: place.space, project: "" }, hashOf("nodes")), icon: <Server size={16} />, active: route.page === "space" && route.tab === "nodes" }] : []),
   ];
   const sideSections: SideSection[] = [];
   if (channels && meta?.level === "project") {
@@ -131,6 +129,7 @@ export function App() {
   // The hub's own pages, rendered by the server in this same frame.
   const footer = [
     { key: "guide", label: "Guide", href: "/-/guide", icon: <BookOpen size={16} /> },
+    { key: "settings", label: "Settings", href: "/#/settings", icon: <Settings size={16} />, active: recovery },
     { key: "builders", label: "Builders", href: "/-/builders", icon: <Users size={16} /> },
   ];
 
@@ -164,7 +163,7 @@ export function App() {
     <main className="main" id="main">
       <div className="main-scroll">
         {route.page === "home" && !recovery && <HomePage view={view as View<HubMeta> | undefined} me={me.name} mySpaces={me.spaces.map(s => s.space)} seen={seen} activityOpen={activityOpen} onActivity={toggleActivity} />}
-        {recovery && <InstanceRecoveryPage onConnectionState={setRecoveryState} />}
+        {recovery && <SettingsPage onConnectionState={setRecoveryState} />}
         {!recovery && route.page === "space" && <SpacePage name={place.space} tab={route.tab} view={view as View<SpaceMeta> | undefined} error={live.error} me={me.name} seen={seen} />}
         {!recovery && route.page === "project" && <ChannelsContext.Provider value={channels}><ProjectPage route={route} view={view as View<ProjectMeta> | undefined} error={live.error} me={me.name} signIn={signIn} refresh={live.refresh} /></ChannelsContext.Provider>}
       </div>

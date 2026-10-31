@@ -6,13 +6,11 @@ import { PathBar } from "@/shell/path-bar";
 import { hashOf, onLink } from "@/router";
 import { Ago, Avatar, CommandTabs, Empty, Popover, SkeletonRows } from "@/ui/primitives";
 import { ActivityList, HereNow, PageHeader, People, Tabs } from "./common";
-import { SubhubsPage } from "./subhubs";
-import { SubhubPresence } from "@/components/subhub-presence";
 
 const KIND_ICON = { personal: <User size={13} />, org: <Building2 size={13} />, agent: <Bot size={13} /> } as Record<string, React.ReactNode>;
 
 /** A builder's profile, an org, or an agent: who they are, what they work on, what they did. */
-export function SpacePage({ name, tab, view, error, me, seen }: { name: string; tab: "projects" | "agents" | "activity" | "people" | "nodes"; view: View<SpaceMeta> | undefined; error: string; me: string | null; seen: Record<string, string> }) {
+export function SpacePage({ name, tab, view, error, me, seen }: { name: string; tab: "projects" | "agents" | "activity" | "people"; view: View<SpaceMeta> | undefined; error: string; me: string | null; seen: Record<string, string> }) {
   if (!view) return <div className="page">{error ? <Empty icon={<User size={20} />} title={`No space named ${name}`}><p>{error}</p></Empty> : <><div className="profile-skeleton"><span className="skeleton round" style={{ width: 72, height: 72 }} /><SkeletonRows rows={2} avatar={false} /></div><SkeletonRows rows={5} /></>}</div>;
   const meta = view.meta;
   const projects = [...view.snapshot.directory.entries].sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
@@ -42,7 +40,6 @@ export function SpacePage({ name, tab, view, error, me, seen }: { name: string; 
         {meta.kind === "personal" && agentCount > 0 && <a href={base + "#" + hashOf("agents")} onClick={onLink}><Bot size={14} />{agentCount} {agentCount === 1 ? "agent" : "agents"}</a>}
         {meta.githubLogin && <a href={meta.github || `https://github.com/${meta.githubLogin}`} target="_blank" rel="noreferrer"><Github size={14} />{meta.githubLogin}</a>}
         {meta.here.length > 0 && <a className="strip-here" href={base + "#" + hashOf("people")} onClick={onLink} title={meta.here.map(who => who.agent).join(", ")}><i className="online-dot" />{new Set(meta.here.map(who => who.agent)).size} here now</a>}
-        <SubhubPresence space={name} compact />
       </div>
       {meta.memberOf.length > 0 && <div className="profile-links">
         {meta.memberOf.map(role => <a key={role.space} className="chip-link" href={placeUrl({ space: role.space, project: "" })} onClick={onLink}><Avatar name={role.space} size={18} kind={role.kind} />{role.space}{role.role === "owner" && <span className="quiet">owner</span>}</a>)}
@@ -53,7 +50,6 @@ export function SpacePage({ name, tab, view, error, me, seen }: { name: string; 
       ...(hasAgents ? [{ key: "agents", label: "Agents", href: base + "#" + hashOf("agents"), count: agentCount }] : []),
       { key: "people", label: meta.kind === "org" ? "Members" : "People", href: base + "#" + hashOf("people"), count: peopleCount || undefined },
       { key: "activity", label: "Activity", href: base + "#" + hashOf("activity") },
-      { key: "nodes", label: "Nodes", href: base + "#" + hashOf("nodes") },
     ]} />
     {tab === "projects" && <>
       {projects.length || meta.collaborates.length ? <Browser head={<>{projects.length} {projects.length === 1 ? "project" : "projects"} in {name}</>} groups={[
@@ -70,11 +66,9 @@ export function SpacePage({ name, tab, view, error, me, seen }: { name: string; 
       ]} /> : <Empty icon={<FolderGit2 size={20} />} title="No projects yet"><p>Create one with <code>spacehub project create {name}/&lt;name&gt; --source . --push</code>.</p></Empty>}
     </>}
     {tab === "agents" && hasAgents && <AgentList space={name} kind={meta.kind} agents={meta.agentList} canManage={canManage} />}
-    {tab === "nodes" && <SubhubsPage key={name} space={name} canManage={canManage} canWrite={!!me && (meta.owners.includes(me) || meta.members.includes(me))} me={me} projects={projects.map(project => `${name}/${project.name}`)} />}
-    {tab === "activity" && <ActivityList items={meta.activity} space={name} />}
+    {tab === "activity" && <ActivityList items={meta.activity} />}
     {tab === "people" && <>
       {meta.here.length > 0 && <><h2 className="section-title">Here now</h2><HereNow here={meta.here} /></>}
-      <SubhubPresence space={name} />
       <People here={meta.here} groups={[{ title: "Owners", names: meta.owners, note: `They manage ${name}.` }, { title: "Members", names: meta.members, note: `They push to every project of ${name}.` }]} />
     </>}
   </div>;

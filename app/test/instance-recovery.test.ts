@@ -5,10 +5,11 @@ import { parseRoute } from "../src/router.ts";
 
 const id = "ab".repeat(16);
 
-test("global instance recovery and space-owned nodes are separate routes", () => {
-  assert.deepEqual(parseRoute("/", "#/subhubs"), { page: "home", tab: "subhubs" });
-  assert.deepEqual(parseRoute("/quirq", "#/subhubs"), { page: "home", tab: "subhubs" });
-  assert.deepEqual(parseRoute("/quirq", "#/nodes"), { page: "space", place: { space: "quirq", project: "" }, tab: "nodes" });
+test("global Settings includes legacy instance recovery routes while retaining space pages", () => {
+  assert.deepEqual(parseRoute("/", "#/settings"), { page: "home", tab: "settings" });
+  assert.deepEqual(parseRoute("/", "#/subhubs"), { page: "home", tab: "settings" });
+  assert.deepEqual(parseRoute("/quirq", "#/subhubs"), { page: "home", tab: "settings" });
+  assert.deepEqual(parseRoute("/quirq", "#/projects"), { page: "space", place: { space: "quirq", project: "" }, tab: "projects" });
   assert.deepEqual(parseRoute("/", ""), { page: "home" });
 });
 
@@ -37,7 +38,7 @@ test("restore submits only the selected instance ID and required new directory",
 
 test("recovery permission errors refer to the full server operator", () => {
   assert.match(instanceErrorMessage(403), /operator of this Spacehub server/);
-  assert.doesNotMatch(instanceErrorMessage(403), /org|space owner|node/i);
+  assert.doesNotMatch(instanceErrorMessage(403), /org|space owner/i);
   assert.match(instanceErrorMessage(404), /Full-instance recovery/);
   assert.match(instanceErrorMessage(409), /new directory/);
 });

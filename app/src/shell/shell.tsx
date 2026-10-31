@@ -47,7 +47,7 @@ export function TopBar({ me, signIn, live, onSearch, onMenu, recoveryOnly = fals
 }) {
   return <header className="topbar">
     <button className="icon-button only-narrow" type="button" aria-label="Open navigation" onClick={onMenu}><Menu size={18} /></button>
-    <a className="logo" href={recoveryOnly ? "/#/subhubs" : "/"} onClick={onLink} aria-label={recoveryOnly ? "Sub-hubs home" : "spacehub home"}><QuirqMark /><span>spacehub</span></a>
+    <a className="logo" href={recoveryOnly ? "/#/settings" : "/"} onClick={onLink} aria-label={recoveryOnly ? "Settings home" : "spacehub home"}><QuirqMark /><span>spacehub</span></a>
     {!recoveryOnly && <button className="search-trigger" type="button" onClick={onSearch} aria-label="Search spaces, projects and files"><Search size={15} /><span>Search spaces, projects, files</span><kbd>⌘K</kbd></button>}
     <span className="topbar-spacer" />
     <span className={`live-pill ${live}`} title={live === "offline" ? recoveryOnly ? "Reconnecting to recovery" : "Reconnecting to the hub" : recoveryOnly ? "Full-instance recovery connection" : "Changes appear as they happen"}><i />{live === "offline" ? "Reconnecting" : "Live"}</span>
@@ -145,7 +145,7 @@ export function Sidebar({ switcher, primary, sections, footer, open, onClose, ra
         })}
       </div>
       <div className="side-foot">
-        {!recoveryOnly && footer.map(item => <Item key={item.key} item={item} rail={rail} onClose={onClose} />)}
+        {footer.filter(item => !recoveryOnly || item.key === "settings").map(item => <Item key={item.key} item={item} rail={rail} onClose={onClose} />)}
         <button type="button" className="nav-item rail-toggle only-wide" onClick={onRail} aria-label={rail ? "Expand the sidebar" : "Collapse the sidebar"} title={rail ? "Expand the sidebar" : "Collapse the sidebar"}>
           <span className="nav-icon">{rail ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</span><span className="nav-label">Collapse</span>
         </button>

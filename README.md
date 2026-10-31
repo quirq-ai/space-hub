@@ -679,13 +679,12 @@ on its own port (a local test server).
 
 ## Sub-hubs: full-instance backup and recovery
 
-**Sub-hubs** in the global navigation opens `/#/subhubs`, the recovery view
+**Settings**, directly below **Guide** in the navigation, opens
+`/#/settings`. Its **Sub-hubs** section is the recovery view
 for an entire Spacehub deployment. It lists immutable backups, verifies
 their contents and restores a chosen backup into a new directory. Access
 requires the hub's global administrator identity or an explicitly delegated
 recovery operator. Owning a space does not grant instance recovery access.
-Per-space **Nodes** and `spacehub node` remain a separate feature for Git
-replicas, queued work and drives.
 
 ### Cold capture of the complete deployment
 
@@ -776,7 +775,7 @@ offline, without a database connection or a primary-hub sign-in:
 spacehub subhub serve --storage /srv/instance-vault --container spacehub --container caddy --restore-root /srv/instance-restores --token-file /srv/recovery-token
 ```
 
-Open the printed URL, normally `http://127.0.0.1:4092/#/subhubs`.
+Open the printed URL, normally `http://127.0.0.1:4092/#/settings`.
 `--listen 127.0.0.1:4092` changes the loopback port; public listeners are
 not supported. `--source <hub-name>` labels the source. The service needs
 the built app assets (`npm run build` in `app/` for a source checkout).
@@ -812,169 +811,6 @@ forwarding browser cookies or builder credentials. Choose either a local
 vault or this remote connection. Keep the standalone recovery UI available
 as well: the main hub's UI and sign-in depend on the primary database.
 
-## Nodes: backup, queued work and read routing
-
-A machine running `spacehub node run` can contribute durable disk storage
-to a space. The parent remains the authority for identity, permissions,
-writes and work claims. Nodes retain Git snapshots, keep delivered work
-on disk, and serve an explicit gateway for immutable file reads. Work is
-stored and queued for workers to claim; a node never executes its text.
-
-### In the app
-
-Open a space and choose **Nodes** in its tabs or sidebar. Overview shows
-connected machines, heartbeat status, storage and runtime errors. Owners
-can rename, pause/enable, and change a machine between Backups and Drive.
-Backups lists reported snapshots and copies an offline restore command.
-Work queue lets members submit, claim, release and complete work. Drive
-browses and uploads files on a selected connected drive.
-
-Online machines also appear in the space's presence strip and Activity.
-Activity combines the hub's normal events with node connections,
-disconnections, backup/drive changes and work progress. Routine heartbeats
-do not create repeated activity entries. Node status and activity refresh
-every 15 seconds; nodes pick up owner changes at their next heartbeat.
-Only members see operational node data and use drive storage; settings
-remain owner-only. A hub without the updated API shows an unavailable
-message while its existing projects and chats continue to work.
-
-```sh
-spacehub node run --space acme --id workstation --storage /srv/spacehub-node
-```
-
-`--mode backup` is the default. `--mode` selects a new node's initial mode;
-on later restarts, registered nodes keep the parent's mode and pause state,
-so restarting the original command does not undo changes made in the UI.
-
-The node defaults to a private listener at `127.0.0.1:4080`. It registers
-with the configured parent using the signed-in space owner, receives a
-separate node credential, and sends heartbeats and pulls work every 20
-seconds, independently of backups. No inbound connection is needed for
-backup and queue delivery. To contribute read traffic, expose that listener
-through your TLS proxy and add `--advertise https://node.example`. The
-advertised endpoint must be reachable from the parent. A non-loopback
-listener is opt-in with `--listen 0.0.0.0:4080`.
-
-The parent needs this version of the web service. The Docker entrypoint
-keeps its private control state under `$SPACETIME_ROOT/subhubs` (normally
-`/data/subhubs`). A separately launched web service enables the control
-plane with `SPACEHUB_SUBHUB_DIR=<dedicated-directory>`. This directory needs
-persistent storage and one writer process. Existing hubs without this API
-are detected before registration or local storage initialization.
-
-### Retained backups
-
-Backups are self-contained Git bundles with complete ref manifests and
-checksums. New generations are published only after integrity checks;
-force pushes, deleted refs, deleted projects, interrupted transfers and
-offline parents do not delete older snapshots. These are per-project
-snapshots, not a transaction across all projects in a space.
-
-```sh
-spacehub node snapshots --storage /srv/spacehub-node
-spacehub node snapshots acme/site --storage /srv/spacehub-node
-spacehub node restore <snapshot-id> ./recovered-site --storage /srv/spacehub-node
-spacehub node status --storage /srv/spacehub-node
-```
-
-Listing and restoring work offline. A restore creates a bare Git repository
-in a new destination; use `git clone ./recovered-site ./checkout` for a
-working copy. It never pushes recovered history to the parent. To make a
-local backup before upgrading a parent, use `--standalone --once`; omit
-`--once` to keep backing up and serve the node's authenticated local API.
-Registered and standalone nodes use distinct storage configurations.
-
-Default storage preflight limits are 1,024 MiB per node and 128 MiB per
-project, adjustable with `--max-storage-mb` and `--max-project-mb`.
-`--project acme/site` restricts replication to one project. No snapshots
-are silently pruned to make room. These are conservative application
-preflights, not OS disk quotas; use filesystem quotas for a hard ceiling.
-The current Git helper buffers fetched packs in memory, so choose a
-per-project limit appropriate for the machine.
-
-Snapshots preserve committed project files, chats and Git history. Use
-[full-instance Sub-hubs](#sub-hubs-full-instance-backup-and-recovery) for
-private accounts, agent tokens, permissions and other database-only state
-in the parent server's `/data` volume. Node configuration and queued work
-are private operational data outside project snapshots.
-
-### Durable work items
-
-Members submit bounded text with an idempotency key. The parent persists
-the item before accepting it, and retains it when nodes are unavailable.
-Healthy nodes receive assignments and acknowledge them only after durable
-local storage. A worker then claims through the parent:
-
-```sh
-spacehub node work submit --space acme --project site --title "Review launch" --text "Check the launch plan" --key launch-review-001
-spacehub node work list --space acme
-spacehub node work claim <work-id> --lease 60
-spacehub node work complete <work-id> --fence <returned-fence> --result "Review complete"
-spacehub node work release <work-id> --fence <returned-fence>
-spacehub node list --space acme
-```
-
-Claims are exclusive, expire after 1–300 seconds, and carry increasing
-fences. Completion and release reject an expired or superseded fence.
-They update queue state only; they do not authorize or fence independent
-Git pushes or actions in external systems. There is no automatic runtime
-execution in this version.
-
-### Active drives
-
-Drive mode stores additional files directly on a node's disk, separately
-from the parent's Git repositories. It needs an advertised address the
-parent can reach:
-
-```sh
-spacehub node run --space acme --id office-drive --mode drive --storage /srv/office-drive --advertise https://drive.example
-```
-
-Expose the node listener through your HTTPS reverse proxy. The browser
-uses the authenticated same-origin `/-/api/subhubs/drive/files` and
-`/-/api/subhubs/drive/file` gateways with `space`, `node`, and `path` query
-parameters. The parent verifies space membership, then forwards to that
-specific healthy enabled drive using its private node credential. Browser
-cookies and owner tokens are never sent to the node. File contents stay
-on the drive; the parent proxies the transfer without persisting a Git
-copy. An unavailable drive returns an error rather than writing elsewhere.
-
-Files are limited to 16 MiB each, 5,000 paths and a 2 MiB local index.
-Uploads are raw bytes: create uses `If-None-Match: *`, replacement uses
-`If-Match: <current-SHA256>`. Conflicting writes return 412. Nodes flush
-immutable SHA-256 blobs before atomically updating their path index;
-downloads verify checksums. Older blobs are retained without automatic
-pruning, and count toward physical node capacity. Logical file-byte totals
-can exceed physical use when multiple paths share the same blob.
-
-Drive files are not Git snapshots. Preserve the node's complete private
-storage directory for drive recovery. Switching to Backups pauses drive
-access and starts project snapshots; existing drive data remains on disk.
-
-### Read traffic
-
-The explicit gateway is
-`GET /-/api/subhubs/read?project=acme/site&path=README.md`, with optional
-`oid=<40-character-commit>`. Without an oid, the parent resolves its current
-default-branch head. It uses only an owner-approved, recently heartbeating
-node advertising a completed snapshot for that exact head. It forwards no
-browser cookies or builder credentials, checks the returned snapshot/head,
-and falls back to the parent if the node is stale, unreachable, oversized
-or inconsistent. Range requests go to the parent with their range headers.
-Read replicas are trusted space-owner-approved machines; response headers
-are not independent cryptographic proof of the file contents.
-
-Existing application, chat writes, login, database subscriptions and Git
-remotes continue using the parent. This gateway does not make a storage
-node into a second SpacetimeDB server or transparently reroute existing
-clients. A node behind NAT can contribute backup and queued storage while
-leaving read routing disabled.
-
-Keep the node's dedicated storage directory private. Graceful shutdown
-releases its writer locks; after a forced termination, verify the process
-has stopped before removing a stale `.node.lock` or backup writer lock.
-The parent's control directory also uses a `.writer.lock`; inspect it after
-an unclean server exit if startup reports that another writer is active.
 
 ## Local development
 

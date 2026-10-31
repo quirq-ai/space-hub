@@ -43,12 +43,15 @@ async function fixture() {
   return { root, storage, snapshot };
 }
 
-test('Sub-hubs and Nodes expose distinct CLI contracts; full backup refuses org filters', async () => {
-  const subhub = await run(['subhub', 'help']), node = await run(['node', 'help']);
-  assert.equal(subhub.code, 0, subhub.stderr); assert.equal(node.code, 0, node.stderr);
+test('full-instance Sub-hubs commands remain available without Nodes or org filters', async () => {
+  const subhub = await run(['subhub', 'help']), node = await run(['node', 'help']), help = await run(['help']);
+  assert.equal(subhub.code, 0, subhub.stderr); assert.equal(help.code, 0, help.stderr);
   assert.match(subhub.stdout, /subhub backup --container/);
   assert.match(subhub.stdout, /subhub restore <snapshot> <new-directory>/);
-  assert.match(node.stdout, /spacehub node run --space/);
+  assert.notEqual(node.code, 0);
+  assert.doesNotMatch(help.stdout, /(?:NODES|spacehub node|node run)/);
+  assert.doesNotMatch(subhub.stdout, /(?:Nodes|spacehub node)/);
+  assert.match(help.stdout, /subhub backup\|snapshots\|verify\|restore\|serve/);
   assert.doesNotMatch(subhub.stdout, /subhub (?:work|run|register)/);
   const invalid = await run(['subhub', 'backup', '--container', 'hub', '--storage', path.join(compiled, 'invalid'), '--space', 'quirq']);
   assert.notEqual(invalid.code, 0);
@@ -97,6 +100,7 @@ test('standalone Sub-hub UI works without the main hub and protects restore from
     const cookie = page.headers.get('set-cookie')!.split(';')[0];
     assert.match(page.headers.get('set-cookie')!, /HttpOnly; SameSite=Strict/);
     assert.match(await page.text(), /recovery-entry.js/);
+    assert.match(await (await fetch(base + '/-/recovery-entry.js')).text(), /\/\#\/settings/);
     const status = await fetch(base + '/-/api/instance-recovery/status', { headers: { cookie } });
     assert.equal(status.status, 200); assert.equal((await status.json()).scope, 'instance');
     assert.match(await (await fetch(base + '/-/app/app.js')).text(), /recovery app fixture/);
