@@ -1430,6 +1430,7 @@ export const ui = spacetimedb.httpHandler((ctx, req) => {
       forwardedUri: req.headers.get('x-spacehub-uri'),
       cookie: req.headers.get('cookie'),
       proto: req.headers.get('x-forwarded-proto'),
+      range: req.headers.get('range'),
       now: Number(ctx.timestamp.microsSinceUnixEpoch / 1_000_000n),
     })
   );

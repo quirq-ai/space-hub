@@ -3,12 +3,13 @@ import { ChevronLeft, ChevronRight, Code2, File, FileText, Folder, GitBranch, Gi
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { remarkHtmlAsText } from "@/lib/markdown";
+import { mediaOf } from "@/lib/media";
+import { MarkdownMedia, RawFiles } from "@/components/content-view";
 import { codeUrl, placeUrl, rawUrl, size, type CodeBlob, type CodeTree, type CommitDetail, type CommitSummary, type Commits, type Place, type Refs } from "@/api";
 import { useLive } from "@/hooks/use-live";
 import { hashOf, navigate, onLink } from "@/router";
 import { Ago, Avatar, CopyButton, Empty, ErrorNote, Skeleton, SkeletonRows, SkeletonText } from "@/ui/primitives";
 
-const IMAGES = /\.(png|jpe?g|gif|webp)$/i;
 const href = (place: Place, tab: string, params: Record<string, string | number | undefined>) => placeUrl(place, hashOf(tab, params));
 
 function RefPicker({ place, current, tab, path }: { place: Place; current: string; tab: "code" | "commits"; path: string }) {
@@ -39,6 +40,11 @@ function PathCrumbs({ place, ref, path }: { place: Place; ref: string; path: str
   </nav>;
 }
 
+/** A file's Markdown, its images and video shown from this ref. */
+function Doc({ text, filePath }: { text: string; filePath: string }) {
+  return <ReactMarkdown remarkPlugins={[remarkGfm, remarkHtmlAsText]} skipHtml components={{ img: ({ src, alt }) => <MarkdownMedia src={typeof src === "string" ? src : ""} alt={alt} filePath={filePath} /> }}>{text}</ReactMarkdown>;
+}
+
 function CodeLines({ text }: { text: string }) {
   const lines = useMemo(() => { const all = text.split("\n"); if (all.length > 1 && all[all.length - 1] === "") all.pop(); return all; }, [text]);
   const [selected, setSelected] = useState<number>();
@@ -52,7 +58,8 @@ export function CodeTab({ place, ref, path, defaultBranch }: { place: Place; ref
   const live = useLive<CodeTree | CodeBlob>(codeUrl(place, "tree", { ref: current, path }), 5000);
   const [markdown, setMarkdown] = useState(true);
   const data = live.data;
-  return <div className="code-tab">
+  const media = mediaOf(path);
+  return <RawFiles.Provider value={file => rawUrl(place, current, file)}><div className="code-tab">
     <div className="toolbar"><RefPicker place={place} current={current} tab="code" path={path} /><PathCrumbs place={place} ref={current} path={path} />
       <span className="toolbar-spacer" />{path && <a className="button ghost" href={href(place, "commits", { ref: current, path })} onClick={onLink}><GitCommitHorizontal size={15} />History</a>}</div>
     {live.error && <ErrorNote message={live.error} retry={live.refresh} />}
@@ -71,7 +78,7 @@ export function CodeTab({ place, ref, path, defaultBranch }: { place: Place; ref
         })}</tbody></table> : <Empty icon={<Folder size={20} />} title="Empty folder" />}
       </div>
       {data.readme && <div className="panel readme"><div className="panel-head"><FileText size={15} /><strong>{data.readme.name}</strong></div>
-        <div className="markdown">{/\.txt$/i.test(data.readme.name) ? <pre>{data.readme.content}</pre> : <ReactMarkdown remarkPlugins={[remarkGfm, remarkHtmlAsText]} skipHtml>{data.readme.content}</ReactMarkdown>}</div></div>}
+        <div className="markdown">{/\.txt$/i.test(data.readme.name) ? <pre>{data.readme.content}</pre> : <Doc text={data.readme.content} filePath={path ? `${path}/${data.readme.name}` : data.readme.name} />}</div></div>}
     </>}
     {data?.kind === "blob" && <div className="panel">
       <div className="panel-head">
@@ -81,13 +88,14 @@ export function CodeTab({ place, ref, path, defaultBranch }: { place: Place; ref
         {/\.(md|markdown)$/i.test(path) && <button type="button" className="button ghost small" onClick={() => setMarkdown(value => !value)}>{markdown ? "Source" : "Preview"}</button>}
         {data.text !== null && <CopyButton text={data.text} label="Copy contents" />}
         <a className="button ghost small" href={rawUrl(place, current, path)} target="_blank" rel="noreferrer">Raw</a></div>
-      {IMAGES.test(path) ? <div className="image-box"><img src={rawUrl(place, current, path)} alt={path} /></div>
+      {media === "image" ? <div className="image-box"><img src={rawUrl(place, current, path)} alt={path} /></div>
+        : media === "video" ? <div className="image-box"><video src={rawUrl(place, current, path)} controls preload="metadata" playsInline aria-label={path} /></div>
         : data.binary ? <Empty icon={<File size={20} />} title="Binary file"><p>It can't be shown as text. <a href={rawUrl(place, current, path)}>Download it</a>.</p></Empty>
         : data.text === null ? <Empty icon={<File size={20} />} title="Large file"><p>Over 1 MB. <a href={rawUrl(place, current, path)}>Open it raw</a>.</p></Empty>
-        : /\.(md|markdown)$/i.test(path) && markdown ? <div className="markdown padded"><ReactMarkdown remarkPlugins={[remarkGfm, remarkHtmlAsText]} skipHtml>{data.text}</ReactMarkdown></div>
+        : /\.(md|markdown)$/i.test(path) && markdown ? <div className="markdown padded"><Doc text={data.text} filePath={path} /></div>
         : <CodeLines text={data.text} />}
     </div>}
-  </div>;
+  </div></RawFiles.Provider>;
 }
 
 function dayOf(iso: string) { return new Date(iso).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", year: "numeric" }); }

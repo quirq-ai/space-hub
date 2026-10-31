@@ -428,8 +428,8 @@ dock a tab bar.
   orgs linked to GitHub (fetched by the hub, so visitors never contact
   GitHub), and are initials otherwise.
 - `/<space>/<project>` has tabs: **Files** (the default branch as open-chat
-  shows it: JSON conversations, collections, JSONL feeds, Markdown, images,
-  PDFs and `.url` files), **Code** (any branch, tag or commit, with each
+  shows it: JSON conversations, collections, JSONL feeds, Markdown with its
+  images and video in place, images, video, PDFs and `.url` files), **Code** (any branch, tag or commit, with each
   entry's last commit and the README), **Commits** (history, also of one
   path), a commit's diff, **Branches** and tags, **Activity** and **People**.
 - Loads show placeholders shaped like what is coming and a thin progress bar;
@@ -503,8 +503,8 @@ rendered.
 | `/<space>?view=code` | A builder's personal space (its projects, and the spaces and projects it belongs to) or an org (its projects, owners and members, who is here), with what the space stores |
 | `/<space>/<project>?view=code` | Files at the default branch, each with its last commit; the README rendered as Markdown; clone commands, **Here now**, its space and collaborators, its size, commit, branch and tag counts |
 | `/<space>/<project>/tree/<ref>/<path>` | A folder at a branch, tag or commit, with a branch/tag picker |
-| `/<space>/<project>/blob/<ref>/<path>` | A file. Code has linkable line numbers (`#L12`); Markdown is rendered (`?plain=1` shows the source); images are shown |
-| `/<space>/<project>/raw/<ref>/<path>` | The file's bytes |
+| `/<space>/<project>/blob/<ref>/<path>` | A file. Code has linkable line numbers (`#L12`); Markdown is rendered (`?plain=1` shows the source); images are shown and video plays |
+| `/<space>/<project>/raw/<ref>/<path>` | The file's bytes, or the byte range a `Range` header asks for (at most 4 MiB at a time), so video streams |
 | `/<space>/<project>/commits/<ref>/<path>` | History, grouped by day and paged (`?page=2`). With a path, only the commits that changed it |
 | `/<space>/<project>/commit/<oid>` | One commit: message, author, parents, and a line diff of every changed file |
 | `/<space>/<project>/refs` | Branches and tags, with tag messages |
@@ -586,7 +586,7 @@ is the builder's token in an `HttpOnly` cookie. Forms only work from the site it
 Only `github.com` URLs are accepted, which keeps the server from being
 pointed at internal addresses. Private repositories can't be imported yet.
 
-Raw files are served as `text/plain`, an image type, or
+Raw files are served as `text/plain`, an image or video type, or
 `application/octet-stream`, inside a sandbox, so a pushed HTML file can't
 run on the server's origin. On a bare `spacetime start` (no web service),
 browse at `http://127.0.0.1:3000/v1/database/spacehub/route/ui`, where links

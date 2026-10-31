@@ -1,5 +1,5 @@
 
-import { useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { ArrowUpRight, Check, ChevronRight, Code2, FileText, LockKeyhole } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -8,23 +8,25 @@ import type { FileView } from "@/lib/types";
 import { parseJsonl, jsonlPost } from "@/lib/jsonl";
 import { parseUrlFile } from "@/lib/url-file";
 import { isConversation } from "@/lib/conversation";
+import { localLink, mediaOf } from "@/lib/media";
 
 type ObjectValue = Record<string, unknown>;
 type Navigate = (path: string) => void;
 const object = (value: unknown): value is ObjectValue => value !== null && typeof value === "object" && !Array.isArray(value);
 const string = (value: unknown) => typeof value === "string" ? value : "";
 
-function localLink(href: string, filePath: string): string | undefined {
-  if (/^[a-z][a-z\d+.-]*:/i.test(href) || href.startsWith("//") || href.includes("\\")) return;
-  let decoded: string;
-  try { decoded = decodeURIComponent(href.split("#")[0]); } catch { return; }
-  const parts = href.startsWith("/") ? [] : filePath.split("/").slice(0, -1);
-  for (const part of decoded.split("/")) {
-    if (!part || part === ".") continue;
-    if (part === "..") { if (!parts.length) return; parts.pop(); }
-    else parts.push(part);
-  }
-  return parts.join("/");
+/** Where the open project serves a file of it raw, so Markdown shows its images and video; unset outside a project. */
+export const RawFiles = createContext<((path: string) => string) | undefined>(undefined);
+
+/** A Markdown image: one from the project shows (a video plays), one from the web stays a link, since pages load nothing from other sites. */
+export function MarkdownMedia({ src = "", alt = "", filePath }: { src?: string; alt?: string; filePath: string }) {
+  const raw = useContext(RawFiles);
+  const path = localLink(src, filePath);
+  if (raw && path) return mediaOf(path) === "video"
+    ? <video className="markdown-media" src={raw(path)} controls preload="metadata" playsInline aria-label={alt || path} />
+    : <img className="markdown-media" src={raw(path)} alt={alt} loading="lazy" decoding="async" />;
+  if (/^https?:\/\//i.test(src)) return <a href={src} target="_blank" rel="noreferrer noopener">{alt ? `Image: ${alt}` : "Image"}<ArrowUpRight size={12} /></a>;
+  return <span className="muted">[Image: {alt || "Open the image file to preview"}]</span>;
 }
 
 export function Markdown({ content, filePath, navigate }: { content: string; filePath: string; navigate: Navigate }) {
@@ -35,7 +37,7 @@ export function Markdown({ content, filePath, navigate }: { content: string; fil
       const path = localLink(href, filePath);
       return path === undefined ? <span>{children}</span> : <button className="inline-link" onClick={() => navigate(path)}>{children}</button>;
     },
-    img: ({ alt }) => <span className="muted">[Image: {alt || "Open the image file to preview"}]</span>,
+    img: ({ src, alt }) => <MarkdownMedia src={typeof src === "string" ? src : ""} alt={alt} filePath={filePath} />,
     input: ({ checked }) => <input type="checkbox" checked={Boolean(checked)} disabled aria-label={checked ? "Completed item" : "Incomplete item"} />
   }}>{content}</ReactMarkdown></div>;
 }
@@ -114,6 +116,13 @@ function ImagePreview({ src, name }: { src: string; name: string }) {
   return failed ? <div className="empty-state"><FileText /><h2>Preview unavailable</h2><p>The file may have changed or may not contain a supported image.</p></div> : <figure className="image-preview"><img src={src} alt={name} onError={() => setFailed(true)} /><figcaption>{name}</figcaption></figure>;
 }
 
+function VideoPreview({ src, name }: { src: string; name: string }) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [src]);
+  return failed ? <div className="empty-state"><FileText /><h2>Preview unavailable</h2><p>The browser cannot play this video. <a href={src} target="_blank" rel="noreferrer">Download it</a> to watch it.</p></div>
+    : <figure className="image-preview video-preview"><video src={src} controls preload="metadata" playsInline aria-label={name} onError={() => setFailed(true)} /><figcaption>{name}</figcaption></figure>;
+}
+
 function UrlPreview({ content, name }: { content: string; name: string }) {
   const url = parseUrlFile(content);
   if (!url) return <div className="empty-state"><FileText /><h2>No valid web URL</h2><p>Save a single http:// or https:// address, or a Windows Internet Shortcut with a URL entry. Use Source to inspect this file.</p></div>;
@@ -138,6 +147,7 @@ export function FileContent({ file, revision, navigate, demo = false, extraMessa
   else if (file.format === "json" && !file.error) content = <div className="document-card"><JsonNode value={file.data} /></div>;
   else if (file.format === "markdown") content = <article className="document-card"><Markdown content={file.content || ""} filePath={file.path} navigate={navigate} /></article>;
   else if (file.format === "image") content = <ImagePreview src={src} name={file.name} />;
+  else if (file.format === "video") content = <VideoPreview src={src} name={file.name} />;
   else if (file.format === "pdf") content = <div className="pdf-preview"><iframe title={`PDF: ${file.name}`} src={src} /><a href={src} target="_blank" rel="noreferrer">Open PDF in a new tab <ArrowUpRight size={14} /></a></div>;
   else if (canReadSource) content = <pre className="source-code"><code>{file.content || "This file is empty."}</code></pre>;
   else content = <div className="empty-state"><FileText /><h2>File on disk</h2><p>{file.error || "A preview is not available for this file type."}</p><code>{file.path}</code></div>;

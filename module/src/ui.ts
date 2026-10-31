@@ -26,7 +26,7 @@
 // SpacetimeDB (/v1/database/<db>/route/ui?p=<path>) links stay as ?p=<path>.
 // Sign-in state comes from a display-only cookie; every write goes through
 // the web service (/-/...), which checks the real session.
-import { PRESENCE_STALE_SECONDS, inSpace, ownsSpace, readObject, type Db } from './store';
+import { PRESENCE_STALE_SECONDS, inSpace, objectSize, ownsSpace, readObject, readObjectRange, type Db } from './store';
 import { DELETE, INSERT, diffLines, toHunks } from './diff';
 import { renderMarkdown, type Resolve } from './markdown';
 import { esc, navFor, PAGE_CSP, shell, sideFor } from './style';
@@ -37,6 +37,8 @@ export interface UiRequest {
   forwardedUri: string | null;
   cookie: string | null;
   proto: string | null;
+  /** The Range header, for raw files a video plays in pieces. */
+  range?: string | null;
   now: number;
 }
 
@@ -102,7 +104,13 @@ const COUNT_CAP = 10000;
 const DIFF_FILES = 300;
 const DIFF_MAX_BYTES = 256 * 1024;
 const DIFF_MAX_ROWS = 4000;
-const IMAGE_TYPES: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' };
+const IMAGE_TYPES: Record<string, string> = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
+  avif: 'image/avif', svg: 'image/svg+xml', bmp: 'image/bmp', ico: 'image/x-icon',
+};
+const VIDEO_TYPES: Record<string, string> = { mp4: 'video/mp4', m4v: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime', ogv: 'video/ogg' };
+// The most one ranged answer carries; a player asks again for what follows.
+export const MAX_RANGE = 4 * 1024 * 1024;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 // ---------------------------------------------------------------- request
@@ -196,6 +204,28 @@ function isBinary(data: Uint8Array) {
   return data.subarray(0, 8000).includes(0);
 }
 
+/**
+ * The bytes a Range header asks for, from start to end (exclusive), at most
+ * MAX_RANGE of them. Null means the whole file: no header, or one this does
+ * not take (several ranges). 'unsatisfiable' starts past the end.
+ */
+export function byteRange(header: string | null | undefined, size: number): { start: number; end: number } | 'unsatisfiable' | null {
+  const m = /^bytes=(\d*)-(\d*)$/.exec(header?.trim() ?? '');
+  if (!m || (!m[1] && !m[2])) return null;
+  let start: number;
+  let end = size;
+  if (!m[1]) start = Math.max(0, size - Number(m[2]));
+  else {
+    start = Number(m[1]);
+    if (m[2]) {
+      if (Number(m[2]) < start) return null;
+      end = Math.min(size, Number(m[2]) + 1);
+    }
+  }
+  if (start >= size || end <= start) return 'unsatisfiable';
+  return { start, end: Math.min(end, start + MAX_RANGE) };
+}
+
 function extOf(path: string) {
   const m = /\.([A-Za-z0-9]+)$/.exec(path);
   return m ? m[1].toLowerCase() : '';
@@ -272,6 +302,7 @@ export class Renderer {
   private secure: boolean;
   private viewer: string | null;
   private now: number;
+  private range: string | null;
   private commits = new Map<string, Commit | null>();
   private trees = new Map<string, Entry[]>();
   private refreshing = false;
@@ -294,6 +325,7 @@ export class Renderer {
     // show a username this database does not know.
     this.viewer = who && /^[a-z0-9-]{1,39}$/.test(who) && db.user.username.find(who) ? who : null;
     this.now = req.now;
+    this.range = req.range ?? null;
   }
 
   // ------------------------------------------------------------ links
@@ -1088,6 +1120,8 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     let toggle = '';
     if (IMAGE_TYPES[ext] && data.length <= 10 * 1024 * 1024) {
       content = `<div class="img"><img src="${esc(this.link(rawPath))}" alt="${esc(name)}"></div>`;
+    } else if (VIDEO_TYPES[ext]) {
+      content = `<div class="img"><video src="${esc(this.link(rawPath))}" controls preload="metadata" playsinline aria-label="${esc(name)}"></video></div>`;
     } else if (binary) {
       content = `<div class="empty">Binary file, ${size(data.length)}. ${this.a(rawPath, 'Download it raw')}.</div>`;
     } else if (data.length > MAX_SHOWN_BYTES) {
@@ -1118,18 +1152,34 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
   raw(sp: Project, segs: string[]): UiResponse {
     const { rest, target } = this.fileAt(sp, segs);
     if (target.type !== 'blob') throw new NotFound(`"${rest.join('/')}" is not a file`);
-    const obj = readObject(this.db, sp.id, target.oid);
-    if (!obj) throw new NotFound(`blob ${target.oid} is missing`);
+    const length = objectSize(this.db, sp.id, target.oid);
+    const head = length === null ? null : readObjectRange(this.db, sp.id, target.oid, 0, 8000);
+    if (length === null || !head) throw new NotFound(`blob ${target.oid} is missing`);
     const ext = extOf(rest[rest.length - 1]);
-    const image = IMAGE_TYPES[ext];
     // A real PDF opens in the browser's viewer (the app frames it); a viewer
     // will not run inside a sandbox, so it gets no scripts or fetches instead.
-    if (ext === 'pdf' && decoder.decode(obj.data.subarray(0, 5)) === '%PDF-') {
-      return { status: 200, headers: { 'content-type': 'application/pdf', 'content-security-policy': "default-src 'none'; frame-ancestors 'self'" }, body: obj.data };
+    // Anything else is never text/html: a pushed file must not run as a page
+    // on this origin.
+    const pdf = ext === 'pdf' && decoder.decode(head.subarray(0, 5)) === '%PDF-';
+    const headers: Record<string, string> = pdf
+      ? { 'content-type': 'application/pdf', 'content-security-policy': "default-src 'none'; frame-ancestors 'self'" }
+      : {
+          'content-type': IMAGE_TYPES[ext] ?? VIDEO_TYPES[ext] ?? (head.includes(0) ? 'application/octet-stream' : 'text/plain; charset=utf-8'),
+          'content-security-policy': "default-src 'none'; sandbox",
+        };
+    headers['accept-ranges'] = 'bytes';
+    // A video plays in pieces: the player asks for byte ranges, and only the
+    // chunks they cover are read.
+    const range = byteRange(this.range, length);
+    if (range === 'unsatisfiable') return { status: 416, headers: { ...headers, 'content-range': `bytes */${length}` }, body: '' };
+    if (range) {
+      const body = readObjectRange(this.db, sp.id, target.oid, range.start, range.end);
+      if (!body) throw new NotFound(`blob ${target.oid} is missing`);
+      return { status: 206, headers: { ...headers, 'content-range': `bytes ${range.start}-${range.end - 1}/${length}` }, body };
     }
-    // Never text/html: a pushed file must not run as a page on this origin.
-    const type = image ?? (isBinary(obj.data) ? 'application/octet-stream' : 'text/plain; charset=utf-8');
-    return { status: 200, headers: { 'content-type': type, 'content-security-policy': "default-src 'none'; sandbox" }, body: obj.data };
+    const obj = readObject(this.db, sp.id, target.oid);
+    if (!obj) throw new NotFound(`blob ${target.oid} is missing`);
+    return { status: 200, headers, body: obj.data };
   }
 
   commitsPage(sp: Project, segs: string[]) {
