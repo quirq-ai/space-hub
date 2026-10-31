@@ -6,8 +6,13 @@
 //   GET  records/<clerk user id>   {"version": N, "doc": {...} | null}
 //   PUT  records/<clerk user id>   {"version": N, "doc": {...}}: written only if the record is
 //                                  still at version N (0: there is none yet); 409 otherwise
-//   POST agents/<clerk user id>    {"username": "suraj"}: the user's agent, made on first
-//                                  call: {"agent": "suraj", "token": "..."}
+//   POST agents/<clerk user id>    {"username": "Suraj", "github": {"id": 1234, "login": "octocat"}}:
+//                                  the builder of the GitHub account the user connected to
+//                                  XO, made on the first call and named after its login, with
+//                                  the xo username as its display name (and a second name, see
+//                                  linkGithub): {"agent": "octocat", "token": "..."}. Without
+//                                  "github" (an xo server from before GitHub was needed): the
+//                                  builder the user has, else one named after the xo username
 //
 // Every request carries `Authorization: Bearer $SPACEHUB_XO_KEY`; without that
 // variable the routes do not exist. The service reads and writes the private
@@ -15,6 +20,7 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { type AdminHttp, call, json, newIdentity, readJson, Reply, select } from './admin.ts';
+import type { GithubApi } from './github';
 
 const PREFIX = '/-/api/xo/v1/';
 // Clerk user ids (user_2abc...); the same rule as the module's, so an id can
@@ -23,16 +29,17 @@ const SUBJECT = /^[A-Za-z0-9_]{1,64}$/;
 
 export interface XoConfig extends AdminHttp {
   key: string; // shared with xo.quirq.dev
+  github?: GithubApi; // asked whether an xo username is someone's GitHub login
 }
 
 // `http` is SpacetimeDB's HTTP API, as the rest of the web service reaches it.
-export function xoConfig(db: string, http: string): XoConfig | null {
+export function xoConfig(db: string, http: string, github?: GithubApi): XoConfig | null {
   const key = process.env.SPACEHUB_XO_KEY ?? '';
   if (!key) return null;
   const adminToken = process.env.SPACEHUB_ADMIN_TOKEN ?? '';
   if (!adminToken) throw new Error('SPACEHUB_XO_KEY is set but SPACEHUB_ADMIN_TOKEN is not: the xo API needs the hub admin');
   if (key.length < 32) throw new Error('SPACEHUB_XO_KEY must be at least 32 characters');
-  return { key, adminToken, http, db };
+  return { key, adminToken, http, db, ...(github ? { github } : {}) };
 }
 
 function authorized(req: http.IncomingMessage, key: string) {
@@ -64,13 +71,81 @@ async function putRecord(cfg: XoConfig, subject: string, body: Record<string, un
   return { version: (version as number) + 1 };
 }
 
-// The hub agent xo made for this xo user, with its token (also xosignin.ts).
+// The builder this xo user signs in as, with its token (also xosignin.ts):
+// their GitHub account's (xo_link), else the one xo made before GitHub was
+// needed (xo_agent).
 export async function agentOf(cfg: XoConfig, subject: string) {
+  const [link] = await select(cfg, `SELECT username FROM xo_link WHERE subject = '${subject}'`);
+  if (link) {
+    const name = String(link.username);
+    if (!NAME.test(name)) return null;
+    const [row] = await select(cfg, `SELECT username, token FROM github_account WHERE username = '${name}'`);
+    return row ? { agent: String(row.username), token: String(row.token) } : null;
+  }
   const [row] = await select(cfg, `SELECT username, token FROM xo_agent WHERE subject = '${subject}'`);
   return row ? { agent: String(row.username), token: String(row.token) } : null;
 }
 
+// Hub names (the module's rule), and GitHub's for logins.
+const NAME = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
+const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
+
+// The xo username as a second name of the builder: only a valid hub name
+// that is not someone else's GitHub login, so a GitHub user never finds their
+// own login taken here (the module checks it is free). "" for none, also
+// when GitHub does not answer: the next sign-in asks again.
+async function secondName(cfg: XoConfig, xoName: string, id: number, login: string): Promise<string> {
+  const name = xoName.trim().toLowerCase();
+  if (!NAME.test(name) || name === login.toLowerCase()) return '';
+  const api = cfg.github;
+  if (!api) return '';
+  try {
+    const res = await fetch(`${api.base}/users/${encodeURIComponent(name)}`, {
+      headers: { accept: 'application/vnd.github+json', 'user-agent': 'spacehub', ...(api.token ? { authorization: `Bearer ${api.token}` } : {}) },
+      redirect: 'error',
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (res.status === 404) return name;
+    if (!res.ok) return '';
+    const user = (await res.json().catch(() => null)) as { id?: unknown } | null;
+    return user?.id === id ? name : '';
+  } catch {
+    return '';
+  }
+}
+
+// The builder of the GitHub account an xo user connected to XO, made on the
+// first sign-in (xo_link_github in the module, which also folds in a builder
+// xo made before, and sets the display name and second name).
+async function linkGithub(cfg: XoConfig, subject: string, body: Record<string, unknown>) {
+  const github = body.github as { id?: unknown; login?: unknown } | null;
+  // Clerk keeps GitHub's account id as a string.
+  const raw = typeof github?.id === 'string' && /^[1-9][0-9]{0,15}$/.test(github.id) ? Number(github.id) : github?.id;
+  const login = github?.login;
+  if (typeof raw !== 'number' || !Number.isSafeInteger(raw) || raw <= 0 || typeof login !== 'string' || !GITHUB_LOGIN.test(login)) {
+    throw new Reply(400, '"github" must be {"id": the GitHub account id, "login": its login}');
+  }
+  const xoName = typeof body.username === 'string' ? body.username.slice(0, 64) : '';
+  const [known] = await select(cfg, `SELECT username FROM github_account WHERE github_id = ${raw}`);
+  const [legacy] = known ? [null] : await select(cfg, `SELECT username FROM xo_agent WHERE subject = '${subject}'`);
+  const made = known || legacy ? null : await newIdentity(cfg);
+  const alias = await secondName(cfg, xoName, raw, login);
+  try {
+    await call(cfg, 'xo_link_github', [subject, raw, login, xoName, alias, made?.identity ?? '', made?.token ?? '']);
+  } catch (err) {
+    if (err instanceof Reply && /is taken|is reserved|a name is/.test(err.message)) {
+      const why = /"[^"]*" is (taken|reserved)/.exec(err.message)?.[0] ?? err.message;
+      throw new Reply(409, `cannot sign in as ${login}: the name ${why} on this hub; ask the hub's admin`);
+    }
+    throw err;
+  }
+  const [row] = await select(cfg, `SELECT username, token FROM github_account WHERE github_id = ${raw}`);
+  if (!row) throw new Reply(500, 'the GitHub account has no builder after linking');
+  return { agent: String(row.username), token: String(row.token) };
+}
+
 async function ensureAgent(cfg: XoConfig, subject: string, body: Record<string, unknown>) {
+  if (body.github !== undefined) return linkGithub(cfg, subject, body);
   const found = await agentOf(cfg, subject);
   if (found) return found;
   const username = body.username;

@@ -33,7 +33,7 @@
 import { schema, table, t, Router, SenderError, SyncResponse, type InferSchema, type ReducerCtx } from 'spacetimedb/server';
 import { Identity, Timestamp } from 'spacetimedb';
 import { Sha1, objectHeader } from './sha1';
-import { CHUNK_SIZE, PRESENCE_STALE_SECONDS, commitParents, inSpace, memberKey, objectKey, ownsSpace, readObject, refKey, roleKey } from './store';
+import { CHUNK_SIZE, PRESENCE_STALE_SECONDS, commitParents, inSpace, memberKey, objectKey, ownsSpace, projectFor, readObject, refKey, roleKey, spaceFor } from './store';
 import { renderUi } from './ui';
 import { ApiError, parseQuery, renderApi, templateFiles } from './workspace';
 import { appendTurns, type NewObject } from './chat';
@@ -344,6 +344,35 @@ const githubAccount = table(
   }
 );
 
+// A second name of a builder's personal space: the xo username of a builder
+// whose GitHub login is another name, or the name a builder had before xo
+// moved it to its GitHub account. /<name>/... shows the same pages as the
+// space's own name, every reducer takes either, and nobody else can take it.
+const spaceAlias = table(
+  { name: 'space_alias', public: true },
+  {
+    name: t.string().primaryKey(),
+    space: t.string().index('btree'),
+    createdAt: t.timestamp(),
+  }
+);
+
+// The GitHub account an xo user (a Clerk user id) connected to XO, and its
+// builder: signing in with xo is signing in as that GitHub account's builder.
+// `xoName` is their xo username at the last sign-in, the builder's display
+// name. Private, like xo_agent.
+const xoLink = table(
+  { name: 'xo_link' },
+  {
+    subject: t.string().primaryKey(),
+    githubId: t.u64().unique(),
+    username: t.string().index('btree'),
+    xoName: t.string(),
+    linkedAt: t.timestamp(),
+    updatedAt: t.timestamp(),
+  }
+);
+
 const spacetimedb = schema({
   user,
   project,
@@ -366,6 +395,8 @@ const spacetimedb = schema({
   xoRecord,
   xoAgent,
   githubAccount,
+  spaceAlias,
+  xoLink,
 });
 export default spacetimedb;
 
@@ -572,7 +603,9 @@ function checkSpaceName(ctx: Ctx, name: string) {
     throw new SenderError('a name is 1-39 lowercase letters, digits or inner hyphens');
   }
   if (RESERVED_USERNAMES.has(name)) throw new SenderError(`the name "${name}" is reserved`);
-  if (ctx.db.user.username.find(name) || ctx.db.space.name.find(name)) throw new SenderError(`the name "${name}" is taken`);
+  if (ctx.db.user.username.find(name) || ctx.db.space.name.find(name) || ctx.db.spaceAlias.name.find(name)) {
+    throw new SenderError(`the name "${name}" is taken`);
+  }
 }
 
 // A builder's login and its personal space.
@@ -635,6 +668,8 @@ export const deleteBuilder = spacetimedb.reducer(ctx => {
   }
   const xo = [...ctx.db.xoAgent.iter()].find(a => a.username === name);
   if (xo) ctx.db.xoAgent.subject.delete(xo.subject);
+  for (const link of [...ctx.db.xoLink.username.filter(name)]) ctx.db.xoLink.subject.delete(link.subject);
+  for (const alias of [...ctx.db.spaceAlias.space.filter(name)]) ctx.db.spaceAlias.name.delete(alias.name);
   ctx.db.githubAccount.username.delete(name);
   ctx.db.space.name.delete(name);
   ctx.db.user.identity.delete(ctx.sender);
@@ -739,7 +774,146 @@ export const githubLinkBuilder = spacetimedb.reducer(
   }
 );
 
+// An xo user signs in as the builder of the GitHub account they connected to
+// XO (the web service checks both with the xo server). The builder is the
+// GitHub account's own, made here on the first sign-in with `identity` (a new
+// identity whose token the admin holds; "" when there is one already). A
+// builder xo made before GitHub was needed (xo_agent) becomes that builder:
+// renamed to the GitHub login when it has no builder yet, else merged into
+// it, and its old name stays as a second name. The xo username is the
+// display name and, when the web service offers it as `alias` (free, and no
+// one else's GitHub login), a second name too.
+export const xoLinkGithub = spacetimedb.reducer(
+  { subject: t.string(), githubId: t.u64(), login: t.string(), xoName: t.string(), alias: t.string(), identity: t.string(), token: t.string() },
+  (ctx, { subject, githubId, login, xoName, alias, identity: hex, token }) => {
+    requireAdmin(ctx);
+    checkSubject(subject);
+    if (githubId === 0n) throw new SenderError('invalid GitHub account id');
+    if (!GITHUB_LOGIN.test(login)) throw new SenderError(`invalid GitHub login "${login}"`);
+    const known = ctx.db.githubAccount.githubId.find(githubId);
+    const legacy = ctx.db.xoAgent.subject.find(subject);
+    let builder: string;
+    if (known) {
+      builder = known.username;
+      if (legacy) {
+        ctx.db.xoAgent.subject.delete(subject);
+        if (legacy.username !== builder) mergeBuilder(ctx, legacy.username, builder);
+      }
+    } else if (legacy) {
+      builder = login.toLowerCase();
+      ctx.db.xoAgent.subject.delete(subject);
+      if (legacy.username !== builder) renameBuilder(ctx, legacy.username, builder);
+      ctx.db.githubAccount.insert({ githubId, login, username: builder, identity: legacy.identity, token: legacy.token, createdAt: ctx.timestamp });
+    } else {
+      if (!/^(0x)?[0-9a-fA-F]{64}$/.test(hex)) throw new SenderError('a new builder needs an identity of 64 hex digits');
+      if (!token || token.length > 4096) throw new SenderError('invalid token');
+      const id = Identity.fromString(hex.replace(/^0x/, '').toLowerCase());
+      if (ctx.db.user.identity.find(id) || ctx.db.agent.identity.find(id)) throw new SenderError('that identity is already a builder or an agent');
+      builder = login.toLowerCase();
+      addBuilder(ctx, id, builder);
+      ctx.db.githubAccount.insert({ githubId, login, username: builder, identity: id, token, createdAt: ctx.timestamp });
+    }
+    // One xo user per GitHub account: whoever connected it last.
+    const other = ctx.db.xoLink.githubId.find(githubId);
+    if (other && other.subject !== subject) ctx.db.xoLink.subject.delete(other.subject);
+    const shown = xoName.trim().slice(0, 64);
+    const link = ctx.db.xoLink.subject.find(subject);
+    const row = { subject, githubId, username: builder, xoName: shown, linkedAt: link?.linkedAt ?? ctx.timestamp, updatedAt: ctx.timestamp };
+    if (link) ctx.db.xoLink.subject.update(row);
+    else ctx.db.xoLink.insert(row);
+    const space = ctx.db.space.name.find(builder);
+    if (space && shown && space.displayName !== shown) ctx.db.space.name.update({ ...space, displayName: shown });
+    const second = alias.trim().toLowerCase();
+    if (second && second !== builder && USERNAME.test(second) && !RESERVED_USERNAMES.has(second)) {
+      const taken = ctx.db.user.username.find(second) || ctx.db.space.name.find(second) || ctx.db.spaceAlias.name.find(second);
+      if (!taken) ctx.db.spaceAlias.insert({ name: second, space: builder, createdAt: ctx.timestamp });
+    }
+  }
+);
+
+// A builder's name changes to `to` (free): its login and personal space, and
+// every row that names it. The old name becomes a second name.
+function renameBuilder(ctx: Ctx, from: string, to: string) {
+  checkSpaceName(ctx, to);
+  const me = ctx.db.user.username.find(from);
+  const space = ctx.db.space.name.find(from);
+  if (!me || !space) throw new SenderError(`no builder named "${from}"`);
+  ctx.db.user.identity.update({ ...me, username: to });
+  ctx.db.space.insert({ ...space, name: to, displayName: space.displayName === from ? to : space.displayName, createdBy: to });
+  moveBuilder(ctx, from, to);
+  ctx.db.space.name.delete(from);
+}
+
+// Builder `from` joins builder `into`: its projects, places in spaces and
+// agents become `into`'s, its login goes (its token signs in no more), and
+// its name becomes a second name of `into`.
+function mergeBuilder(ctx: Ctx, from: string, into: string) {
+  const me = ctx.db.user.username.find(from);
+  if (!me || !ctx.db.user.username.find(into)) throw new SenderError(`cannot merge "${from}" into "${into}": both must be builders`);
+  if (ctx.db.githubAccount.username.find(from)) throw new SenderError(`"${from}" is a GitHub account's builder; it is not merged`);
+  moveBuilder(ctx, from, into);
+  ctx.db.space.name.delete(from);
+  ctx.db.user.identity.delete(me.identity);
+}
+
+const ROLE_RANK: Record<string, number> = { member: 1, owner: 2 };
+
+// Every row that names builder `from` names `to` instead, and `from` is a
+// second name of `to`. A project whose name `to` already uses gets the old
+// space's name after it ("notes-suraj").
+function moveBuilder(ctx: Ctx, from: string, to: string) {
+  const moved = new Map<bigint, string>();
+  for (const p of [...ctx.db.project.owner.filter(from)]) {
+    let name = p.name;
+    for (let n = 1; ctx.db.project.fullName.find(`${to}/${name}`); n++) name = n === 1 ? `${p.name}-${from}` : `${p.name}-${from}-${n}`;
+    const fullName = `${to}/${name}`;
+    ctx.db.project.id.update({ ...p, owner: to, name, fullName });
+    moved.set(p.id, fullName);
+  }
+  // Places in spaces: the stronger role stays when `to` already has one.
+  const keep = (r: Parameters<typeof ctx.db.spaceRole.insert>[0], space: string, member: string) => {
+    ctx.db.spaceRole.id.delete(r.id);
+    if (member === space) return;
+    const there = ctx.db.spaceRole.key.find(roleKey(space, member));
+    if (!there) ctx.db.spaceRole.insert({ ...r, id: 0n, key: roleKey(space, member), space, member });
+    else if ((ROLE_RANK[r.role] ?? 0) > (ROLE_RANK[there.role] ?? 0)) ctx.db.spaceRole.id.update({ ...there, role: r.role });
+  };
+  for (const r of [...ctx.db.spaceRole.member.filter(from)]) keep(r, r.space, to);
+  for (const r of [...ctx.db.spaceRole.space.filter(from)]) keep(r, to, r.member);
+  for (const m of [...ctx.db.projectMember.agent.filter(from)]) {
+    ctx.db.projectMember.id.delete(m.id);
+    const owner = ctx.db.project.id.find(m.projectId)?.owner;
+    if (owner !== to && !ctx.db.projectMember.key.find(memberKey(m.projectId, to))) {
+      ctx.db.projectMember.insert({ ...m, id: 0n, key: memberKey(m.projectId, to), agent: to });
+    }
+  }
+  for (const s of [...ctx.db.space.iter()]) {
+    if (s.name !== from && (s.parent === from || s.createdBy === from)) {
+      ctx.db.space.name.update({ ...s, parent: s.parent === from ? to : s.parent, createdBy: s.createdBy === from ? to : s.createdBy });
+    }
+  }
+  for (const a of [...ctx.db.agent.iter()]) if (a.createdBy === from) ctx.db.agent.name.update({ ...a, createdBy: to });
+  const link = ctx.db.spaceLink.space.find(from);
+  if (link) {
+    ctx.db.spaceLink.space.delete(from);
+    if (!ctx.db.spaceLink.space.find(to)) ctx.db.spaceLink.insert({ ...link, space: to });
+  }
+  for (const p of [...ctx.db.presence.iter()]) {
+    if (p.agent === from || p.space === from) ctx.db.presence.connectionId.delete(p.connectionId);
+  }
+  for (const e of [...ctx.db.activity.iter()]) {
+    const path = moved.get(e.projectId) ?? (e.path === from ? to : e.path);
+    const agent = e.agent === from ? to : e.agent;
+    const subject = e.subject === from ? to : e.subject;
+    if (path !== e.path || agent !== e.agent || subject !== e.subject) ctx.db.activity.id.update({ ...e, path, agent, subject });
+  }
+  for (const link of [...ctx.db.xoLink.username.filter(from)]) ctx.db.xoLink.subject.update({ ...link, username: to });
+  for (const a of [...ctx.db.spaceAlias.space.filter(from)]) ctx.db.spaceAlias.name.update({ ...a, space: to });
+  ctx.db.spaceAlias.insert({ name: from, space: to, createdAt: ctx.timestamp });
+}
+
 function createProjectIn(ctx: Ctx, space: string, name: string, description: string) {
+  space = spaceFor(ctx.db, space);
   const me = isSyncer(ctx, space) ? SYNCER : requireActor(ctx);
   if (!PROJECT_NAME.test(name) || name === '.' || name === '..' || name.endsWith('.git')) {
     throw new SenderError('a project name may use letters, digits, ".", "_" and "-" and must not end in .git');
@@ -778,7 +952,7 @@ export const createProject = spacetimedb.reducer(
 export const createProjectFromTemplate = spacetimedb.reducer(
   { space: t.string(), name: t.string(), description: t.string(), template: t.string(), goal: t.string() },
   (ctx, { space, name, description, template, goal }) => {
-    const owner = space.trim().toLowerCase();
+    const owner = spaceFor(ctx.db, space.trim().toLowerCase());
     let files: ReturnType<typeof templateFiles>;
     try {
       files = templateFiles(ctx.db, template.trim());
@@ -815,6 +989,7 @@ function writeObject(ctx: Ctx, sp: Parameters<typeof insertObject>[1] & { id: bi
 }
 
 export const deleteProject = spacetimedb.reducer({ project: t.string() }, (ctx, { project: fullName }) => {
+  fullName = projectFor(ctx.db, fullName);
   const sp = requireProjectAdmin(ctx, fullName);
   logActivity(ctx, { kind: 'project_deleted', projectId: sp.id, path: sp.fullName });
   for (const ref of [...ctx.db.gitRef.projectId.filter(sp.id)]) ctx.db.gitRef.id.delete(ref.id);
@@ -836,6 +1011,7 @@ export const deleteProject = spacetimedb.reducer({ project: t.string() }, (ctx, 
 export const setProjectBuilder = spacetimedb.reducer(
   { project: t.string(), handle: t.string(), name: t.string() },
   (ctx, { project: fullName, handle, name }) => {
+    fullName = projectFor(ctx.db, fullName);
     const sp = requireProjectAdmin(ctx, fullName);
     const login = handle.trim();
     if (login === '') {
@@ -854,6 +1030,7 @@ export const setProjectBuilder = spacetimedb.reducer(
 export const editProject = spacetimedb.reducer(
   { project: t.string(), description: t.option(t.string()), defaultBranch: t.option(t.string()) },
   (ctx, { project: fullName, description, defaultBranch }) => {
+    fullName = projectFor(ctx.db, fullName);
     const sp = requireProjectAdmin(ctx, fullName);
     if (defaultBranch !== undefined && !validRefName(`refs/heads/${defaultBranch}`)) {
       throw new SenderError(`invalid branch name "${defaultBranch}"`);
@@ -878,6 +1055,7 @@ export const editProject = spacetimedb.reducer(
 export const putObjects = spacetimedb.reducer(
   { project: t.string(), objects: t.array(ObjectIn) },
   (ctx, { project: fullName, objects }) => {
+    fullName = projectFor(ctx.db, fullName);
     const sp = requireWritable(ctx, fullName);
     let added = 0n;
     for (const { oid, kind, data } of objects) {
@@ -899,6 +1077,7 @@ export const putObjects = spacetimedb.reducer(
 export const putChunk = spacetimedb.reducer(
   { project: t.string(), oid: t.string(), idx: t.u32(), data: t.byteArray() },
   (ctx, { project: fullName, oid, idx, data }) => {
+    fullName = projectFor(ctx.db, fullName);
     const sp = requireWritable(ctx, fullName);
     if (!OID.test(oid)) throw new SenderError(`invalid object id "${oid}"`);
     if (data.length > CHUNK_SIZE) throw new SenderError('chunk too large');
@@ -915,6 +1094,7 @@ export const putChunk = spacetimedb.reducer(
 export const finishObject = spacetimedb.reducer(
   { project: t.string(), oid: t.string(), kind: t.string(), size: t.u64(), chunks: t.u32() },
   (ctx, { project: fullName, oid, kind, size, chunks }) => {
+    fullName = projectFor(ctx.db, fullName);
     const sp = requireWritable(ctx, fullName);
     if (!KINDS.has(kind)) throw new SenderError(`invalid object kind "${kind}"`);
     if (ctx.db.gitObject.key.find(objectKey(sp.id, oid))) return;
@@ -944,6 +1124,7 @@ export const finishObject = spacetimedb.reducer(
 export const updateRef = spacetimedb.reducer(
   { project: t.string(), name: t.string(), oldOid: t.string(), newOid: t.string(), force: t.bool() },
   (ctx, { project: fullName, name, oldOid, newOid, force }) => {
+    fullName = projectFor(ctx.db, fullName);
     const sp = requireWritable(ctx, fullName);
     if (!validRefName(name)) throw new SenderError(`invalid ref name "${name}"`);
     const current = ctx.db.gitRef.key.find(refKey(sp.id, name));
@@ -1010,6 +1191,7 @@ const ChatTurnIn = t.object('ChatTurnIn', { id: t.string(), role: t.string(), co
 export const appendChat = spacetimedb.reducer(
   { project: t.string(), conversation: t.string(), turns: t.array(ChatTurnIn) },
   (ctx, { project: fullName, conversation, turns }) => {
+    fullName = projectFor(ctx.db, fullName);
     const sp = requireWritable(ctx, fullName);
     const me = requireActor(ctx);
     const name = `refs/heads/${sp.defaultBranch}`;
@@ -1056,6 +1238,7 @@ export const createOrg = spacetimedb.reducer({ name: t.string(), description: t.
 
 // Change a space's description (an org's, a builder's own, an agent's).
 export const editSpace = spacetimedb.reducer({ space: t.string(), description: t.string() }, (ctx, { space, description }) => {
+  space = spaceFor(ctx.db, space);
   const row = requireSpaceOwner(ctx, space);
   ctx.db.space.name.update({ ...row, description: description.slice(0, 500) });
   logActivity(ctx, { kind: 'space_edited', path: space, subject: space, text: 'changed the description' });
@@ -1063,6 +1246,7 @@ export const editSpace = spacetimedb.reducer({ space: t.string(), description: t
 
 // Only an empty org goes: its projects and agents first.
 export const deleteOrg = spacetimedb.reducer({ space: t.string() }, (ctx, { space }) => {
+  space = spaceFor(ctx.db, space);
   const row = requireSpaceOwner(ctx, space);
   if (row.kind !== 'org') throw new SenderError(`"${space}" is not an org`);
   const projects = [...ctx.db.project.owner.filter(space)].length;
@@ -1080,8 +1264,9 @@ export const deleteOrg = spacetimedb.reducer({ space: t.string() }, (ctx, { spac
 export const addSpaceMember = spacetimedb.reducer(
   { space: t.string(), member: t.string(), role: t.string() },
   (ctx, { space, member: raw, role }) => {
+    space = spaceFor(ctx.db, space);
     const row = requireSpaceOwner(ctx, space);
-    const member = raw.trim().toLowerCase();
+    const member = spaceFor(ctx.db, raw.trim().toLowerCase());
     if (requireMemberName(ctx, member) === 'agent' && !isOwner(ctx, member, actorName(ctx))) {
       throw new SenderError(`permission denied: only the owners of the agent "${member}" connect it`);
     }
@@ -1103,8 +1288,9 @@ export const addSpaceMember = spacetimedb.reducer(
 // An owner removes a member, or a member leaves. An org keeps at
 // least one owner.
 export const removeSpaceMember = spacetimedb.reducer({ space: t.string(), member: t.string() }, (ctx, { space, member: raw }) => {
+  space = spaceFor(ctx.db, space);
   requireSpace(ctx, space);
-  const member = raw.trim().toLowerCase();
+  const member = spaceFor(ctx.db, raw.trim().toLowerCase());
   const me = actorName(ctx);
   if (!isOwner(ctx, space, me) && me !== member) throw new SenderError(`permission denied: only owners of "${space}" remove its members`);
   const row = ctx.db.spaceRole.key.find(roleKey(space, member));
@@ -1124,6 +1310,7 @@ export const removeSpaceMember = spacetimedb.reducer({ space: t.string(), member
 export const createAgent = spacetimedb.reducer(
   { name: t.string(), parent: t.string(), identity: t.string(), token: t.string(), description: t.string() },
   (ctx, { name: raw, parent, identity: hex, token, description }) => {
+    parent = spaceFor(ctx.db, parent);
     const me = requireUser(ctx).username;
     const name = raw.trim().toLowerCase();
     const owner = requireSpace(ctx, parent);
@@ -1166,6 +1353,7 @@ export const deleteAgent = spacetimedb.reducer({ name: t.string() }, (ctx, { nam
 // Connect an agent to a space: it becomes a member there. The caller must
 // own both, so neither side is volunteered by the other.
 export const connectAgent = spacetimedb.reducer({ agent: t.string(), space: t.string() }, (ctx, { agent: name, space }) => {
+  space = spaceFor(ctx.db, space);
   requireAgent(ctx, name);
   const row = requireSpaceOwner(ctx, space);
   const me = requireActor(ctx);
@@ -1179,6 +1367,7 @@ export const connectAgent = spacetimedb.reducer({ agent: t.string(), space: t.st
 
 // Owners of either side can disconnect.
 export const disconnectAgent = spacetimedb.reducer({ agent: t.string(), space: t.string() }, (ctx, { agent: name, space }) => {
+  space = spaceFor(ctx.db, space);
   requireAgent(ctx, name);
   const me = actorName(ctx);
   if (!isOwner(ctx, name, me) && !isOwner(ctx, space, me)) throw new SenderError(`permission denied: only owners of "${name}" or "${space}" disconnect them`);
@@ -1216,6 +1405,7 @@ const GITHUB_ACCOUNT = /^https:\/\/github\.com\/([A-Za-z0-9](?:[A-Za-z0-9]|-(?=[
 // Mirror a GitHub user's or organization's public repositories into the
 // space, and sync now.
 export const linkSpace = spacetimedb.reducer({ space: t.string(), source: t.string() }, (ctx, { space, source }) => {
+  space = spaceFor(ctx.db, space);
   requireSpaceOwner(ctx, space);
   const m = GITHUB_ACCOUNT.exec(source.trim());
   if (!m) throw new SenderError('link a GitHub user or organization, like https://github.com/anthropics');
@@ -1237,6 +1427,7 @@ export const linkSpace = spacetimedb.reducer({ space: t.string(), source: t.stri
 });
 
 export const requestSync = spacetimedb.reducer({ space: t.string() }, (ctx, { space }) => {
+  space = spaceFor(ctx.db, space);
   requireSpaceOwner(ctx, space);
   const row = ctx.db.spaceLink.space.find(space);
   if (!row) throw new SenderError(`"${space}" is not linked to GitHub`);
@@ -1246,6 +1437,7 @@ export const requestSync = spacetimedb.reducer({ space: t.string() }, (ctx, { sp
 
 // Stop mirroring; the projects stay.
 export const unlinkSpace = spacetimedb.reducer({ space: t.string() }, (ctx, { space }) => {
+  space = spaceFor(ctx.db, space);
   requireSpaceOwner(ctx, space);
   const row = ctx.db.spaceLink.space.find(space);
   if (!row) throw new SenderError(`"${space}" is not linked to GitHub`);
@@ -1257,6 +1449,7 @@ export const unlinkSpace = spacetimedb.reducer({ space: t.string() }, (ctx, { sp
 export const setLinkStatus = spacetimedb.reducer(
   { space: t.string(), status: t.string(), message: t.string(), projects: t.u32() },
   (ctx, { space, status, message, projects }) => {
+    space = spaceFor(ctx.db, space);
     requireAdmin(ctx);
     const row = ctx.db.spaceLink.space.find(space);
     if (!row) throw new SenderError(`"${space}" is not linked to GitHub`);
@@ -1276,6 +1469,7 @@ const RefSyncIn = t.object('RefSyncIn', { ref: t.string(), githubOid: t.string()
 export const recordRefSync = spacetimedb.reducer(
   { project: t.string(), refs: t.array(RefSyncIn) },
   (ctx, { project: fullName, refs }) => {
+    fullName = projectFor(ctx.db, fullName);
     const sp = requireProjectAdmin(ctx, fullName);
     for (const { ref, githubOid, status } of refs) {
       if (!validRefName(ref)) throw new SenderError(`invalid ref name "${ref}"`);
@@ -1302,8 +1496,9 @@ export const recordRefSync = spacetimedb.reducer(
 // Let one more builder (or agent) push to one project: a collaborator.
 // Adding one twice is a no-op.
 export const addProjectMember = spacetimedb.reducer({ project: t.string(), agent: t.string() }, (ctx, { project: fullName, agent }) => {
+  fullName = projectFor(ctx.db, fullName);
   const sp = requireProjectAdmin(ctx, fullName);
-  const name = agent.trim().toLowerCase();
+  const name = spaceFor(ctx.db, agent.trim().toLowerCase());
   if (requireMemberName(ctx, name) === 'agent' && !isOwner(ctx, name, actorName(ctx))) {
     throw new SenderError(`permission denied: only the owners of the agent "${name}" connect it`);
   }
@@ -1316,8 +1511,9 @@ export const addProjectMember = spacetimedb.reducer({ project: t.string(), agent
 
 // A space owner removes a collaborator, or a collaborator leaves.
 export const removeProjectMember = spacetimedb.reducer({ project: t.string(), agent: t.string() }, (ctx, { project: fullName, agent }) => {
+  fullName = projectFor(ctx.db, fullName);
   const sp = requireProject(ctx, fullName);
-  const name = agent.trim().toLowerCase();
+  const name = spaceFor(ctx.db, agent.trim().toLowerCase());
   const me = actorName(ctx);
   if (!isOwner(ctx, sp.owner, me) && me !== name) {
     throw new SenderError(`permission denied: only owners of "${sp.owner}" remove collaborators on "${fullName}"`);
@@ -1338,6 +1534,7 @@ const PRESENCE_STALE_MICROS = BigInt(PRESENCE_STALE_SECONDS) * 1_000_000n;
 export const watchProject = spacetimedb.reducer(
   { project: t.string(), mode: t.string(), branch: t.string() },
   (ctx, { project: fullName, mode, branch }) => {
+    fullName = projectFor(ctx.db, fullName);
     const me = { username: requireActor(ctx) };
     const sp = requireProject(ctx, fullName);
     if (!PRESENCE_MODES.has(mode)) throw new SenderError(`invalid presence mode "${mode}"`);
@@ -1355,6 +1552,7 @@ export const watchProject = spacetimedb.reducer(
 // This connection follows every project of `space` (space clone and sync,
 // and agents, which name the host they run on). Called again as a heartbeat.
 export const watchSpace = spacetimedb.reducer({ space: t.string(), mode: t.string(), host: t.string() }, (ctx, { space, mode, host }) => {
+  space = spaceFor(ctx.db, space);
   const me = requireActor(ctx);
   requireSpace(ctx, space);
   if (!PRESENCE_MODES.has(mode)) throw new SenderError(`invalid presence mode "${mode}"`);
@@ -1392,6 +1590,7 @@ const GITHUB_SOURCE = /^https:\/\/github\.com\/[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-
 export const startImport = spacetimedb.reducer(
   { project: t.string(), source: t.string() },
   (ctx, { project: fullName, source }) => {
+    fullName = projectFor(ctx.db, fullName);
     const sp = requireProjectAdmin(ctx, fullName);
     if (!GITHUB_SOURCE.test(source)) throw new SenderError('only https://github.com/<owner>/<repo> can be imported');
     const row = ctx.db.projectImport.projectId.find(sp.id);
@@ -1410,6 +1609,7 @@ export const startImport = spacetimedb.reducer(
 export const updateImport = spacetimedb.reducer(
   { project: t.string(), status: t.string(), message: t.string() },
   (ctx, { project: fullName, status, message }) => {
+    fullName = projectFor(ctx.db, fullName);
     const sp = requireProjectAdmin(ctx, fullName);
     if (!['running', 'done', 'failed'].includes(status)) throw new SenderError(`invalid import status "${status}"`);
     const row = ctx.db.projectImport.projectId.find(sp.id);

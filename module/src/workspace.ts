@@ -13,7 +13,7 @@
 //
 // Reads come straight from the tables, so nothing is cached and every answer
 // is current. Writes go through the append_chat reducer (chat.ts).
-import { PRESENCE_STALE_SECONDS, inSpace, objectKey, readObject, refKey, type Db } from './store';
+import { PRESENCE_STALE_SECONDS, inSpace, objectKey, readObject, refKey, spaceFor, type Db } from './store';
 import { Sha1 } from './sha1';
 import { CodeError, README_BYTES, commitView, commitsView, filesView, refsView, treeView } from './code';
 import { DEPS_FILE, depsText, depsView, parseDeps } from './deps';
@@ -153,6 +153,8 @@ export type Meta =
       github: string;
       /** The GitHub account behind a builder (from sign-up) or an org (from its link), for its avatar. */
       githubLogin: string;
+      /** The builder's second names (space_alias): /<alias> shows this space too. */
+      aliases: string[];
       createdAt: string;
       memberOf: Membership[];
       /** Agents this space owns (names). */
@@ -621,6 +623,7 @@ function spaceLevel(db: Db, name: string, now: number) {
       bytes: projects.reduce((sum, project) => sum + bytesOf(db, project.id), 0),
       github: db.spaceLink.space.find(name)?.source ?? '',
       githubLogin: githubLoginOf(db, name),
+      aliases: [...db.spaceAlias.space.filter(name)].map(alias => alias.name).sort(),
       createdAt: iso(space.createdAt),
       memberOf,
       agents: [...db.space.kind.filter('agent')].filter(agent => agent.parent === name).map(agent => agent.name).sort(),
@@ -820,6 +823,11 @@ export function codeView(db: Db, req: ApiRequest): unknown {
 export function renderApi(db: Db, req: ApiRequest): { status: number; headers: Record<string, string>; body: string } {
   const headers: Record<string, string> = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' };
   try {
+    // A builder's second name answers as the builder.
+    for (const key of ['space', 'avatar']) {
+      const name = req.query.get(key);
+      if (name) req = { ...req, query: new Map([...req.query, [key, spaceFor(db, name.toLowerCase())]]) };
+    }
     if (req.query.has('avatar')) return { status: 200, headers, body: JSON.stringify(avatarOf(db, (req.query.get('avatar') ?? '').toLowerCase())) };
     if (req.query.has('templates')) return { status: 200, headers, body: JSON.stringify({ templates: templatesView(db) }) };
     if (req.query.has('view')) {

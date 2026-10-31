@@ -207,6 +207,13 @@ export const Space = __t.object("Space", {
 });
 export type Space = __Infer<typeof Space>;
 
+export const SpaceAlias = __t.object("SpaceAlias", {
+  name: __t.string(),
+  space: __t.string(),
+  createdAt: __t.timestamp(),
+});
+export type SpaceAlias = __Infer<typeof SpaceAlias>;
+
 export const SpaceLink = __t.object("SpaceLink", {
   space: __t.string(),
   source: __t.string(),
@@ -245,6 +252,16 @@ export const XoAgent = __t.object("XoAgent", {
   createdAt: __t.timestamp(),
 });
 export type XoAgent = __Infer<typeof XoAgent>;
+
+export const XoLink = __t.object("XoLink", {
+  subject: __t.string(),
+  githubId: __t.u64(),
+  username: __t.string(),
+  xoName: __t.string(),
+  linkedAt: __t.timestamp(),
+  updatedAt: __t.timestamp(),
+});
+export type XoLink = __Infer<typeof XoLink>;
 
 export const XoRecord = __t.object("XoRecord", {
   subject: __t.string(),

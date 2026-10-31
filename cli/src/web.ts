@@ -5,7 +5,10 @@
 //   GET/POST /-/signup           register a builder (new identity + name), or how to
 //                                sign up with GitHub on a hub where builders do
 //   POST     /-/api/auth/github  sign up or in with a GitHub token (signin.ts), for the CLI
-//   GET      /-/login/xo         sign in with xo in the browser, and its callback (xosignin.ts)
+//   GET      /-/login/github     sign up or in with GitHub in the browser, and its callback
+//                                (githubsignin.ts), with the hub's OAuth App
+//   GET      /-/login/xo         sign in with xo in the browser, and its callback (xosignin.ts):
+//                                the builder of the GitHub account connected to XO
 //   POST     /-/logout           forget the session
 //   GET/POST /-/new              create a project: from a template (with its goal), empty,
 //                                or imported from GitHub
@@ -26,14 +29,15 @@ import http from 'node:http';
 import { connectTo, errorMessage, findProject, findUser, quietSdkLogs, snapshot, tables, type Conn } from './conn';
 import { githubLogin, normalizeServer } from './config';
 import { esc, navFor, PAGE_CSP, shell, sideFor } from '../../module/src/style';
-import { signInWays, xoButton, type Hub } from '../../module/src/howto';
+import { signInButtons, signInWays, step, steps, type Hub } from '../../module/src/howto';
 import { Fail, GithubSync, githubApi, githubBuilder as builderOf, githubInfo as infoOf, mirrorProject } from './github';
 import { LiveHub } from './live';
 import { accountsSetting, handleSignIn, signInConfig } from './signin';
 import { handleXo, xoConfig } from './xo';
-import { CALLBACK_ROUTE, finishSignIn, offerFor, START_ROUTE, startSignIn, STATE_COOKIE, WAIT_SECONDS, xoSignInConfig } from './xosignin';
+import { CALLBACK_ROUTE, ConnectGithub, finishSignIn, offerFor, START_ROUTE, startSignIn, STATE_COOKIE, WAIT_SECONDS, xoSignInConfig } from './xosignin';
+import * as githubWeb from './githubsignin';
 import { appDir, handleApp } from './app';
-import { Reply } from './admin';
+import { Reply, select } from './admin';
 import { agentHubConfig, handleAgentHub } from './agenthub';
 
 quietSdkLogs();
@@ -46,11 +50,11 @@ const MAX_CONCURRENT_IMPORTS = 2;
 const YEAR = 60 * 60 * 24 * 365;
 // SpacetimeDB's HTTP side, where the module renders pages.
 const INTERNAL_HTTP = (process.env.SPACEHUB_INTERNAL_HTTP ?? SERVER.replace(/^ws/, 'http')).replace(/\/+$/, '');
-const XO = xoConfig(DB, INTERNAL_HTTP);
+const GITHUB = githubApi();
+const XO = xoConfig(DB, INTERNAL_HTTP, GITHUB);
 const XO_SIGNIN = xoSignInConfig(XO);
 const AGENTHUB = agentHubConfig();
 const LIVE = new LiveHub({ server: SERVER, db: DB, http: INTERNAL_HTTP });
-const GITHUB = githubApi();
 const APP_DIR = appDir();
 const githubInfo = (owner: string, repo: string) => infoOf(GITHUB, owner, repo);
 const githubBuilder = (login: string) => builderOf(GITHUB, login);
@@ -124,6 +128,12 @@ function signInCookie(req: http.IncomingMessage, state: string, maxAge = WAIT_SE
   return `${STATE_COOKIE}=${state}; Path=${START_ROUTE}; SameSite=Lax; Max-Age=${maxAge}; HttpOnly${secure}`;
 }
 
+// The same for a sign-in with GitHub.
+function githubCookie(req: http.IncomingMessage, state: string, maxAge = githubWeb.WAIT_SECONDS) {
+  const secure = req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : '';
+  return `${githubWeb.STATE_COOKIE}=${state}; Path=${githubWeb.START_ROUTE}; SameSite=Lax; Max-Age=${maxAge}; HttpOnly${secure}`;
+}
+
 // Form posts must come from this site: compare Origin (or Referer) with Host.
 function sameOrigin(req: http.IncomingMessage) {
   const host = req.headers.host;
@@ -150,6 +160,20 @@ function localPath(next: string | null) {
 }
 
 // ---------------------------------------------------------------- sessions
+
+// Whether a builder's account is linked to XO: it signed in with xo (with a
+// GitHub account, or before GitHub was needed). Launching agents needs it.
+async function xoLinked(username: string): Promise<boolean> {
+  if (!XO || !USERNAME.test(username)) return false;
+  try {
+    const [link] = await select(XO, `SELECT subject FROM xo_link WHERE username = '${username}'`);
+    if (link) return true;
+    const [legacy] = await select(XO, `SELECT subject FROM xo_agent WHERE username = '${username}'`);
+    return !!legacy;
+  } catch {
+    return false;
+  }
+}
 
 async function withConn<T>(token: string | undefined, fn: (conn: Conn, identity: Parameters<typeof findUser>[1], token: string) => Promise<T>) {
   const { conn, identity, token: issued } = await connectTo(SERVER, DB, token);
@@ -249,9 +273,9 @@ function loginPage(viewer: string | null, hub: Hub, error = '', next = '/') {
   return page(
     'Sign in · spacehub',
     viewer,
-    `<div class="page-title"><h1>Sign in</h1><p>${hub.xo ? 'There are no passwords here. Sign in with xo, or once from your terminal, then paste your token.' : 'There are no passwords here. Sign in once from your terminal, then paste your token to use this site.'}</p></div>
+    `<div class="page-title"><h1>Sign in</h1><p>${hub.github || hub.xo ? `There are no passwords here: your account is your GitHub account. Sign in with ${hub.github && hub.xo ? 'GitHub or xo' : hub.github ? 'GitHub' : 'xo'}, or once from your terminal, then paste your token.` : 'There are no passwords here. Sign in once from your terminal, then paste your token to use this site.'}</p></div>
 ${error ? `<div class="banner err">${esc(error)}</div>` : ''}
-${hub.xo ? xoButton('Sign in with xo', next) : ''}
+${signInButtons(hub, 'Sign in', next)}
 ${signInWays(hub, true)}
 <h2 class="section-title">Paste your token</h2>
 <form class="signin-form" method="post" action="/-/login"><input type="hidden" name="next" value="${esc(next)}">
@@ -269,7 +293,7 @@ function signupPage(viewer: string | null, hub: Hub, error = '', username = '') 
     `<h1><b>Register</b></h1>
 <p class="desc">Pick your builder name. It is also your personal space: your projects live at <code>&lt;name&gt;/&lt;project&gt;</code>.</p>
 ${error ? `<div class="banner err">${esc(error)}</div>` : ''}
-${hub.xo ? xoButton('Sign up with xo', '/', 'Or pick a name') : ''}
+${signInButtons(hub, 'Sign up', '/', 'Or pick a name')}
 <form method="post" action="/-/signup"><label for="username">Builder name <span class="muted">lowercase letters, digits and hyphens</span></label>
 <input type="text" id="username" name="username" value="${esc(username)}" required pattern="[a-z0-9][a-z0-9-]{0,38}" autocomplete="username">
 <p><button class="btn primary" type="submit">Register</button></p></form>
@@ -282,9 +306,9 @@ function terminalSignupPage(viewer: string | null, hub: Hub, error = '') {
   return page(
     'Sign up · spacehub',
     viewer,
-    `<div class="page-title"><h1>Sign up</h1><p>${hub.xo ? 'Builders on this hub sign up with xo or from the terminal. There is no password: sign in the same way on any machine to get your builder back.' : 'Builders on this hub sign up from the terminal. There is no password: run the same login on any machine to get your builder back.'}</p></div>
+    `<div class="page-title"><h1>Sign up</h1><p>${hub.github || hub.xo ? 'Your builder on this hub is your GitHub account, named after its login. There is no password: sign in the same way on any machine to get your builder back.' : 'Builders on this hub sign up from the terminal. There is no password: run the same login on any machine to get your builder back.'}</p></div>
 ${error ? `<div class="banner err">${esc(error)}</div>` : ''}
-${hub.xo ? xoButton('Sign up with xo', '/') : ''}
+${signInButtons(hub, 'Sign up', '/')}
 ${signInWays(hub, true).replace('Paste it below.', 'Paste it at <a href="/-/login">Sign in</a> to use this site too.')}`,
     true
   );
@@ -303,13 +327,30 @@ async function accountsMode() {
 // This hub as the sign-in pages describe it.
 async function hubOf(req: http.IncomingMessage): Promise<Hub> {
   const [accounts, offer] = await Promise.all([accountsMode(), offerFor(XO_SIGNIN, callbackOf(req))]);
-  return { server: serverOf(req), host: req.headers.host ?? 'localhost', accounts, xo: offer !== null };
+  return { server: serverOf(req), host: req.headers.host ?? 'localhost', accounts, xo: offer !== null, github: !!SIGNIN?.app };
 }
 
-// Where XO's sign-in sends the browser back to this hub, as the browser reached it.
-function callbackOf(req: http.IncomingMessage) {
+// Where a sign-in sends the browser back to this hub, as the browser reached it.
+function callbackOf(req: http.IncomingMessage, route = CALLBACK_ROUTE) {
   const scheme = req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
-  return `${scheme}://${req.headers.host ?? 'localhost'}${CALLBACK_ROUTE}`;
+  return `${scheme}://${req.headers.host ?? 'localhost'}${route}`;
+}
+
+// XO has no GitHub account for this user yet: connect one there, then sign in again.
+function connectGithubPage(hub: Hub, why: ConnectGithub) {
+  const query = why.next && why.next !== '/' ? `?next=${encodeURIComponent(why.next)}` : '';
+  return page(
+    'Connect GitHub · spacehub',
+    null,
+    `<div class="page-title"><h1>Connect GitHub to XO</h1><p>Your builder on this hub is your GitHub account: signing in with xo uses the GitHub account connected to your XO account, and your XO username becomes its display name.</p></div>
+<div class="banner">${esc(why.message)}</div>
+${steps(
+  step('Connect GitHub', 'In your XO account, under connected accounts. It opens in a new tab.', `<p><a class="btn primary" href="${esc(why.url)}" target="_blank" rel="noopener noreferrer">Connect GitHub</a></p>`),
+  step('Sign in again', 'Once GitHub shows as connected there.', `<p><a class="btn" href="${esc(`${START_ROUTE}${query}`)}">Sign in with xo</a></p>`)
+)}
+${hub.github ? `<p class="muted">Or <a href="${esc(`${githubWeb.START_ROUTE}${query}`)}">sign in with GitHub</a> alone: chat and projects work without XO, launching agents does not.</p>` : ''}`,
+    true
+  );
 }
 
 // This hub's websocket address, as the browser reached it.
@@ -396,7 +437,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   if (await handleSignIn(SIGNIN, req, res)) return;
   if (LIVE.handle(req, res, url)) return;
   if (req.method === 'POST' && !sameOrigin(req)) return send(res, 403, page('Forbidden', null, '<h1>Forbidden</h1><p class="desc">This form must be sent from this site.</p>'));
-  if (await handleAgentHub(AGENTHUB, { sessionOf, spacesOf, appendChat, sameOrigin }, req, res, url)) return;
+  if (await handleAgentHub(AGENTHUB, { sessionOf, spacesOf, appendChat, sameOrigin, ...(XO ? { xoLinked } : {}) }, req, res, url)) return;
   if (await handleApp({ dir: APP_DIR, internalHttp: INTERNAL_HTTP, db: DB, withConn, sessionOf }, req, res, url)) return;
 
   if (route === '/-/login') {
@@ -428,6 +469,35 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     }
   }
 
+  if (route === githubWeb.START_ROUTE && req.method === 'GET') {
+    const next = localPath(url.searchParams.get('next'));
+    if (!SIGNIN?.app) return send(res, 404, loginPage(null, await hubOf(req), 'Sign-in with GitHub is not set up on this hub. Sign in from the terminal below.', next));
+    try {
+      const { state, location } = githubWeb.startSignIn(SIGNIN, callbackOf(req, githubWeb.CALLBACK_ROUTE), next);
+      return redirect(res, location, [githubCookie(req, state)]);
+    } catch (err) {
+      return send(res, err instanceof Reply ? err.status : 500, loginPage(null, await hubOf(req), errorMessage(err), next));
+    }
+  }
+
+  if (route === githubWeb.CALLBACK_ROUTE && req.method === 'GET') {
+    // The URL holds a one-time code: it goes to no other page, and the state cookie is spent.
+    const quiet = { 'referrer-policy': 'no-referrer' };
+    const spent = githubCookie(req, '', 0);
+    try {
+      if (!SIGNIN) throw new Reply(404, 'Sign-in with GitHub is not set up on this hub.');
+      const q = url.searchParams;
+      const out = await githubWeb.finishSignIn(SIGNIN, { state: q.get('state'), cookie: cookieValue(req, githubWeb.STATE_COOKIE), code: q.get('code'), error: q.get('error') });
+      const username = (await withConn(out.token, (conn, identity) => findUser(conn, identity)))?.username;
+      if (username !== out.username) throw new Reply(502, `The builder ${out.username} cannot sign in on this hub.`);
+      return redirect(res, out.next, [...sessionCookies(req, out.token, username), spent], quiet);
+    } catch (err) {
+      const status = err instanceof Reply ? err.status : 500;
+      if (!(err instanceof Reply)) process.stderr.write(`spacehub-web: sign-in with GitHub: ${errorMessage(err)}\n`);
+      return send(res, status, loginPage(null, await hubOf(req), err instanceof Reply ? err.message : 'Sign-in with GitHub failed. Try again.'), { ...quiet, 'set-cookie': spent });
+    }
+  }
+
   if (route === CALLBACK_ROUTE && req.method === 'GET') {
     // The URL holds a one-time code: it goes to no other page, and the state cookie is spent.
     const quiet = { 'referrer-policy': 'no-referrer' };
@@ -440,6 +510,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
       if (username !== out.username) throw new Reply(502, `The builder ${out.username} cannot sign in on this hub.`);
       return redirect(res, out.next, [...sessionCookies(req, out.token, username), spent], quiet);
     } catch (err) {
+      if (err instanceof ConnectGithub) return send(res, 409, connectGithubPage(await hubOf(req), err), { ...quiet, 'set-cookie': spent });
       const status = err instanceof Reply ? err.status : 500;
       if (!(err instanceof Reply)) process.stderr.write(`spacehub-web: sign-in with xo: ${errorMessage(err)}\n`);
       return send(res, status, loginPage(null, await hubOf(req), err instanceof Reply ? err.message : 'Sign-in with xo failed. Try again.'), { ...quiet, 'set-cookie': spent });

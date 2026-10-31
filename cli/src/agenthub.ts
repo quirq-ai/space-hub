@@ -5,7 +5,7 @@
 // message to the channel's chat with the task's id, so everyone in the
 // channel sees the worker and follows it there.
 //
-//   GET    /-/api/agenthub?space=<org>         {enabled, signedIn, allowed}: may I launch here
+//   GET    /-/api/agenthub?space=<org>         {enabled, signedIn, allowed, needsXo}: may I launch here
 //   POST   /-/api/agenthub/tasks               {space, project, conversation, text, repo?, title?}
 //   GET    /-/api/agenthub/tasks/<id>          {task, result}
 //   GET    /-/api/agenthub/tasks/<id>/events   what happened, step by step (?after=N)
@@ -14,7 +14,9 @@
 //   DELETE /-/api/agenthub/tasks/<id>          tear it down (its sandbox and history)
 //
 // The agents belong to the orgs named in SPACEHUB_AGENTHUB_SPACES: their
-// members (and owners) launch and steer them, nobody else. The Agents Hub
+// members (and owners) follow them, and on a hub with xo (SPACEHUB_XO_KEY)
+// only those who signed in with xo launch and steer them (needsXo: a member
+// whose builder is not linked to an XO account yet); nobody else. The Agents Hub
 // token (SPACEHUB_AGENTHUB_TOKEN) stays on the server; the browser only talks
 // to this service with its session cookie. Without SPACEHUB_AGENTHUB_URL and
 // SPACEHUB_AGENTHUB_TOKEN the routes answer that agents are not set up.
@@ -65,9 +67,11 @@ export interface AgentHubDeps {
   /** Save turns to a conversation as the builder (the module's append_chat). */
   appendChat: (session: Session, input: { project: string; conversation: string; turns: Turn[] }) => Promise<void>;
   sameOrigin: (req: http.IncomingMessage) => boolean;
+  /** Whether the builder's account is linked to XO; without it (a hub without xo) nobody needs to be. */
+  xoLinked?: (username: string) => Promise<boolean>;
 }
 
-type Viewer = { session: Session; spaces: Set<string> } | null;
+type Viewer = { session: Session; spaces: Set<string>; xo: boolean } | null;
 const viewers = new Map<string, { viewer: Viewer; until: number }>();
 
 async function viewerOf(deps: AgentHubDeps, req: http.IncomingMessage): Promise<Viewer> {
@@ -78,7 +82,9 @@ async function viewerOf(deps: AgentHubDeps, req: http.IncomingMessage): Promise<
   const hit = viewers.get(key);
   if (hit && hit.until > now) return hit.viewer;
   const session = await deps.sessionOf(req);
-  const viewer = session ? { session, spaces: new Set((await deps.spacesOf(session)).map(space => space.toLowerCase())) } : null;
+  const viewer = session
+    ? { session, spaces: new Set((await deps.spacesOf(session)).map(space => space.toLowerCase())), xo: deps.xoLinked ? await deps.xoLinked(session.username) : true }
+    : null;
   if (viewers.size > 1000) for (const [k, v] of viewers) if (v.until <= now) viewers.delete(k);
   viewers.set(key, { viewer, until: now + SESSION_TTL_MS });
   return viewer;
@@ -197,12 +203,15 @@ export async function handleAgentHub(cfg: AgentHubConfig | null, deps: AgentHubD
     if (route === PREFIX) {
       if (req.method !== 'GET') throw new Reply(405, 'Read this with GET.');
       const space = (url.searchParams.get('space') ?? '').toLowerCase();
-      return json(res, 200, { enabled: !!cfg && (!space || cfg.spaces.has(space)), signedIn: !!viewer, allowed: space ? memberOf(space) : anyMember }), true;
+      const member = space ? memberOf(space) : anyMember;
+      return json(res, 200, { enabled: !!cfg && (!space || cfg.spaces.has(space)), signedIn: !!viewer, allowed: member && !!viewer?.xo, needsXo: member && !viewer?.xo }), true;
     }
     if (!cfg) throw new Reply(503, 'Agents are not set up on this hub.');
     if (!viewer) throw new Reply(401, 'Sign in to work with agents.');
     if (!anyMember) throw new Reply(403, 'Only members of an org with agents can work with them.');
-    if (req.method !== 'GET' && req.method !== 'HEAD' && !deps.sameOrigin(req)) throw new Reply(403, 'This must be sent from this site.');
+    const reading = req.method === 'GET' || req.method === 'HEAD';
+    if (!reading && !deps.sameOrigin(req)) throw new Reply(403, 'This must be sent from this site.');
+    if (!reading && !viewer.xo) throw new Reply(403, 'Sign in with xo to launch and steer agents: your account here is not linked to XO yet.');
 
     const rest = route.slice(PREFIX.length + 1).split('/');
     if (rest[0] !== 'tasks') throw new Reply(404, 'No such route.');

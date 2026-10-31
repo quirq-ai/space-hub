@@ -71,6 +71,7 @@ import UpdateRefReducer from "./update_ref_reducer";
 import WatchProjectReducer from "./watch_project_reducer";
 import WatchSpaceReducer from "./watch_space_reducer";
 import XoLinkAgentReducer from "./xo_link_agent_reducer";
+import XoLinkGithubReducer from "./xo_link_github_reducer";
 import XoPutRecordReducer from "./xo_put_record_reducer";
 
 // Import all procedure arg schemas
@@ -91,6 +92,7 @@ import ProjectMemberRow from "./project_member_table";
 import ProjectSizeRow from "./project_size_table";
 import RefSyncRow from "./ref_sync_table";
 import SpaceRow from "./space_table";
+import SpaceAliasRow from "./space_alias_table";
 import SpaceLinkRow from "./space_link_table";
 import SpaceRoleRow from "./space_role_table";
 import UserRow from "./user_table";
@@ -304,6 +306,20 @@ const tablesSchema = __schema({
       { name: 'space_name_key', constraint: 'unique', columns: ['name'] },
     ],
   }, SpaceRow),
+  spaceAlias: __table({
+    name: 'space_alias',
+    indexes: [
+      { accessor: 'name', name: 'space_alias_name_idx_btree', algorithm: 'btree', columns: [
+        'name',
+      ] },
+      { accessor: 'space', name: 'space_alias_space_idx_btree', algorithm: 'btree', columns: [
+        'space',
+      ] },
+    ],
+    constraints: [
+      { name: 'space_alias_name_key', constraint: 'unique', columns: ['name'] },
+    ],
+  }, SpaceAliasRow),
   spaceLink: __table({
     name: 'space_link',
     indexes: [
@@ -392,6 +408,7 @@ const reducersSchema = __reducers(
   __reducerSchema("watch_project", WatchProjectReducer),
   __reducerSchema("watch_space", WatchSpaceReducer),
   __reducerSchema("xo_link_agent", XoLinkAgentReducer),
+  __reducerSchema("xo_link_github", XoLinkGithubReducer),
   __reducerSchema("xo_put_record", XoPutRecordReducer),
 );
 

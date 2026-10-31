@@ -39,6 +39,7 @@ export function SpacePage({ name, tab, view, error, me, seen }: { name: string; 
         {meta.kind === "org" && <a href={base + "#" + hashOf("people")} onClick={onLink} title="Members and agents of this org"><Users size={14} />{peopleCount + agentCount} in the team: {peopleCount} {peopleCount === 1 ? "member" : "members"} and {agentCount} {agentCount === 1 ? "agent" : "agents"}</a>}
         {meta.kind === "personal" && agentCount > 0 && <a href={base + "#" + hashOf("agents")} onClick={onLink}><Bot size={14} />{agentCount} {agentCount === 1 ? "agent" : "agents"}</a>}
         {meta.githubLogin && <a href={meta.github || `https://github.com/${meta.githubLogin}`} target="_blank" rel="noreferrer"><Github size={14} />{meta.githubLogin}</a>}
+        {!!meta.aliases?.length && <span title={`These addresses show ${name} too`}>Also {meta.aliases.map(alias => "/" + alias).join(", ")}</span>}
         {meta.here.length > 0 && <a className="strip-here" href={base + "#" + hashOf("people")} onClick={onLink} title={meta.here.map(who => who.agent).join(", ")}><i className="online-dot" />{new Set(meta.here.map(who => who.agent)).size} here now</a>}
       </div>
       {meta.memberOf.length > 0 && <div className="profile-links">

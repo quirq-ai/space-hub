@@ -130,24 +130,45 @@ export function snapshot<T>(conn: Conn, query: string | RowTypedQuery<any, any>,
   });
 }
 
-export function findProject(conn: Conn, fullName: string) {
-  return snapshot(conn, tables.project.where(s => s.fullName.eq(fullName)), () =>
-    [...conn.db.project.iter()].find(s => s.fullName === fullName)
-  );
+export async function findProject(conn: Conn, fullName: string) {
+  const find = (name: string) =>
+    snapshot(conn, tables.project.where(s => s.fullName.eq(name)), () => [...conn.db.project.iter()].find(s => s.fullName === name));
+  const found = await find(fullName);
+  if (found || !fullName.includes('/')) return found;
+  const [space, ...rest] = fullName.split('/');
+  const own = await spaceOf(conn, space);
+  return own === space ? undefined : find([own, ...rest].join('/'));
 }
 
 // A top-level space: a builder's personal space, an org or an agent.
-export function findSpace(conn: Conn, name: string) {
-  return snapshot(conn, tables.space.where(s => s.name.eq(name)), () => [...conn.db.space.iter()].find(s => s.name === name));
+export async function findSpace(conn: Conn, name: string) {
+  const find = (n: string) => snapshot(conn, tables.space.where(s => s.name.eq(n)), () => [...conn.db.space.iter()].find(s => s.name === n));
+  const found = await find(name);
+  if (found) return found;
+  const own = await spaceOf(conn, name);
+  return own === name ? undefined : find(own);
 }
 
-export function spaceRoles(conn: Conn, space: string) {
+// The space a name stands for: a builder's second name (space_alias) stands
+// for the builder's space, any other name for itself, as on the hub.
+export async function spaceOf(conn: Conn, name: string): Promise<string> {
+  try {
+    const alias = await snapshot(conn, tables.spaceAlias.where(a => a.name.eq(name)), () => [...conn.db.spaceAlias.iter()].find(a => a.name === name));
+    return alias?.space ?? name;
+  } catch {
+    return name; // a hub from before second names
+  }
+}
+
+export async function spaceRoles(conn: Conn, name: string) {
+  const space = await spaceOf(conn, name);
   return snapshot(conn, tables.spaceRole.where(r => r.space.eq(space)), () =>
     [...conn.db.spaceRole.iter()].filter(r => r.space === space).sort((a, b) => (a.role === b.role ? a.member.localeCompare(b.member) : a.role === 'owner' ? -1 : 1))
   );
 }
 
-export function projectsIn(conn: Conn, space: string) {
+export async function projectsIn(conn: Conn, name: string) {
+  const space = await spaceOf(conn, name);
   return snapshot(conn, tables.project.where(p => p.owner.eq(space)), () =>
     [...conn.db.project.iter()].filter(p => p.owner === space).sort((a, b) => a.name.localeCompare(b.name))
   );
