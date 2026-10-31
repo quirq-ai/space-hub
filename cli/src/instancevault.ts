@@ -433,6 +433,20 @@ export class InstanceVault {
       return { stream: handle.createReadStream({ autoClose: true }), size: file.size, sha256: file.sha256 };
     } catch (error) { await handle.close(); throw error; }
   }
+  /**
+   * What one backup holds, from its manifest, without hashing it again: its
+   * files (the first `limit`, by path) and hub.json, the only file whose text
+   * is shown (others hold keys and tokens).
+   */
+  describe(id: string, limit = 5000): { snapshot: Snapshot; files: ManifestFile[]; total: number; hub: unknown } {
+    const { root, manifest, snapshot } = this.load(id);
+    let hub: unknown = null;
+    const about = manifest.files.find(file => file.path === 'hub.json');
+    if (about && about.size <= 64 * 1024) {
+      try { hub = JSON.parse(fs.readFileSync(joined(root, 'payload/hub.json'), 'utf8')); } catch { hub = null; }
+    }
+    return { snapshot: clone(snapshot), files: manifest.files.slice(0, limit).map(file => ({ ...file })), total: manifest.files.length, hub };
+  }
   async importSnapshot(sourceDir: string, transfer: TransferManifest): Promise<Snapshot> {
     const run = this.tail.then(() => this.importOne(sourceDir, transfer));
     this.tail = run.catch(() => undefined);
