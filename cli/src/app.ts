@@ -2,7 +2,9 @@
 // the hub's own pages here; the module still renders the code views
 // (tree, blob, raw, commits, commit, refs, activity) and the guide.
 //
-//   GET  /, /<space>, /<space>/<project>   the app's page (its path within a project is in the #hash)
+//   GET  /, /<space>, /<space>/<project>   the app's page (its path within a project is in the #hash);
+//                                          a visitor who is not signed in is sent from / to the
+//                                          hub's front project (visitorHome)
 //   GET  /-/app/<file>                     the app's script, styles and images (built from app/)
 //   GET  /-/api/view?space=&project=&path= the hub, a space or a project as folders and files
 //                                          (the module's /api, see module/src/workspace.ts)
@@ -21,6 +23,7 @@ import { fileURLToPath } from 'node:url';
 import type { Conn } from './conn';
 import { findUser } from './conn';
 import { handleAvatar } from './avatar';
+import { visitorLanding } from './visitor';
 
 export const APP_CSP =
   "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self'; connect-src 'self'; frame-src 'self' https:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
@@ -180,6 +183,12 @@ export async function handleApp(deps: AppDeps, req: http.IncomingMessage, res: h
   const page = req.method === 'GET' || req.method === 'HEAD' ? PAGE.exec(route) : null;
   if (page) {
     const [, space, project] = page;
+    const landing = space ? null : await visitorLanding(deps, req);
+    if (landing) {
+      res.writeHead(302, { location: landing, 'cache-control': 'no-store' });
+      res.end();
+      return true;
+    }
     const title = space ? `${project ? `${space}/${project}` : space} · spacehub` : 'spacehub';
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'content-security-policy': APP_CSP, 'x-content-type-options': 'nosniff', 'referrer-policy': 'same-origin' });
     res.end(appPage(deps.dir, title));
