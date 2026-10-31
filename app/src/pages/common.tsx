@@ -1,9 +1,11 @@
 import type { CSSProperties, ReactNode } from "react";
-import { History, Users } from "lucide-react";
+import { History, Server, Users } from "lucide-react";
 import { activityLine, groupActivity, placeUrl, pushedFiles, type ActivityItem, type Here } from "@/api";
 import { hashOf, onLink } from "@/router";
 import { Ago, Avatar, AvatarStack, Empty, PersonLink } from "@/ui/primitives";
 import { Browser } from "@/ui/cards";
+import { useSubhubActivity } from "@/hooks/use-subhubs";
+import type { SubhubActivity } from "@/lib/subhubs";
 
 export function PageHeader({ crumbs, title, subtitle, leading, actions, children }: {
   crumbs?: { label: string; href: string }[]; title: ReactNode; subtitle?: ReactNode; leading?: ReactNode; actions?: ReactNode; children?: ReactNode;
@@ -27,8 +29,9 @@ export function Tabs({ tabs, active }: { tabs: Tab[]; active: string }) {
   </a>)}</nav>;
 }
 
-export function ActivityList({ items, empty = "Nothing has happened here yet.", compact = false }: { items: ActivityItem[]; empty?: string; compact?: boolean }) {
-  if (!items.length) return <Empty icon={<History size={20} />} title="No activity yet"><p>{empty}</p></Empty>;
+export function ActivityList({ items, empty = "Nothing has happened here yet.", compact = false, space, project }: { items: ActivityItem[]; empty?: string; compact?: boolean; space?: string; project?: string }) {
+  const subhubs = useSubhubActivity(space, project);
+  if (!items.length && !subhubs.items.length) return <><Empty icon={<History size={20} />} title="No activity yet"><p>{empty}</p></Empty>{subhubs.error && <p className="subhub-feed-note" title={subhubs.error}>Sub-hub activity is unavailable.</p>}</>;
   // Keyed by the row (a group by its newest push), not its position, so a new
   // row mounts at the top instead of every row changing its text.
   const seen = new Map<string, number>();
@@ -38,9 +41,19 @@ export function ActivityList({ items, empty = "Nothing has happened here yet.", 
     seen.set(row, copies + 1);
     return `${row} ${copies}`;
   };
-  return <ol className={`activity${compact ? " compact" : ""}`}>{groupActivity(items).map((group, index) => group.length > 1
-    ? <PushGroup key={keyOf(group[0])} group={group} compact={compact} index={index} />
-    : <ActivityRow key={keyOf(group[0])} item={group[0]} compact={compact} index={index} />)}</ol>;
+  const rows: ({ at: number; group: ActivityItem[]; event?: never } | { at: number; event: SubhubActivity; group?: never })[] = [
+    ...groupActivity(items).map(group => ({ at: new Date(group[0].at).getTime(), group })),
+    ...subhubs.items.map(event => ({ at: event.at, event })),
+  ];
+  rows.sort((a, b) => b.at - a.at);
+  return <><ol className={`activity${compact ? " compact" : ""}`}>{rows.map((row, index) => row.event
+    ? <SubhubActivityRow key={`subhub:${row.event.id}`} item={row.event} index={index} />
+    : row.group.length > 1 ? <PushGroup key={keyOf(row.group[0])} group={row.group} compact={compact} index={index} />
+      : <ActivityRow key={keyOf(row.group[0])} item={row.group[0]} compact={compact} index={index} />)}</ol>{subhubs.error && <p className="subhub-feed-note" title={subhubs.error}>Sub-hub activity is unavailable.</p>}</>;
+}
+
+function SubhubActivityRow({ item, index }: { item: SubhubActivity; index: number }) {
+  return <li style={{ "--i": index } as CSSProperties}><span className="subhub-event-icon"><Server size={16} /></span><div className="activity-body"><div className="activity-line"><a className="strong" href={placeUrl({ space: item.space, project: "" }, hashOf("subhubs"))} onClick={onLink}>{item.nodeId || item.actor || item.space}</a> {item.kind.replace(/_/g, " ")}</div>{(item.text || item.subject) && <div className="activity-detail">{item.text || item.subject}</div>}</div><span className="activity-time"><Ago iso={new Date(item.at).toISOString()} /></span></li>;
 }
 
 function ActivityRow({ item, compact, index }: { item: ActivityItem; compact: boolean; index: number }) {

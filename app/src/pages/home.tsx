@@ -5,6 +5,7 @@ import type { Entry } from "@/lib/types";
 import { Browser, Glyph } from "@/ui/cards";
 import { Avatar, AvatarStack, CommandTabs, Popover, SkeletonRows } from "@/ui/primitives";
 import { ActivityList, PageHeader } from "./common";
+import { SubhubPresence } from "@/components/subhub-presence";
 
 const kindOf = (detail = "") => detail.startsWith("org") ? "org" : detail.startsWith("agent") ? "agent" : "personal";
 
@@ -38,6 +39,7 @@ export function HomePage({ view, me, mySpaces, seen, activityOpen, onActivity }:
         ]} note={<>Both need the hub's CLI: <code>scripts/install-cli.sh</code> from quirq-ai/space-hub. xo is XO's command line; <code>xo login</code> signs you in to XO and this hub. <a href="/-/guide">Read the guide</a>.</>} />
       </Popover>}</>}>
       {view.meta.here.length > 0 && <div className="meta-strip"><span className="strip-here" title={view.meta.here.map(who => `${who.agent}${who.project ? ` · ${who.project}` : ""}`).join("\n")}><i className="online-dot" />{new Set(view.meta.here.map(who => who.agent)).size} connected now</span><AvatarStack names={[...new Set(view.meta.here.map(who => who.agent))]} max={8} size={20} /></div>}
+      <div className="meta-strip"><SubhubPresence compact /></div>
     </PageHeader>
     <Browser head={<>{count(spaces.length, "space")} and the {count(recent.length, "newest project")}</>} groups={[...GROUPS.map(group => ({ key: group.key, title: group.title, note: group.note, cards: spaces.filter(space => group.keep(space, mine)).map(space => {
       const kind = kindOf(space.detail);

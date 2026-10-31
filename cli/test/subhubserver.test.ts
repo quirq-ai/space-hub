@@ -5,7 +5,8 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
-import { createSubhubServer, NodeWorkSpool, type NodeBackupSnapshot } from '../src/subhubserver.ts';
+import { createSubhubServer, NodeWorkSpool, type NodeBackupSnapshot, type NodeDrive } from '../src/subhubserver.ts';
+import { DriveStore } from '../src/subhubdrive.ts';
 
 const TOKEN = 'a-private-node-token';
 const SNAPSHOT = 'a'.repeat(32);
@@ -18,7 +19,7 @@ function removeTemporary(dir: string) {
   fs.rmSync(target, { recursive: true, force: true });
 }
 
-async function setup(options: { availableBytes?: () => number } = {}) {
+async function setup(options: { availableBytes?: () => number; mode?: () => 'backup' | 'drive'; drive?: NodeDrive; makeDrive?: boolean } = {}) {
   const storageDir = temporary();
   const manifests: NodeBackupSnapshot[] = [
     { id: SNAPSHOT, project: 'quirq/project', oid: OID, refs: { 'refs/heads/main': OID } },
@@ -35,7 +36,8 @@ async function setup(options: { availableBytes?: () => number } = {}) {
     readFile: async (...args: [string, string, string, number]) => { reads.push(args); return body; },
     bundlePath: () => bundle,
   };
-  const server = createSubhubServer({ nodeId: 'node-1', space: 'quirq', token: TOKEN, storageDir, backup, ...options });
+  const drive = options.makeDrive ? new DriveStore(path.join(storageDir, 'drive'), { availableBytes: options.availableBytes }) : options.drive;
+  const server = createSubhubServer({ nodeId: 'node-1', space: 'quirq', token: TOKEN, storageDir, backup, ...options, drive });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const ask = async (route: string, options: { method?: string; body?: unknown; token?: string; headers?: Record<string, string> } = {}) => {
@@ -49,7 +51,7 @@ async function setup(options: { availableBytes?: () => number } = {}) {
   };
   const file = (extra: Record<string, string> = {}) => '/v1/file?' + new URLSearchParams({ project: 'quirq/project', snapshot: SNAPSHOT, oid: OID, path: 'nested/README.md', ...extra });
   const close = () => { server.close(); server.closeAllConnections(); removeTemporary(storageDir); };
-  return { storageDir, server, base, ask, reads, file, manifests, close, setBody: (value: Buffer) => { body = value; }, setBundle: (value: string | undefined) => { bundle = value; } };
+  return { storageDir, server, base, ask, reads, file, manifests, close, drive, setBody: (value: Buffer) => { body = value; }, setBundle: (value: string | undefined) => { bundle = value; } };
 }
 
 test('health is minimal and every v1 endpoint requires the node bearer token', async t => {
@@ -232,4 +234,75 @@ test('streamed oversized requests are rejected without a queued partial record',
   });
   assert.equal(status, 413);
   assert.deepEqual(new NodeWorkSpool(f.storageDir).list(), []);
+});
+
+test('drive API serves binary GET/HEAD, bounded listings and CAS versions under the private node token', async t => {
+  const f = await setup({ makeDrive: true, mode: () => 'drive' }); t.after(f.close);
+  const route = '/v1/drive/file?path=' + encodeURIComponent('docs/binary.dat');
+  const data = Buffer.from([0, 1, 2, 255, 10]);
+  const write = (content: Buffer, condition: Record<string, string>) => fetch(f.base + route, { method: 'PUT', headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/octet-stream', ...condition }, body: content });
+  assert.equal((await fetch(f.base + route)).status, 401);
+  assert.equal((await write(data, {})).status, 428);
+  const created = await write(data, { 'if-none-match': '*' });
+  assert.equal(created.status, 200);
+  const metadata = (await created.json()).file;
+  assert.equal(created.headers.get('etag'), `"${metadata.sha256}"`);
+  const read = await f.ask(route);
+  assert.deepEqual(Buffer.from(await read.arrayBuffer()), data);
+  assert.equal(read.headers.get('etag'), created.headers.get('etag'));
+  assert.equal(read.headers.get('content-type'), 'application/octet-stream');
+  const head = await f.ask(route, { method: 'HEAD' });
+  assert.equal(head.status, 200);
+  assert.equal(head.headers.get('content-length'), String(data.length));
+  assert.equal(await head.text(), '');
+  const listing = await (await f.ask('/v1/drive/files?prefix=docs/')).json();
+  assert.deepEqual(listing.files, [metadata]);
+  assert.deepEqual(listing.stats, { files: 1, bytes: data.length, updatedAt: metadata.updatedAt });
+  assert.equal((await write(Buffer.from('other'), { 'if-none-match': '*' })).status, 412);
+  assert.equal((await write(Buffer.from('other'), { 'if-match': '0'.repeat(64) })).status, 412);
+  const replaced = await write(Buffer.from('other'), { 'if-match': created.headers.get('etag')! });
+  assert.equal(replaced.status, 200);
+  assert.equal(await (await f.ask(route)).text(), 'other');
+});
+
+test('drive mode changes take effect dynamically and node endpoints reject browser writes and unsafe scope', async t => {
+  let mode: 'backup' | 'drive' = 'backup';
+  const f = await setup({ makeDrive: true, mode: () => mode }); t.after(f.close);
+  assert.equal((await f.ask('/v1/drive/files')).status, 409);
+  mode = 'drive';
+  assert.equal((await f.ask('/v1/drive/files')).status, 200);
+  assert.equal((await f.ask('/v1/drive/files?prefix=../')).status, 400);
+  assert.equal((await f.ask('/v1/drive/file?path=../outside')).status, 400);
+  assert.equal((await f.ask('/v1/drive/file?path=a&project=other/private')).status, 400);
+  const headers = { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/octet-stream', 'if-none-match': '*' };
+  assert.equal((await fetch(f.base + '/v1/drive/file?path=a', { method: 'PUT', headers: { ...headers, origin: f.base }, body: Buffer.from('blocked') })).status, 403);
+  mode = 'backup';
+  assert.equal((await fetch(f.base + '/v1/drive/file?path=a', { method: 'PUT', headers, body: Buffer.from('blocked') })).status, 409);
+  assert.equal(f.drive!.stats().files, 0);
+});
+
+test('drive PUT refuses insufficient quota and files above 16 MiB without changing its index', async t => {
+  let available = 4096;
+  const f = await setup({ makeDrive: true, mode: () => 'drive', availableBytes: () => available }); t.after(f.close);
+  const write = (data: Buffer) => fetch(f.base + '/v1/drive/file?path=new.dat', { method: 'PUT', headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/octet-stream', 'if-none-match': '*' }, body: data });
+  assert.equal((await write(Buffer.from('small'))).status, 507);
+  assert.equal(f.drive!.stats().files, 0);
+  available = 32 * 1024 * 1024;
+  assert.equal((await write(Buffer.alloc(16 * 1024 * 1024 + 1))).status, 413);
+  assert.equal(f.drive!.stats().files, 0);
+});
+
+test('drive listings are bounded and a mode change during upload prevents the commit', async t => {
+  const huge: NodeDrive = {
+    list: () => [{ path: 'x'.repeat(2 * 1024 * 1024), sha256: 'a'.repeat(64), size: 0, updatedAt: 1 }],
+    stats: () => ({ files: 1, bytes: 0, updatedAt: 1 }),
+    read: () => { throw new Error('unreachable'); }, write: () => { throw new Error('unreachable'); },
+  };
+  const listing = await setup({ drive: huge, mode: () => 'drive' }); t.after(listing.close);
+  assert.equal((await listing.ask('/v1/drive/files')).status, 413);
+  let checks = 0;
+  const upload = await setup({ makeDrive: true, mode: () => ++checks === 1 ? 'drive' : 'backup' }); t.after(upload.close);
+  const response = await fetch(upload.base + '/v1/drive/file?path=late.txt', { method: 'PUT', headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/octet-stream', 'if-none-match': '*' }, body: Buffer.from('not committed') });
+  assert.equal(response.status, 409);
+  assert.equal(upload.drive!.stats().files, 0);
 });

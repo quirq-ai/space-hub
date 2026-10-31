@@ -75,7 +75,8 @@ test('HTTP lifecycle registers a node, durably spools queued work, then fences w
     assert.equal((await f.ask('POST', `/work/${work.id}/complete`, 'member', { fence: claimed.data.work.fence - 1, result: 'stale' })).response.status, 409);
     const done = await f.ask('POST', `/work/${work.id}/complete`, 'member', { fence: claimed.data.work.fence, result: 'Reviewed manually.' });
     assert.equal(done.data.work.status, 'completed');
-    assert.equal((await f.ask('GET', '/nodes', token)).response.status, 403);
+    assert.deepEqual((await f.ask('GET', '/nodes', token)).data.nodes, []);
+    assert.equal((await f.ask('GET', '/nodes?space=quirq', token)).response.status, 403);
     assert.equal(JSON.stringify((await f.ask('GET', '/nodes?space=quirq')).data).includes(token), false);
   } finally { if (node) { node.closeAllConnections(); await new Promise<void>(resolve => node!.close(() => resolve())); } await f.close(); }
 });

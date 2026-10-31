@@ -21,8 +21,9 @@ export class SubhubClient {
     if (!response.ok) throw new Error(answer?.error ?? `Parent does not support sub-hubs (HTTP ${response.status}); deploy the updated parent first`);
     return answer;
   }
-  async protocol() {
+  async protocol(capability?: string) {
     const value = await this.request('GET', '/protocol');
     if (value.version !== 1) throw new Error('Update this CLI to match the parent sub-hub protocol');
+    if (capability && !value.capabilities?.includes(capability)) throw new Error(`The parent needs an update for ${capability}`);
   }
 }

@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
+import { DriveError, DRIVE_MAX_FILE_BYTES, type DriveFile, type DriveStats } from './subhubdrive.ts';
 
 const BODY_BYTES = 256 * 1024;
 const FILE_BYTES = 8 * 1024 * 1024;
@@ -38,6 +39,12 @@ export interface NodeBackup {
   list(project?: string): NodeBackupSnapshot[];
   readFile(snapshotId: string, oid: string, filename: string, maxBytes: number): Promise<Uint8Array>;
   bundlePath(id: string): string | undefined;
+}
+export interface NodeDrive {
+  list(prefix?: string): DriveFile[];
+  stats(): DriveStats;
+  read(filename: string): { metadata: DriveFile; data: Buffer };
+  write(filename: string, data: Buffer, expectedVersion: string | null): DriveFile;
 }
 
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -205,6 +212,25 @@ function parameter(url: URL, name: string): string {
   return url.searchParams.get(name)!;
 }
 
+function readDriveBytes(req: http.IncomingMessage): Promise<Buffer> {
+  if (req.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'application/octet-stream') throw new NodeError(415, 'Send application/octet-stream bytes.');
+  if (Number(req.headers['content-length']) > DRIVE_MAX_FILE_BYTES) { req.resume(); throw new NodeError(413, 'Drive files are limited to 16 MiB.'); }
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    let settled = false;
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => {
+      if (settled) return;
+      size += chunk.length;
+      if (size > DRIVE_MAX_FILE_BYTES) { settled = true; chunks.length = 0; reject(new NodeError(413, 'Drive files are limited to 16 MiB.')); }
+      else chunks.push(chunk);
+    });
+    req.on('end', () => { if (!settled) { settled = true; resolve(Buffer.concat(chunks)); } });
+    req.on('error', error => { if (!settled) { settled = true; reject(error); } });
+    req.on('aborted', () => { if (!settled) { settled = true; reject(new NodeError(400, 'The request was interrupted.')); } });
+  });
+}
+
 function filePath(filename: string) {
   if (!filename || filename.length > 4096 || filename.startsWith('/') || /[\\\0:]/.test(filename) || filename.split('/').some(part => !part || part === '.' || part === '..')) throw new NodeError(400, 'Use a relative file path inside the project.');
 }
@@ -219,6 +245,8 @@ export interface SubhubServerOptions {
   /** Remaining capacity across both retained backups and queued work. */
   availableBytes?: () => number;
   backup: NodeBackup;
+  drive?: NodeDrive;
+  mode?: () => 'backup' | 'drive';
 }
 
 export function createSubhubServer(options: SubhubServerOptions): http.Server {
@@ -250,6 +278,46 @@ export function createSubhubServer(options: SubhubServerOptions): http.Server {
     const supplied = crypto.createHash('sha256').update(bearer ?? '').digest();
     if (!crypto.timingSafeEqual(expected, supplied) || !bearer) throw new NodeError(401, 'A node bearer token is required.');
     if (!read && req.headers.origin !== undefined) throw new NodeError(403, 'Browser writes are not accepted.');
+
+    if (route === '/v1/drive/files' || route === '/v1/drive/file') {
+      if (options.mode?.() !== 'drive') throw new NodeError(409, 'The node is not in drive mode.');
+      if (!options.drive) throw new NodeError(503, 'Drive storage is unavailable.');
+      const drive = options.drive;
+      const allowed = route.endsWith('/files') ? 'prefix' : 'path';
+      for (const key of url.searchParams.keys()) if (key !== allowed || url.searchParams.getAll(key).length !== 1) throw new NodeError(400, 'Unsupported drive parameters.');
+      if (route === '/v1/drive/files') {
+        if (!read) throw new NodeError(405, 'Read drive files with GET.');
+        const payload = { files: drive.list(url.searchParams.get('prefix') ?? ''), stats: drive.stats() };
+        if (Buffer.byteLength(JSON.stringify(payload)) > 2 * 1024 * 1024) throw new NodeError(413, 'Narrow the drive listing with a prefix.');
+        return json(req, res, 200, payload);
+      }
+      const filename = parameter(url, 'path');
+      if (read) {
+        const { metadata, data } = drive.read(filename);
+        if (data.length > DRIVE_MAX_FILE_BYTES) throw new NodeError(413, 'Drive files are limited to 16 MiB.');
+        res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': data.length, etag: `"${metadata.sha256}"`, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+        res.end(req.method === 'HEAD' ? undefined : data);
+        return;
+      }
+      if (req.method !== 'PUT') throw new NodeError(405, 'Write drive files with PUT.');
+      const match = req.headers['if-match'];
+      const none = req.headers['if-none-match'];
+      let expected: string | null;
+      if (match !== undefined && none !== undefined) throw new NodeError(400, 'Use one drive write precondition.');
+      if (none === '*') expected = null;
+      else if (none !== undefined) throw new NodeError(400, 'Create drive files with If-None-Match: *.');
+      else if (match !== undefined) {
+        const version = /^(?:"([a-f0-9]{64})"|([a-f0-9]{64}))$/.exec(match);
+        if (!version) throw new NodeError(400, 'Use the file SHA-256 as If-Match.');
+        expected = version[1] ?? version[2];
+      } else throw new NodeError(428, 'If-Match or If-None-Match is required.');
+      const data = await readDriveBytes(req);
+      // Mode can change while a client uploads a file.
+      if (options.mode?.() !== 'drive') throw new NodeError(409, 'The node is not in drive mode.');
+      const metadata = drive.write(filename, data, expected);
+      res.setHeader('etag', `"${metadata.sha256}"`);
+      return json(req, res, 200, { file: metadata });
+    }
 
     if (route === '/v1/snapshots') {
       if (!read) throw new NodeError(405, 'Read snapshots with GET.');
@@ -333,7 +401,7 @@ export function createSubhubServer(options: SubhubServerOptions): http.Server {
     void handle(req, res).catch(error => {
       if (res.headersSent) { res.destroy(); return; }
       const status = error instanceof NodeError ? error.status : error && typeof error.status === 'number' && error.status >= 400 && error.status < 600 ? error.status : (error as NodeJS.ErrnoException).code === 'ENOENT' ? 404 : 500;
-      json(req, res, status, { error: error instanceof NodeError ? error.message : status === 404 ? 'Stored data not found.' : 'Node storage request failed.' });
+      json(req, res, status, { error: error instanceof NodeError || error instanceof DriveError ? error.message : status === 404 ? 'Stored data not found.' : 'Node storage request failed.' });
     });
   });
 }

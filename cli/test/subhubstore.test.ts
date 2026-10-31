@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { SubhubStore, SubhubError, NODE_STALE_MS, nodeId, nodeUrl } from '../src/subhubstore.ts';
+import { SubhubStore, SubhubError, NODE_STALE_MS, ACTIVITY_LIMIT, nodeId, nodeUrl } from '../src/subhubstore.ts';
 
 const OID = 'a'.repeat(40);
 const SNAPSHOT = 'b'.repeat(32);
@@ -247,5 +247,213 @@ test('routing requires an exact advertised replica on a healthy node with a URL'
     assert.equal(f.store.route(INPUT.project, OID), null);
     f.store.heartbeat('laptop', a.token, { freeBytes: 100_000, backups: [] });
     assert.equal(f.store.route(INPUT.project, OID), null);
+  } finally { f.close(); }
+});
+
+test('legacy state loads backup defaults without changing its schema version or losing work', () => {
+  const f = fixture();
+  try {
+    const registered = f.store.register(NODE, 'alice');
+    const work = f.store.enqueue(INPUT, 'alice');
+    f.store.close();
+    const filename = path.join(f.dir, 'state.json');
+    const state = JSON.parse(fs.readFileSync(filename, 'utf8'));
+    delete state.activity;
+    for (const key of ['mode', 'enabled', 'label', 'drive', 'status', 'errors', 'online']) delete state.nodes.laptop[key];
+    fs.writeFileSync(filename, JSON.stringify(state));
+    f.reopen();
+    const node = f.store.nodes('quirq')[0];
+    assert.equal(node.mode, 'backup'); assert.equal(node.enabled, true); assert.equal(node.label, 'laptop');
+    assert.deepEqual(node.drive, { files: 0, bytes: 0, updatedAt: null });
+    assert.equal(node.status, 'ready'); assert.deepEqual(node.errors, []);
+    assert.equal(f.store.nodeToken('laptop'), registered.token);
+    assert.equal(f.store.work(work.id)?.text, INPUT.text);
+    assert.deepEqual(f.store.activity(), []);
+    f.store.heartbeat('laptop', registered.token, { freeBytes: 100_000, backups: [] });
+    assert.equal(JSON.parse(fs.readFileSync(filename, 'utf8')).version, 1);
+  } finally { f.close(); }
+});
+
+test('mode/settings updates validate scope, require reachable drives, persist and avoid no-op events', () => {
+  const f = fixture();
+  try {
+    const registered = f.store.register(NODE, 'alice');
+    const noUrl = f.store.register({ ...NODE, id: 'local', url: undefined }, 'alice');
+    assert.throws(() => f.store.register({ ...NODE, id: 'drive-without-url', mode: 'drive', url: undefined }, 'alice'), status(400));
+    assert.throws(() => f.store.updateNode('local', 'quirq', { mode: 'drive' }, 'alice'), status(400));
+    assert.throws(() => f.store.updateNode('laptop', 'another', { enabled: false }, 'alice'), status(404));
+    assert.throws(() => f.store.updateNode('laptop', 'quirq', { mode: 'unknown' as any }, 'alice'), status(400));
+    assert.throws(() => f.store.updateNode('laptop', 'quirq', { label: ' ' }, 'alice'), status(400));
+    assert.throws(() => f.store.updateNode('laptop', 'quirq', { token: 'injected' } as any, 'alice'), status(400));
+    const updated = f.store.updateNode('laptop', 'quirq', { mode: 'drive', enabled: false, label: 'Team files' }, 'bob');
+    assert.equal(updated.mode, 'drive'); assert.equal(updated.enabled, false); assert.equal(updated.label, 'Team files');
+    const events = f.store.activity().length;
+    assert.deepEqual(f.store.updateNode('laptop', 'quirq', { mode: 'drive', enabled: false, label: 'Team files' }, 'bob'), updated);
+    assert.equal(f.store.activity().length, events);
+    assert.equal(f.store.activity()[0].actor, 'bob');
+    assert.equal(f.store.driveNode('laptop', 'quirq')?.id, 'laptop');
+    assert.equal(f.store.driveNode('local', 'quirq'), null);
+    assert.equal(f.store.driveNode('laptop', 'another'), null);
+    assert.equal(f.store.authenticateNode('local', noUrl.token)?.mode, 'backup');
+    f.reopen();
+    assert.equal(f.store.nodes('quirq').find(node => node.id === 'laptop')?.label, 'Team files');
+    // A retried original registration does not undo owner settings.
+    assert.equal(f.store.register(NODE, 'alice').node.mode, 'drive');
+    assert.equal(f.store.register(NODE, 'alice').token, registered.token);
+    f.store.enqueue({ ...INPUT, space: 'another', project: 'another/project' }, 'bob');
+    assert.deepEqual(f.store.spaces(), ['another', 'quirq']);
+  } finally { f.close(); }
+});
+
+test('heartbeat reports runtime and drive manifests without repeated heartbeat activity or credential leaks', () => {
+  const f = fixture();
+  try {
+    const { token } = f.store.register({ ...NODE, mode: 'drive' }, 'alice');
+    assert.equal(f.store.activity().length, 1);
+    f.store.heartbeat('laptop', token, { freeBytes: 99_000, backups: [] });
+    assert.equal(f.store.activity()[0].kind, 'node_online');
+    const onlineEvents = f.store.activity().length;
+    f.advance(1000);
+    f.store.heartbeat('laptop', token, { freeBytes: 98_000, backups: [] });
+    assert.equal(f.store.activity().length, onlineEvents);
+    const input = {
+      freeBytes: 96_000, backups: [backup(), backup('quirq/notes', 'c'.repeat(40))],
+      status: 'degraded' as const, errors: [`Failed bearer ${token}`], drive: { files: 3, bytes: 2000, updatedAt: f.now() },
+    };
+    const beat = f.store.heartbeat('laptop', token, input);
+    assert.equal(beat.node.status, 'degraded'); assert.equal(beat.node.healthy, true);
+    assert.deepEqual(beat.node.drive, input.drive);
+    assert.equal(JSON.stringify(beat).includes(token), false);
+    assert.equal(beat.node.errors[0], 'Failed Bearer [redacted]');
+    const changedEvents = f.store.activity().length;
+    f.advance(1000);
+    f.store.heartbeat('laptop', token, { ...input, backups: input.backups.slice().reverse() });
+    assert.equal(f.store.activity().length, changedEvents);
+    assert.equal(f.store.activity().filter(event => event.kind === 'backup_changed').length, 1);
+    assert.equal(f.store.activity().filter(event => event.kind === 'drive_changed').length, 1);
+    assert.equal(f.store.activity().filter(event => event.kind === 'node_status').length, 1);
+    assert.equal(JSON.stringify(f.store.activity()).includes(token), false);
+    assert.throws(() => f.store.heartbeat('laptop', token, { ...input, errors: Array(11).fill('error') }), status(400));
+    assert.throws(() => f.store.heartbeat('laptop', token, { ...input, errors: ['x'.repeat(501)] }), status(400));
+    assert.throws(() => f.store.heartbeat('laptop', token, { ...input, drive: { files: -1, bytes: 0, updatedAt: null } }), status(400));
+    assert.throws(() => f.store.heartbeat('laptop', token, { ...input, drive: { files: 0, bytes: -1, updatedAt: null } }), status(400));
+    f.reopen();
+    assert.deepEqual(f.store.nodes('quirq')[0].drive, input.drive);
+    assert.equal(f.store.activity().length, changedEvents);
+  } finally { f.close(); }
+});
+
+test('logical drive bytes may exceed physical capacity when manifest paths share stored content', () => {
+  const f = fixture();
+  try {
+    const { token } = f.store.register({ ...NODE, mode: 'drive' }, 'alice');
+    const drive = { files: 100, bytes: NODE.capacityBytes * 100, updatedAt: f.now() };
+    const reported = f.store.heartbeat('laptop', token, { freeBytes: 0, backups: [], drive });
+    assert.deepEqual(reported.node.drive, drive);
+    assert.equal(reported.node.healthy, true);
+    f.reopen();
+    assert.deepEqual(f.store.driveNode('laptop', 'quirq')?.drive, drive);
+    for (const size of [NaN, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+      assert.throws(() => f.store.heartbeat('laptop', token, { freeBytes: 0, backups: [], drive: { ...drive, bytes: size } }), status(400));
+    }
+  } finally { f.close(); }
+});
+
+test('offline is observed once, survives restart, and reconnection is recorded once', () => {
+  const f = fixture();
+  try {
+    const { token } = f.store.register(NODE, 'alice');
+    const heartbeat = { freeBytes: 99_000, backups: [backup()] };
+    f.store.heartbeat('laptop', token, heartbeat);
+    f.advance(NODE_STALE_MS);
+    assert.equal(f.store.nodes('quirq')[0].healthy, false);
+    assert.equal(f.store.activity()[0].kind, 'node_offline');
+    const afterOffline = f.store.activity().length;
+    f.store.nodes('quirq'); f.store.route(INPUT.project, OID); f.store.activity();
+    assert.equal(f.store.activity().length, afterOffline);
+    f.reopen();
+    assert.equal(f.store.activity().length, afterOffline);
+    f.store.heartbeat('laptop', token, heartbeat);
+    assert.equal(f.store.activity()[0].kind, 'node_reconnected');
+    assert.equal(f.store.activity().filter(event => event.kind === 'node_reconnected').length, 1);
+    f.advance(NODE_STALE_MS);
+    // A heartbeat after a gap records the missed disconnect even without a prior read.
+    f.store.heartbeat('laptop', token, heartbeat);
+    assert.equal(f.store.activity().filter(event => event.kind === 'node_offline').length, 2);
+    assert.equal(f.store.activity().filter(event => event.kind === 'node_reconnected').length, 2);
+    assert.equal('online' in f.store.nodes('quirq')[0], false);
+  } finally { f.close(); }
+});
+
+test('disabled nodes retain health/storage but cannot route or retain queued assignments', () => {
+  const f = fixture();
+  try {
+    const first = f.store.register(NODE, 'alice');
+    const second = f.store.register({ ...NODE, id: 'second' }, 'alice');
+    f.store.heartbeat('laptop', first.token, { freeBytes: 99_000, backups: [backup()] });
+    const work = f.store.enqueue(INPUT, 'alice');
+    f.store.assignments('laptop', first.token);
+    f.store.receipt('laptop', first.token, [work.id]);
+    f.store.updateNode('laptop', 'quirq', { enabled: false }, 'alice');
+    assert.equal(f.store.nodes('quirq').find(node => node.id === 'laptop')?.healthy, true);
+    assert.equal(f.store.route(INPUT.project, OID), null);
+    assert.deepEqual(f.store.assignments('laptop', first.token), []);
+    assert.equal(f.store.work(work.id)?.assignedNode, null);
+    f.store.heartbeat('second', second.token, { freeBytes: 99_000, backups: [] });
+    assert.equal(f.store.assignments('second', second.token)[0].id, work.id);
+    f.store.updateNode('laptop', 'quirq', { enabled: true }, 'alice');
+    assert.equal(f.store.route(INPUT.project, OID)?.nodeId, 'laptop');
+  } finally { f.close(); }
+});
+
+test('work activity records meaningful lifecycle changes, excludes payloads and does not duplicate retries', () => {
+  const f = fixture();
+  try {
+    const { token } = f.store.register(NODE, 'alice');
+    f.store.heartbeat('laptop', token, { freeBytes: 99_000, backups: [] });
+    const work = f.store.enqueue(INPUT, 'alice');
+    f.store.enqueue(INPUT, 'alice');
+    f.store.assignments('laptop', token); f.store.assignments('laptop', token);
+    f.store.receipt('laptop', token, [work.id]); f.store.receipt('laptop', token, [work.id]);
+    const first = f.store.claim(work.id, 'jobs');
+    f.store.release(work.id, 'jobs', first.fence);
+    const second = f.store.claim(work.id, 'jobs');
+    f.store.complete(work.id, 'jobs', second.fence, `Private result includes ${token}`);
+    const events = f.store.activity('quirq');
+    for (const kind of ['work_enqueued', 'work_assigned', 'work_received', 'work_released', 'work_completed']) assert.equal(events.filter(event => event.kind === kind).length, 1, kind);
+    assert.equal(events.filter(event => event.kind === 'work_claimed').length, 2);
+    assert.equal(events[0].kind, 'work_completed'); assert.equal(events[0].actor, 'jobs');
+    assert.equal(JSON.stringify(events).includes(INPUT.text), false);
+    assert.equal(JSON.stringify(events).includes(token), false);
+    assert.deepEqual(f.store.activity('another'), []);
+    const before = events.length;
+    assert.throws(() => f.store.complete(work.id, 'jobs', first.fence, 'stale'), status(409));
+    assert.equal(f.store.activity().length, before);
+    f.reopen(); assert.equal(f.store.activity().length, before);
+  } finally { f.close(); }
+});
+
+test('activity is capped, newest first and exposes only public event fields', () => {
+  const f = fixture();
+  try {
+    f.store.close();
+    const filename = path.join(f.dir, 'state.json');
+    const state = JSON.parse(fs.readFileSync(filename, 'utf8'));
+    state.activity = Array.from({ length: ACTIVITY_LIMIT + 5 }, (_, index) => ({
+      id: `event-${index}`, at: index, space: 'quirq', nodeId: null,
+      kind: 'work_enqueued', subject: 'quirq/space-hub', text: `Queued work-${index}`, token: 'never-public',
+    }));
+    fs.writeFileSync(filename, JSON.stringify(state));
+    f.reopen();
+    const events = f.store.activity();
+    assert.equal(events.length, ACTIVITY_LIMIT);
+    assert.equal(events[0].at, ACTIVITY_LIMIT + 4);
+    assert.equal(events.at(-1)?.at, 5);
+    assert.equal(JSON.stringify(events).includes('never-public'), false);
+    f.store.register(NODE, 'alice');
+    assert.equal(f.store.activity().length, ACTIVITY_LIMIT);
+    assert.equal(f.store.activity()[0].kind, 'node_registered');
+    events[0].text = 'caller mutation';
+    assert.notEqual(f.store.activity()[1].text, 'caller mutation');
   } finally { f.close(); }
 });

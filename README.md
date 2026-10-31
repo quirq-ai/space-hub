@@ -685,9 +685,31 @@ writes and work claims. Sub-hubs retain Git snapshots, keep delivered work
 on disk, and serve an explicit gateway for immutable file reads. Work is
 stored and queued for workers to claim; a sub-hub never executes its text.
 
+### In the app
+
+Open a space and choose **Sub-hubs** in its tabs or sidebar. Overview shows
+connected machines, heartbeat status, storage and runtime errors. Owners
+can rename, pause/enable, and change a machine between Backups and Drive.
+Backups lists reported snapshots and copies an offline restore command.
+Work queue lets members submit, claim, release and complete work. Drive
+browses and uploads files on a selected connected drive.
+
+Online machines also appear in the space's presence strip and Activity.
+Activity combines the hub's normal events with node connections,
+disconnections, backup/drive changes and work progress. Routine heartbeats
+do not create repeated activity entries. Node status and activity refresh
+every 15 seconds; nodes pick up owner changes at their next heartbeat.
+Only members see operational node data and use drive storage; settings
+remain owner-only. A hub without the updated API shows an unavailable
+message while its existing projects and chats continue to work.
+
 ```sh
 spacehub subhub run --space acme --id workstation --storage /srv/spacehub-node
 ```
+
+`--mode backup` is the default. `--mode` selects a new node's initial mode;
+on later restarts, registered nodes keep the parent's mode and pause state,
+so restarting the original command does not undo changes made in the UI.
 
 The node defaults to a private listener at `127.0.0.1:4080`. It registers
 with the configured parent using the signed-in space owner, receives a
@@ -761,6 +783,37 @@ fences. Completion and release reject an expired or superseded fence.
 They update queue state only; they do not authorize or fence independent
 Git pushes or actions in external systems. There is no automatic runtime
 execution in this version.
+
+### Active drives
+
+Drive mode stores additional files directly on a node's disk, separately
+from the parent's Git repositories. It needs an advertised address the
+parent can reach:
+
+```sh
+spacehub subhub run --space acme --id office-drive --mode drive --storage /srv/office-drive --advertise https://drive.example
+```
+
+Expose the node listener through your HTTPS reverse proxy. The browser
+uses the authenticated same-origin `/-/api/subhubs/drive/files` and
+`/-/api/subhubs/drive/file` gateways with `space`, `node`, and `path` query
+parameters. The parent verifies space membership, then forwards to that
+specific healthy enabled drive using its private node credential. Browser
+cookies and owner tokens are never sent to the node. File contents stay
+on the drive; the parent proxies the transfer without persisting a Git
+copy. An unavailable drive returns an error rather than writing elsewhere.
+
+Files are limited to 16 MiB each, 5,000 paths and a 2 MiB local index.
+Uploads are raw bytes: create uses `If-None-Match: *`, replacement uses
+`If-Match: <current-SHA256>`. Conflicting writes return 412. Nodes flush
+immutable SHA-256 blobs before atomically updating their path index;
+downloads verify checksums. Older blobs are retained without automatic
+pruning, and count toward physical node capacity. Logical file-byte totals
+can exceed physical use when multiple paths share the same blob.
+
+Drive files are not Git snapshots. Preserve the node's complete private
+storage directory for drive recovery. Switching to Backups pauses drive
+access and starts project snapshots; existing drive data remains on disk.
 
 ### Read traffic
 

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { BookOpen, Hash, Folder, FolderGit2, History, Home, Users, User } from "lucide-react";
+import { BookOpen, Hash, Folder, FolderGit2, History, Home, Server, Users, User } from "lucide-react";
 import { placeUrl, viewUrl, type HubMeta, type Place, type ProjectMeta, type SpaceMeta, type View } from "@/api";
 import { useLive } from "@/hooks/use-live";
 import { channelSeenKey, ChannelsContext, useChannels } from "@/hooks/use-channels";
@@ -91,6 +91,7 @@ export function App() {
   const primary = [
     { key: "home", label: "Home", href: "/", icon: <Home size={16} />, active: route.page === "home" },
     ...(me.name ? [{ key: "me", label: "Your profile", href: placeUrl({ space: me.name, project: "" }), icon: <User size={16} />, active: route.page === "space" && place.space === me.name }] : []),
+    ...(place.space ? [{ key: "subhubs", label: "Sub-hubs", href: placeUrl({ space: place.space, project: "" }, hashOf("subhubs")), icon: <Server size={16} />, active: route.page === "space" && route.tab === "subhubs" }] : []),
   ];
   const sideSections: SideSection[] = [];
   if (channels && meta?.level === "project") {

@@ -8,9 +8,11 @@ import { hubUrl } from './url';
 import { BackupStore } from './subhubbackup.ts';
 import { NodeWorkSpool, createSubhubServer } from './subhubserver.ts';
 import { SubhubClient, parentWeb } from './subhubclient.ts';
+import { DriveStore } from './subhubdrive.ts';
 
 const HELP = `spacehub subhub run --space <space> --storage <directory>
     [--id <node>] [--listen 127.0.0.1:4080] [--advertise https://node.example]
+    [--mode backup|drive]
     [--interval 30] [--max-storage-mb 1024] [--max-project-mb 128]
     [--project <space/project>] [--once] [--standalone]
 spacehub subhub status|snapshots [project] --storage <directory>
@@ -92,6 +94,8 @@ async function runNode(args: string[]) {
   if (!address) throw new Error('--listen must be host:port');
   const port = number(address[2], 'port', 1, 65535);
   const advertise = flag(args, '--advertise');
+  const requestedMode = flag(args, '--mode');
+  if (requestedMode !== undefined && requestedMode !== 'backup' && requestedMode !== 'drive') throw new Error('--mode must be backup or drive');
   const interval = number(flag(args, '--interval', '30'), 'interval', 5, 3600) * 1000;
   const maxBytes = number(flag(args, '--max-storage-mb', '1024'), 'storage limit') * 1024 * 1024;
   const maxProjectBytes = number(flag(args, '--max-project-mb', '128'), 'project limit') * 1024 * 1024;
@@ -104,21 +108,28 @@ async function runNode(args: string[]) {
   const owner = new SubhubClient(cfg.server, cfg.token ?? '');
   if (!standalone) {
     if (!cfg.token) throw new Error('Run spacehub auth login before registering a sub-hub');
-    await owner.protocol();
+    await owner.protocol(requestedMode === 'drive' ? 'active-drive' : undefined);
   }
   const root = nodeRoot(storage);
   const releaseLock = nodeLock(root);
   const configPath = path.join(root, 'node.json');
-  let config: { id: string; space: string; server: string; token: string; url?: string; capacityBytes: number; standalone: boolean };
+  let config: { id: string; space: string; server: string; token: string; url?: string; capacityBytes: number; standalone: boolean; mode?: 'backup' | 'drive'; enabled?: boolean };
   if (fs.existsSync(configPath)) {
     if (fs.lstatSync(configPath).isSymbolicLink()) throw new Error('Node configuration must be a regular file');
     config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     if (config.id !== id || config.space !== space || config.server !== parentWeb(cfg.server) || config.url !== advertise || config.capacityBytes !== maxBytes || config.standalone !== standalone) throw new Error('Existing node configuration differs; use original flags/mode or a new storage directory');
   } else {
-    const registered = standalone ? { token: crypto.randomBytes(32).toString('hex') } : await owner.request('POST', '/nodes/register', { id, space, url: advertise, capacityBytes: maxBytes });
-    config = { id, space, server: parentWeb(cfg.server), token: registered.token, url: advertise, capacityBytes: maxBytes, standalone };
+    const registered = standalone ? { token: crypto.randomBytes(32).toString('hex') } : await owner.request('POST', '/nodes/register', { id, space, url: advertise, capacityBytes: maxBytes, mode: requestedMode ?? 'backup' });
+    config = { id, space, server: parentWeb(cfg.server), token: registered.token, url: advertise, capacityBytes: maxBytes, standalone,
+      mode: registered.node?.mode ?? requestedMode ?? 'backup', enabled: registered.node?.enabled !== false };
     save(configPath, config);
   }
+  let mode: 'backup' | 'drive' = config.mode ?? 'backup';
+  let enabled = config.enabled !== false;
+  if (standalone && requestedMode) mode = requestedMode;
+  // For existing registered nodes the parent owns mode and pause settings.
+  // Reusing the original startup command must not revert UI changes.
+  if (!standalone && mode === 'drive') await owner.protocol('active-drive');
   const client = new SubhubClient(cfg.server, config.token);
   const available = () => {
     const disk = fs.statfsSync(root);
@@ -127,8 +138,10 @@ async function runNode(args: string[]) {
   const backupDir = path.join(root, 'backup');
   const backup = new BackupStore(backupDir, { maxBytes, maxProjectBytes, externalUsageBytes: () => Math.max(0, usedBytes(root) - usedBytes(backupDir)) });
   backup.initialize();
+  const drive = new DriveStore(path.join(root, 'drive'), { availableBytes: available });
+  drive.initialize();
   const spool = new NodeWorkSpool(path.join(root, 'work'));
-  const server = createSubhubServer({ nodeId: id, space, token: config.token, storageDir: path.join(root, 'work'), backupRoot: backupDir, backup, availableBytes: available });
+  const server = createSubhubServer({ nodeId: id, space, token: config.token, storageDir: path.join(root, 'work'), backupRoot: backupDir, backup, availableBytes: available, drive, mode: () => enabled ? mode : 'backup' });
   let conn: Awaited<ReturnType<typeof connectTo>>['conn'] | null = null;
   let stopping = false;
   const stop = () => { stopping = true; };
@@ -138,13 +151,17 @@ async function runNode(args: string[]) {
   const log = (text: string) => process.stderr.write(`subhub ${id}: ${text}\n`);
   let polling = false;
   let parentError: string | null = null;
+  let backupErrors: string[] = [];
   const syncParent = async () => {
     if (standalone || stopping || polling) return;
     polling = true;
     try {
       // Keep the catalog below the parent's 256 KiB JSON body limit even
       // with maximum-length project names. Unadvertised snapshots stay local.
-      await client.request('POST', `/nodes/${id}/heartbeat`, { freeBytes: available(), backups: backup.list().filter(s => !!s.oid).slice(0, 500).map(s => ({ project: s.project, oid: s.oid, snapshot: s.id, bytes: s.bytes })) });
+      const heartbeat = await client.request('POST', `/nodes/${id}/heartbeat`, { freeBytes: available(), backups: backup.list().filter(s => !!s.oid).slice(0, 500).map(s => ({ project: s.project, oid: s.oid, snapshot: s.id, bytes: s.bytes })), drive: drive.stats(), status: backupErrors.length ? 'degraded' : 'ready', errors: backupErrors.slice(0, 10).map(error => error.slice(0, 500)) });
+      if (heartbeat.node.mode === 'backup' || heartbeat.node.mode === 'drive') mode = heartbeat.node.mode;
+      enabled = heartbeat.node.enabled !== false;
+      if (config.mode !== mode || config.enabled !== enabled) { config.mode = mode; config.enabled = enabled; save(configPath, config); }
       const assignments = await client.request('GET', `/nodes/${id}/work`);
       const ids: string[] = [];
       let remaining = available();
@@ -167,24 +184,27 @@ async function runNode(args: string[]) {
     while (!stopping) {
       const errors: string[] = [];
       try {
-        if (!conn?.isActive) conn = (await connectTo(cfg.server, cfg.database, cfg.token, { reconnect: true })).conn;
-        const rows = (await projectsIn(conn!, space)).filter(row => !project || row.fullName === project);
-        if (project && rows.length === 0) throw new Error(`No project named ${project}`);
-        const sizes = await snapshot(conn!, tables.projectSize, () => new Map([...conn!.db.projectSize.iter()].map(row => [row.projectId.toString(), Number(row.bytes)])));
-        for (const row of rows) {
-          if (stopping) break;
-          try {
-            await backup.backup({
-              fullName: row.fullName, id: row.id, createdAt: new Date(Number(row.createdAt.microsSinceUnixEpoch / 1000n)).toISOString(), defaultBranch: row.defaultBranch,
-              sourceUrl: hubUrl(cfg.server, row.fullName), estimatedBytes: sizes.get(row.id.toString()),
-              verifyIdentity: async () => { const current = await findProject(conn!, row.fullName); return !!current && current.id === row.id && current.createdAt.microsSinceUnixEpoch === row.createdAt.microsSinceUnixEpoch; },
-            }, { SPACEHUB_SERVER: cfg.server, SPACEHUB_DB: cfg.database, ...(cfg.token ? { SPACEHUB_TOKEN: cfg.token } : {}) });
-          } catch (error: any) { errors.push(`${row.fullName}: ${error.message}`); }
+        if (enabled && mode === 'backup') {
+          if (!conn?.isActive) conn = (await connectTo(cfg.server, cfg.database, cfg.token, { reconnect: true })).conn;
+          const rows = (await projectsIn(conn!, space)).filter(row => !project || row.fullName === project);
+          if (project && rows.length === 0) throw new Error(`No project named ${project}`);
+          const sizes = await snapshot(conn!, tables.projectSize, () => new Map([...conn!.db.projectSize.iter()].map(row => [row.projectId.toString(), Number(row.bytes)])));
+          for (const row of rows) {
+            if (stopping || !enabled || mode !== 'backup') break;
+            try {
+              await backup.backup({
+                fullName: row.fullName, id: row.id, createdAt: new Date(Number(row.createdAt.microsSinceUnixEpoch / 1000n)).toISOString(), defaultBranch: row.defaultBranch,
+                sourceUrl: hubUrl(cfg.server, row.fullName), estimatedBytes: sizes.get(row.id.toString()),
+                verifyIdentity: async () => { const current = await findProject(conn!, row.fullName); return !!current && current.id === row.id && current.createdAt.microsSinceUnixEpoch === row.createdAt.microsSinceUnixEpoch; },
+              }, { SPACEHUB_SERVER: cfg.server, SPACEHUB_DB: cfg.database, ...(cfg.token ? { SPACEHUB_TOKEN: cfg.token } : {}) });
+            } catch (error: any) { errors.push(`${row.fullName}: ${error.message}`); }
+          }
         }
       } catch (error: any) { errors.push(error.message); }
+      backupErrors = errors.slice();
       await syncParent();
       if (parentError) errors.push(`parent: ${parentError}`);
-      save(statusPath, { id, space, status: errors.length ? 'degraded' : 'ready', checkedAt: new Date().toISOString(), snapshots: backup.list().length, queuedCopies: spool.list().length, standalone, serving: server.listening, pid: process.pid, listen, errors });
+      save(statusPath, { id, space, mode, enabled, drive: drive.stats(), status: errors.length ? 'degraded' : 'ready', checkedAt: new Date().toISOString(), snapshots: backup.list().length, queuedCopies: spool.list().length, standalone, serving: server.listening, pid: process.pid, listen, errors });
       for (const error of errors) log(error);
       if (once) { if (errors.length) throw new Error('Some backups failed; see status. Retained snapshots are preserved.'); break; }
       const until = Date.now() + interval;
