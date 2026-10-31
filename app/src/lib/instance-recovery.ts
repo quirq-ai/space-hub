@@ -1,8 +1,10 @@
 export const INSTANCE_RECOVERY_API = "/-/api/instance-recovery";
-export type InstanceCoverage = { data: true; runtime: true; configuration: true };
+export type InstanceCoverage = { data: boolean; runtime: boolean; configuration: boolean };
+/** A stopped Docker deployment captured whole, or the hub's own copy of its data made while it runs. */
+export type InstanceConsistency = "stopped-containers" | "live-copy";
 export type InstanceSnapshot = {
   id: string; createdAt: number; source: string; services: string[]; scope: "instance";
-  consistency: "stopped-containers"; coverage: InstanceCoverage; files: number; bytes: number; sha256: string;
+  consistency: InstanceConsistency; coverage: InstanceCoverage; files: number; bytes: number; sha256: string;
 };
 export type InstanceRecoveryStatus = {
   scope: "instance"; source: string; available: boolean; canManage: boolean;

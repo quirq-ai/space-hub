@@ -104,11 +104,13 @@ export function RemoteBackupCatalog({ connection, unavailable = false }: { conne
 }
 
 function SnapshotHeading({ snapshot, machine }: { snapshot: InstanceSnapshot; machine: string }) {
-  return <><div className="subhub-heading"><div><h3>{new Date(snapshot.createdAt).toLocaleString()}</h3><p className="quiet">{snapshot.source} · {snapshot.files.toLocaleString()} files · {size(snapshot.bytes)}</p></div><span className="label">{machine}</span></div><code className="instance-snapshot-id">{snapshot.id}</code></>;
+  return <><div className="subhub-heading"><div><h3>{new Date(snapshot.createdAt).toLocaleString()}</h3><p className="quiet">{snapshot.consistency === "live-copy" ? "Hub data, copied live" : "Whole deployment, stopped"} · {snapshot.source} · {snapshot.files.toLocaleString()} files · {size(snapshot.bytes)}</p></div><span className="label">{machine}</span></div><code className="instance-snapshot-id">{snapshot.id}</code></>;
 }
 function Coverage({ coverage }: { coverage?: InstanceCoverage }) {
   const included = !!coverage?.data && !!coverage.runtime && !!coverage.configuration;
-  return <div className={`instance-coverage${included ? " included" : ""}`} aria-label={included ? "Included in this full-instance backup" : "Full-instance backup coverage"}><span><Database size={14} />Database &amp; Git</span><span><ShieldCheck size={14} />Accounts &amp; permissions</span><span><ServerCog size={14} />Server &amp; configuration</span></div>;
+  // A live copy holds the data (accounts and keys too); the image and settings stay the deployment's.
+  const has = (part: boolean | undefined) => (part ? "included" : undefined);
+  return <div className={`instance-coverage${included ? " included" : ""}`} aria-label={included ? "Included in this full-instance backup" : "Full-instance backup coverage"}><span className={has(coverage?.data)}><Database size={14} />Database &amp; Git</span><span className={has(coverage?.data)}><ShieldCheck size={14} />Accounts &amp; permissions</span><span className={has(coverage?.runtime && coverage.configuration)} title={coverage?.runtime ? undefined : "Not in this backup: start the same server image with your settings"}><ServerCog size={14} />Server &amp; configuration</span></div>;
 }
 function ConnectionSetup() {
   const prefix = useId();

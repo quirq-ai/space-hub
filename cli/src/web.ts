@@ -43,6 +43,7 @@ import { agentHubConfig, handleAgentHub } from './agenthub';
 import { InstanceVault } from './instancevault';
 import { handleInstanceRecovery, recoveryRemote } from './instancerecovery';
 import { InstanceConnections } from './instanceconnections';
+import { hubBackupConfig, startHubBackups } from './hubbackup';
 
 quietSdkLogs();
 
@@ -69,8 +70,12 @@ const SIGNIN = signInConfig(DB, INTERNAL_HTTP, GITHUB);
 const ADMIN_TOKEN = process.env.SPACEHUB_ADMIN_TOKEN ?? '';
 const RECOVERY_DIR = process.env.SPACEHUB_RECOVERY_DIR ?? '';
 const RECOVERY_REMOTE = recoveryRemote(process.env.SPACEHUB_RECOVERY_URL, process.env.SPACEHUB_RECOVERY_TOKEN);
-const RECOVERY_VAULT = RECOVERY_DIR ? new InstanceVault(RECOVERY_DIR) : null;
+// Without another backup source, the hub backs itself up (hubbackup.ts) and
+// serves those backups to sub-hubs.
+const HUB_BACKUP = RECOVERY_DIR || RECOVERY_REMOTE ? null : hubBackupConfig(process.env, process.env.SPACEHUB_PUBLIC_URL ?? DB);
+const RECOVERY_VAULT = RECOVERY_DIR ? new InstanceVault(RECOVERY_DIR) : HUB_BACKUP?.vault ?? null;
 RECOVERY_VAULT?.initialize();
+if (HUB_BACKUP) startHubBackups(HUB_BACKUP);
 const RECOVERY_CONNECTIONS = new InstanceConnections(process.env.SPACEHUB_RECOVERY_STATE_DIR
   || (process.env.SPACETIME_ROOT ? path.join(process.env.SPACETIME_ROOT, '.spacehub', 'recovery-connections') : path.join(path.dirname(configFile()), 'recovery-connections')));
 RECOVERY_CONNECTIONS.initialize();
@@ -467,7 +472,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   if (await handleSignIn(SIGNIN, req, res)) return;
   if (await handleInstanceRecovery({ vault: RECOVERY_VAULT, connections: RECOVERY_CONNECTIONS, authorize: recoveryOperator,
     source: process.env.SPACEHUB_PUBLIC_URL ?? DB,
-    storage: RECOVERY_DIR,
+    storage: RECOVERY_DIR || HUB_BACKUP?.vault.storageDir || '',
     containers: (process.env.SPACEHUB_RECOVERY_CONTAINERS ?? '').split(',').map(name => name.trim()).filter(Boolean),
     restoreRoot: process.env.SPACEHUB_RESTORE_ROOT ?? '',
     remote: RECOVERY_REMOTE,

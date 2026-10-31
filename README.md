@@ -383,6 +383,10 @@ Once the new hub is in use, delete the old database with
 | `SPACEHUB_GITHUB_CLIENT_ID`, `SPACEHUB_GITHUB_CLIENT_SECRET` | unset | The hub's GitHub OAuth App, both or neither: the website's "Sign in with GitHub" (callback `https://<hub>/-/login/github/callback`), and the CLI's sign-in through GitHub's device flow with a scope-less token, refusing other tokens (see Sign up with GitHub) |
 | `SPACEHUB_XO_KEY` | unset | Turns on xo.quirq.dev's API, which signs xo's users in as the GitHub account connected to their XO account whatever `SPACEHUB_ACCOUNTS` says, the website's "Sign in with xo", and xo's requirement for launching agents (see xo below) |
 | `SPACEHUB_XO_URL` | `https://xo.quirq.dev` | The xo server the website's "Sign in with xo" asks (`off`: no button). https, or http to this machine |
+| `SPACEHUB_BACKUP_MINUTES` | `60` | How often the hub backs up its own data folder while it runs, for Sub-hubs to copy (`0`: never; see The hub's own backups). Only without `SPACEHUB_RECOVERY_DIR` or `_URL` |
+| `SPACEHUB_BACKUP_KEEP` | `3` | How many of its own backups the hub keeps |
+| `SPACEHUB_BACKUP_DIR` | `/data/.spacehub/backups` | Where the hub keeps them |
+| `SPACEHUB_RECOVERY_OPERATORS` | unset | Builders (comma-separated) who may connect Sub-hubs and open Settings → Sub-hubs; otherwise only the database's owner identity can |
 | `SPACEHUB_VISITOR_HOME` | `quirq/quirq` | Where a visitor who is not signed in lands from the hub's address (`/`): a space or project, once it is on the hub (`off`: the home page for everyone). Signed in, `/` is the home page |
 | `SPACEHUB_AGENTHUB_URL`, `SPACEHUB_AGENTHUB_TOKEN` | unset | Turn on worker agents: members launch them from a chat, as tasks on this Agents Hub with this API token (see Agents launched from chat below) |
 | `SPACEHUB_AGENTHUB_SPACES` | unset | The orgs that have agents, comma-separated. Their members (and owners) launch and steer them, on a hub with xo only once signed in with xo; nobody else can |
@@ -716,6 +720,10 @@ The receiving machine needs the CLI and writable disk; it does not need Docker.
 Restarting the same storage folder reuses its identity. Private enrollment
 state lives beside the vault in `<storage>.runtime`; keep that directory private.
 
+It keeps the newest 24 backups it has copied (`--keep` changes that) and
+deletes older ones as new ones arrive, so the backup machine's disk does not
+fill up.
+
 The default sync interval is 60 seconds (`--interval` changes it); heartbeats
 continue independently while a backup downloads. A stopped CLI becomes offline
 in Settings after its heartbeat expires. An unavailable or empty source is
@@ -736,6 +744,37 @@ recovery service's vault from other connected machines' retained catalogs.
 Machine credentials authorize full-instance backup reads, never org work or
 agent execution. The hub stores only their hashes and does not show credentials
 in connection status.
+
+### The hub's own backups
+
+With no other backup source configured (no `SPACEHUB_RECOVERY_DIR` or
+`SPACEHUB_RECOVERY_URL`), the server image backs itself up, with no
+downtime: every `SPACEHUB_BACKUP_MINUTES` (default 60; `0` turns it off)
+the web service copies the hub's data folder (`/data`) while SpacetimeDB
+runs, keeps the newest `SPACEHUB_BACKUP_KEEP` (default 3) in a vault at
+`SPACEHUB_BACKUP_DIR` (default `/data/.spacehub/backups`), and serves them
+to connected Sub-hubs, which copy them off the machine.
+
+SpacetimeDB keeps each database as an append-only commit log beside its
+snapshots, so a copy taken while it writes is like the state after a crash:
+it starts from the last whole transaction. The commit logs are copied last,
+so they reach at least as far as the snapshots copied before them. Each
+backup holds `hub.json` and `data/`, the data folder without logs, caches
+and the backups themselves: databases, every space and project, accounts,
+tokens and the server's signing keys. The image and its settings are not in
+it (Settings shows these backups as "Hub data, copied live").
+
+To recover, restore the backup to a new folder and start the same server
+image with its `data/` as `/data`:
+
+```sh
+spacehub subhub restore <snapshot-id> /srv/recovered --storage /srv/spacehub-backups
+docker run -d -p 3000:3000 -v /srv/recovered/data:/data <the same spacehub image and settings>
+```
+
+Builders sign in with their old tokens: the signing keys come back with the
+data. A backup needs about twice the data folder's size free next to the
+vault; without it, the hub skips that backup and says so in its log.
 
 ### Deployment operator: provide complete source backups
 

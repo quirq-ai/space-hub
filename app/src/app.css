@@ -721,7 +721,7 @@ a.label:hover { text-decoration: none; filter: brightness(.96); }
 .instance-vault .subhub-actions { margin-top: 20px; }
 .instance-coverage { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
 .instance-coverage > span { display: inline-flex; align-items: center; gap: 6px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--fill); color: var(--text-2); font-size: 11px; }
-.instance-coverage.included > span { color: var(--green); background: var(--green-soft); border-color: transparent; }
+.instance-coverage.included > span, .instance-coverage > span.included { color: var(--green); background: var(--green-soft); border-color: transparent; }
 .instance-permission { display: flex; align-items: center; gap: 8px; margin: 16px 0; padding: 12px 14px; background: var(--fill); border-radius: 7px; color: var(--text-2); font-size: 12px; line-height: 1.5; }
 .instance-backups { display: grid; gap: 14px; }
 .instance-backup h3 { margin: 0; font-size: 15px; }
