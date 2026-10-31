@@ -173,6 +173,8 @@ export class InstanceConnections {
     });
   }
   authorize(token: string): boolean { return this.read().connections.some(item => matches(item, token)); }
+  /** Whether `token` is the credential of connection `id` (a machine acts only for itself). */
+  owns(id: string, token: string): boolean { return ID.test(id) && this.read().connections.some(item => item.id === id && matches(item, token)); }
   heartbeat(id: string, token: string, input: unknown): InstanceConnection {
     if (!ID.test(id)) fail(403, 'Invalid Sub-hub machine credential');
     const update = report(input);

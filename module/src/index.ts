@@ -411,8 +411,9 @@ const ObjectIn = t.object('ObjectIn', {
 // Space names (builders, orgs, agents) are GitHub logins, lowercased,
 // so any GitHub user or organization has the same name here.
 const USERNAME = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
-// First path segments the server's proxy needs for itself.
-const RESERVED_USERNAMES = new Set(['v1', 'healthz']);
+// First path segments the server's proxy and the app need for themselves
+// (/subhub/<name> is a connected sub-hub's page).
+const RESERVED_USERNAMES = new Set(['v1', 'healthz', 'subhub']);
 const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
 // Project names are GitHub repository names.
 const PROJECT_NAME = /^[A-Za-z0-9._-]{1,100}$/;

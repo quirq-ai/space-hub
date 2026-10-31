@@ -745,6 +745,29 @@ Machine credentials authorize full-instance backup reads, never org work or
 agent execution. The hub stores only their hashes and does not show credentials
 in connection status.
 
+### A sub-hub's page: its storage, live
+
+Every connected machine has a page at `/subhub/<name>` (linked from
+Settings), for recovery operators. While the machine runs `spacehub subhub
+run`, the page reads its storage folder through the hub as it is right now:
+the backups it keeps (and its `--keep`), the disk they use and the disk
+free, each backup's files with sizes and checksums and its `hub.json`, and
+a button that verifies a backup on that machine. When the machine is
+offline, the page shows its last report.
+
+A sub-hub usually sits behind NAT, so the hub cannot call it: the machine
+keeps one request open to the hub, which hands it each question and waits
+for the answer. The machine answers only these read-only questions about
+its own storage, never with file contents other than `hub.json`. The same
+routes work as an API with an operator's token
+(`Authorization: Bearer $(spacehub auth token)`):
+
+```sh
+GET  /-/api/instance-recovery/subhubs/<name>                          # its storage, or its last report
+GET  /-/api/instance-recovery/subhubs/<name>/snapshots/<id>           # one backup's files
+POST /-/api/instance-recovery/subhubs/<name>/snapshots/<id>/verify    # check every file there
+```
+
 ### The hub's own backups
 
 With no other backup source configured (no `SPACEHUB_RECOVERY_DIR` or

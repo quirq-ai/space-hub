@@ -8,6 +8,8 @@ import type { Place } from "@/api";
  */
 export type Route =
   | { page: "home"; tab: "home" | "agents" | "builders" | "settings" }
+  // A connected sub-hub's storage, read live (/subhub/<name>, #/backup?id= one backup).
+  | { page: "subhub"; name: string; backup: string }
   | { page: "space"; place: Place; tab: "projects" | "agents" | "activity" | "people" }
   // as=folder shows a folder as files even when it is a channel or a list of channels.
   | { page: "project"; place: Place; tab: "files"; path: string; as: string }
@@ -24,6 +26,7 @@ export function parseRoute(pathname: string, hash: string): Route {
   const [tab = "", qs = ""] = hash.replace(/^#\/?/, "").split("?");
   const params = new URLSearchParams(qs);
   if (!project && (tab === "settings" || tab === "subhubs")) return { page: "home", tab: "settings" };
+  if (space === "subhub" && project) return { page: "subhub", name: project, backup: tab === "backup" ? params.get("id") ?? "" : "" };
   if (!space) return { page: "home", tab: tab === "agents" || tab === "builders" ? tab : "home" };
   if (!project) return { page: "space", place, tab: tab === "activity" || tab === "people" || tab === "agents" ? tab : "projects" };
   switch (tab) {

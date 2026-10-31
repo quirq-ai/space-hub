@@ -44,6 +44,7 @@ import { InstanceVault } from './instancevault';
 import { handleInstanceRecovery, recoveryRemote } from './instancerecovery';
 import { InstanceConnections } from './instanceconnections';
 import { hubBackupConfig, startHubBackups } from './hubbackup';
+import { SubhubRelay } from './subhubrelay';
 
 quietSdkLogs();
 
@@ -79,6 +80,8 @@ if (HUB_BACKUP) startHubBackups(HUB_BACKUP);
 const RECOVERY_CONNECTIONS = new InstanceConnections(process.env.SPACEHUB_RECOVERY_STATE_DIR
   || (process.env.SPACETIME_ROOT ? path.join(process.env.SPACETIME_ROOT, '.spacehub', 'recovery-connections') : path.join(path.dirname(configFile()), 'recovery-connections')));
 RECOVERY_CONNECTIONS.initialize();
+// Live questions to connected sub-hubs, for their pages at /subhub/<name>.
+const RECOVERY_RELAY = new SubhubRelay();
 // Explicit deployment-level delegation; org membership never grants it.
 const RECOVERY_OPERATORS = new Set((process.env.SPACEHUB_RECOVERY_OPERATORS ?? '').split(',').map(name => name.trim()).filter(Boolean));
 const SYNC = ADMIN_TOKEN
@@ -476,6 +479,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     containers: (process.env.SPACEHUB_RECOVERY_CONTAINERS ?? '').split(',').map(name => name.trim()).filter(Boolean),
     restoreRoot: process.env.SPACEHUB_RESTORE_ROOT ?? '',
     remote: RECOVERY_REMOTE,
+    relay: RECOVERY_RELAY,
   }, req, res, url)) return;
   if (LIVE.handle(req, res, url)) return;
   if (req.method === 'POST' && !sameOrigin(req)) return send(res, 403, page('Forbidden', null, '<h1>Forbidden</h1><p class="desc">This form must be sent from this site.</p>'));

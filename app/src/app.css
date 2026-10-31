@@ -781,3 +781,20 @@ a.label:hover { text-decoration: none; filter: brightness(.96); }
   .instance-setup { padding: 16px; }
   .instance-setup-fields { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* A connected sub-hub's storage, read live (/subhub/<name>). */
+.subhub-page h1 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 22px; letter-spacing: -.025em; }
+.subhub-facts { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 14px 0 18px; color: var(--text-2); font-size: 13px; }
+.subhub-facts > span { display: inline-flex; align-items: center; gap: 6px; }
+.subhub-backups { list-style: none; margin: 0 0 20px; padding: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.subhub-backups li + li { border-top: 1px solid var(--line); }
+.subhub-backups a { display: block; padding: 10px 14px; color: inherit; text-decoration: none; }
+.subhub-backups a:hover, .subhub-backups li.selected a { background: var(--fill); }
+.subhub-backups code { font-size: 11px; color: var(--text-3); }
+.subhub-detail { margin-top: 8px; }
+.subhub-detail h2 code { font-size: 13px; }
+.subhub-hub-json { margin: 10px 0; padding: 10px 12px; border-radius: 6px; background: var(--fill); font-size: 12px; overflow-x: auto; }
+.subhub-files { width: 100%; border-collapse: collapse; font-size: 12px; }
+.subhub-files th, .subhub-files td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.subhub-files td code { overflow-wrap: anywhere; }
+.subhub-files .r, .subhub-files td:last-child code { text-align: right; white-space: nowrap; }

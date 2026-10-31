@@ -14,6 +14,7 @@ import { SpacePage } from "@/pages/space";
 import { ProjectPage } from "@/pages/project";
 import { SECTION_ICONS, SECTION_ORDER } from "@/pages/files";
 import { SettingsPage } from "@/pages/settings";
+import { SubhubPage } from "@/pages/subhub";
 
 const HUB: Place = { space: "", project: "" };
 const SEEN = "spacehub:seen:v1";
@@ -30,10 +31,10 @@ export function App() {
   const me = useMe();
   const recoveryOnly = me.recoveryOnly;
   const recovery = recoveryOnly || (route.page === "home" && route.tab === "settings");
-  const place = recovery || route.page === "home" ? HUB : route.place;
+  const place = recovery || route.page === "home" || route.page === "subhub" ? HUB : route.place;
   const filesPath = route.page === "project" && route.tab === "files" ? route.path : "";
   const homeTab = route.page === "home" ? route.tab : "";
-  const live = useLive<View>(recovery ? undefined : viewUrl(place, filesPath));
+  const live = useLive<View>(recovery || route.page === "subhub" ? undefined : viewUrl(place, filesPath));
   // A project's space, for the sidebar's list of its sibling projects.
   const space = useLive<View<SpaceMeta>>(!recovery && route.page === "project" ? viewUrl({ space: place.space, project: "" }) : undefined, 30_000);
   const [recoveryState, setRecoveryState] = useState<"live" | "offline" | "loading">("loading");
@@ -94,14 +95,14 @@ export function App() {
   }, [recoveryOnly]);
   useEffect(() => {
     // Only under a place's own name: a second name moves to it first (above).
-    if (recoveryOnly || route.page === "home" || own !== place.space.toLowerCase()) return;
+    if (recoveryOnly || route.page === "home" || route.page === "subhub" || own !== place.space.toLowerCase()) return;
     if (route.page === "project") rememberProject(placeKey);
     markSeen(route.page === "project" ? placeKey : place.space);
     setSeen(readSeen());
   }, [route.page, placeKey, place.space, own, recoveryOnly]);
   useEffect(() => {
-    document.title = recovery ? "Settings · spacehub" : homeTab === "agents" ? "Agents · spacehub" : homeTab === "builders" ? "Builders · spacehub" : homeTab ? "spacehub" : `${route.page === "project" ? placeKey : place.space} · spacehub`;
-  }, [homeTab, route.page, placeKey, place.space, recovery]);
+    document.title = recovery ? "Settings · spacehub" : route.page === "subhub" ? `Sub-hub ${route.name} · spacehub` : homeTab === "agents" ? "Agents · spacehub" : homeTab === "builders" ? "Builders · spacehub" : homeTab ? "spacehub" : `${route.page === "project" ? placeKey : place.space} · spacehub`;
+  }, [homeTab, route, placeKey, place.space, recovery]);
 
   const signIn = `/-/login?next=${encodeURIComponent(location.pathname + location.hash)}`;
   const state = recovery ? recoveryState : live.error && view ? "offline" : !view ? "loading" : "live";
@@ -109,7 +110,7 @@ export function App() {
   // Sidebar: a space switcher, the main places, short lists of where you are and where you were, and a footer.
   const kindOf = (name: string) => me.spaces.find(s => s.space === name)?.kind ?? (meta?.level === "space" && meta.name === name ? meta.kind : space.data?.meta.name === name ? space.data.meta.kind : "personal");
   const switcher = {
-    current: route.page === "home" ? null : { name: place.space, kind: kindOf(place.space), href: placeUrl({ space: place.space, project: "" }) },
+    current: route.page === "home" || route.page === "subhub" ? null : { name: place.space, kind: kindOf(place.space), href: placeUrl({ space: place.space, project: "" }) },
     options: me.spaces.map(s => ({ name: s.space, kind: s.kind, href: placeUrl({ space: s.space, project: "" }) })),
   };
   const primary = [
@@ -181,6 +182,7 @@ export function App() {
       <div className="main-scroll">
         {route.page === "home" && route.tab !== "settings" && !recovery && <HomePage tab={route.tab} view={view as View<HubMeta> | undefined} me={me.name} mySpaces={me.spaces.map(s => s.space)} seen={seen} activityOpen={activityOpen} onActivity={toggleActivity} />}
         {recovery && <SettingsPage onConnectionState={setRecoveryState} />}
+        {!recovery && route.page === "subhub" && <SubhubPage name={route.name} backup={route.backup} />}
         {!recovery && route.page === "space" && <SpacePage name={place.space} tab={route.tab} view={view as View<SpaceMeta> | undefined} error={live.error} me={me.name} seen={seen} />}
         {!recovery && route.page === "project" && <ChannelsContext.Provider value={channels}><ProjectPage route={route} view={view as View<ProjectMeta> | undefined} error={live.error} me={me.name} signIn={signIn} refresh={live.refresh} /></ChannelsContext.Provider>}
       </div>

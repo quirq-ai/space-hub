@@ -8,6 +8,7 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { canonicalPath, InstanceVault } from './instancevault.ts';
 import { InstanceConnections } from './instanceconnections.ts';
+import { RelayError, type RelayOp, type SubhubRelay } from './subhubrelay.ts';
 
 const PREFIX = '/-/api/instance-recovery';
 export interface InstanceRecoveryDeps {
@@ -20,6 +21,37 @@ export interface InstanceRecoveryDeps {
   remote?: { url: string; token: string } | null;
   connections?: InstanceConnections;
   machineName?: string;
+  relay?: SubhubRelay; // live questions to connected machines, for /subhub/<name>
+}
+
+// How long an operator waits for a machine: the page's own reads give up
+// after 20 seconds, and verifying a backup reads it all.
+const ASK_MS: Record<RelayOp, number> = { storage: 12_000, snapshot: 30_000, verify: 30 * 60_000 };
+
+// A connected machine's page (/subhub/<name>): its last report, and when it
+// is online, what it says about its storage right now.
+async function subhub(deps: InstanceRecoveryDeps, res: http.ServerResponse, rest: string, method: string) {
+  const connections = deps.connections ?? fail(503, 'Sub-hub connections are unavailable');
+  const relay = deps.relay ?? fail(503, 'Live sub-hub views are not on for this hub');
+  const m = /^\/([^/]+)(?:\/snapshots\/([a-f0-9]{32})(\/verify)?)?$/.exec(rest);
+  if (!m) fail(404, 'No such sub-hub page');
+  let name: string;
+  try { name = decodeURIComponent(m[1]); } catch { fail(400, 'Invalid sub-hub name'); }
+  const connection = connections.list().filter(item => item.name === name).sort((a, b) => b.lastSeen - a.lastSeen)[0] ?? fail(404, `No sub-hub named ${name} has connected to this hub`);
+  const op: RelayOp = m[3] ? 'verify' : m[2] ? 'snapshot' : 'storage';
+  if ((op === 'verify') !== (method === 'POST') || (method !== 'GET' && method !== 'POST')) fail(405, 'Method not allowed');
+  if (!connection.online) {
+    if (op !== 'storage') fail(503, `${name} is offline; its storage can be read while it runs spacehub subhub run`);
+    json(res, 200, { connection, live: null, error: `${name} is offline: this is its last report` }); return;
+  }
+  try {
+    const answer = await relay.ask(connection.id, op, m[2], ASK_MS[op]);
+    json(res, 200, op === 'storage' ? { connection, live: answer } : answer);
+  } catch (error) {
+    if (!(error instanceof RelayError)) throw error;
+    if (op === 'storage') { json(res, 200, { connection, live: null, error: error.message }); return; }
+    fail(error.status, error.message);
+  }
 }
 export function recoveryRemote(url: string | undefined, token: string | undefined) {
   if (!url && !token) return null;
@@ -94,6 +126,19 @@ export async function handleInstanceRecovery(deps: InstanceRecoveryDeps, req: ht
       const connections = deps.connections ?? fail(503, 'Sub-hub connections are unavailable');
       json(res, 200, connections.heartbeat(heartbeat[1], bearer(req)!, await body(req, 256 * 1024))); return true;
     }
+    const machine = /^\/connections\/([a-f0-9]{32})\/requests(?:\/([a-f0-9]{32}))?$/.exec(route);
+    if (machine) {
+      const token = bearer(req);
+      if (req.headers.origin || !token || !deps.connections?.owns(machine[1], token)) fail(403, 'Use the private Sub-hub machine credential');
+      const relay = deps.relay ?? fail(404, 'Live sub-hub views are not on for this hub');
+      if (!machine[2] && req.method === 'GET') { json(res, 200, { requests: await relay.poll(machine[1], 25_000) }); return true; }
+      if (machine[2] && req.method === 'POST') {
+        try { relay.answer(machine[1], machine[2], await body(req, 8 * 1024 * 1024)); }
+        catch (error) { if (error instanceof RelayError) fail(error.status, error.message); throw error; }
+        json(res, 200, { ok: true }); return true;
+      }
+      fail(405, 'Method not allowed');
+    }
     if (route.startsWith('/source/')) {
       const machine = !req.headers.origin && bearer(req) && deps.connections?.authorize(bearer(req)!);
       if (!machine && !(await deps.authorize(req))) fail(403, 'Full-instance source access requires a registered Sub-hub or hub operator');
@@ -109,6 +154,7 @@ export async function handleInstanceRecovery(deps: InstanceRecoveryDeps, req: ht
       await pipeline(saved.stream, res); return true;
     }
     if (!(await deps.authorize(req))) fail(403, 'Full-instance recovery requires a hub operator; org ownership does not grant this access');
+    if (route.startsWith('/subhubs/')) { await subhub(deps, res, route.slice('/subhubs'.length), req.method ?? 'GET'); return true; }
     if (route === '/connections') {
       const connections = deps.connections ?? fail(503, 'Sub-hub connections are unavailable');
       if (req.method === 'GET') { json(res, 200, { connections: connections.list() }); return true; }

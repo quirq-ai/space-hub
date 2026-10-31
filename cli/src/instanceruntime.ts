@@ -330,6 +330,41 @@ export async function runInstanceSubhub(options: InstanceRuntimeOptions, deps: I
     if (old.length) await refreshLocal();
     announce('up-to-date');
   };
+  // Answer the hub's live questions about this machine's storage while it
+  // runs (its page at /subhub/<name>, subhubrelay.ts). Read-only: what is
+  // kept here, one backup's files, and verifying one backup here.
+  const answer = async (question: { id: string; op: unknown; snapshot?: unknown }) => {
+    let reply: { result?: unknown; error?: string };
+    try {
+      const id = typeof question.snapshot === 'string' ? question.snapshot : '';
+      if (question.op === 'storage') {
+        const kept = vault.list(), free = await fsp.statfs(vault.storageDir);
+        reply = { result: { name: connection.name, keep, intervalSeconds: interval, snapshots: kept, bytes: kept.reduce((total, item) => total + item.bytes, 0), freeBytes: free.bavail * free.bsize } };
+      } else if (question.op === 'snapshot' && id) reply = { result: vault.describe(id) };
+      else if (question.op === 'verify' && id) reply = { result: await vault.verify(id) };
+      else reply = { error: 'This Sub-hub does not answer that question' };
+    } catch (error) { reply = { error: error instanceof Error ? error.message : 'The question failed' }; }
+    const response = await machineRequest(`/connections/${connection.id}/requests/${question.id}`, { method: 'POST', body: JSON.stringify(reply) });
+    await response.body?.cancel();
+  };
+  const questions = options.once ? Promise.resolve() : (async () => {
+    while (!signal.aborted) {
+      try {
+        if (!connection.registered) { await wait(1000, signal); continue; }
+        const response = await machineRequest(`/connections/${connection.id}/requests`, {}, 35_000);
+        // An older hub without live views: ask again much later.
+        if (response.status === 404) { await response.body?.cancel(); await wait(10 * 60_000, signal); continue; }
+        if (!response.ok) { await response.body?.cancel(); await wait(5000, signal); continue; }
+        const body = await jsonResponse(response, 64 * 1024);
+        for (const question of isObject(body) && Array.isArray(body.requests) ? body.requests : []) {
+          if (isObject(question) && typeof question.id === 'string' && ID.test(question.id)) void answer(question as { id: string; op: unknown; snapshot?: unknown }).catch(() => undefined);
+        }
+      } catch (error) {
+        if (error instanceof RuntimeAccessError) return;
+        await wait(5000, signal);
+      }
+    }
+  })();
   try {
     announce('waiting');
     while (!signal.aborted) {
@@ -349,7 +384,7 @@ export async function runInstanceSubhub(options: InstanceRuntimeOptions, deps: I
     }
     if (accessFailure) throw accessFailure;
   } finally {
-    clearInterval(timer); controller.abort(); await heartbeatPending;
+    clearInterval(timer); controller.abort(); await heartbeatPending; await questions;
     process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop);
     vault.close(); unlock();
   }
