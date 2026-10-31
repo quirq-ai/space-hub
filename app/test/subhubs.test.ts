@@ -5,12 +5,13 @@ import { parseRoute } from "../src/router.ts";
 
 const node: SubhubNode = { id: "office", space: "quirq", owner: "dev", label: "Office", mode: "backup", enabled: true, healthy: true, status: "ready", errors: [], capacityBytes: 1024, freeBytes: 512, createdAt: 1, seenAt: 2, drive: { files: 0, bytes: 0, updatedAt: null }, backups: [{ project: "quirq/app", snapshot: "abc", oid: "def", bytes: 10 }] };
 
-test("the sub-hub tab belongs to a space without changing project routes", () => {
-  assert.deepEqual(parseRoute("/quirq", "#/subhubs"), { page: "space", place: { space: "quirq", project: "" }, tab: "subhubs" });
+test("the node tab belongs to a space without changing project routes", () => {
+  assert.deepEqual(parseRoute("/quirq", "#/nodes"), { page: "space", place: { space: "quirq", project: "" }, tab: "nodes" });
+  assert.deepEqual(parseRoute("/quirq", "#/subhubs"), { page: "space", place: { space: "quirq", project: "" }, tab: "nodes" });
   assert.deepEqual(parseRoute("/quirq/app", "#/activity"), { page: "project", place: { space: "quirq", project: "app" }, tab: "activity" });
 });
 
-test("sub-hub URLs encode paths and omit aggregate space without leaking node credentials", () => {
+test("node URLs encode paths and omit aggregate space without leaking node credentials", () => {
   assert.equal(subhubUrl("/nodes"), "/-/api/subhubs/nodes");
   const url = new URL(subhubUrl("/drive/file", { space: "quirq", node: "office", path: "reports/a & b.txt" }), "https://hub.example");
   assert.equal(url.searchParams.get("path"), "reports/a & b.txt");
@@ -21,7 +22,7 @@ test("sub-hub URLs encode paths and omit aggregate space without leaking node cr
 });
 
 test("connect command safely quotes local directories for both shells and requires reachable drive address", () => {
-  assert.equal(connectCommand({ space: "quirq", id: "office", mode: "backup", storage: "D:\\Shared drive\\Sam's files" }), "spacehub subhub run --space quirq --id office --mode backup --storage 'D:\\Shared drive\\Sam''s files'");
+  assert.equal(connectCommand({ space: "quirq", id: "office", mode: "backup", storage: "D:\\Shared drive\\Sam's files" }), "spacehub node run --space quirq --id office --mode backup --storage 'D:\\Shared drive\\Sam''s files'");
   const command = connectCommand({ space: "quirq", id: "drive-1", mode: "drive", storage: "/data/Sam's drive", advertise: "https://node.example", shell: "sh" });
   assert.ok(command.includes("'/data/Sam'\"'\"'s drive'"));
   assert.ok(command.endsWith("--advertise https://node.example"));

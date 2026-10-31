@@ -67,7 +67,7 @@ function cleanPath(value: string) {
 export async function handleSubhubControl(store: SubhubStore | null, deps: SubhubControlDeps, req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<boolean> {
   if (url.pathname !== PREFIX && !url.pathname.startsWith(PREFIX + '/')) return false;
   try {
-    if (!store) fail(503, 'Sub-hubs are disabled; configure SPACEHUB_SUBHUB_DIR on the parent');
+    if (!store) fail(503, 'Nodes are disabled; configure SPACEHUB_SUBHUB_DIR on the parent');
     const route = url.pathname.slice(PREFIX.length);
     if (route === '/protocol' && req.method === 'GET') { json(res, 200, { version: 1, capabilities: ['backup', 'queue', 'immutable-read', 'active-drive', 'activity', 'node-settings'] }); return true; }
     const actor = async (space: string, owner = false) => (await deps.authorize(req, space, owner)) ?? fail(403, owner ? 'Space owner required' : 'Space membership required');
@@ -143,7 +143,7 @@ export async function handleSubhubControl(store: SubhubStore | null, deps: Subhu
       }
       const space = url.searchParams.get('space') ?? '';
       await actor(space);
-      const node = store.nodes(space).find(item => item.id === url.searchParams.get('node')) ?? fail(404, 'No such sub-hub in this space');
+      const node = store.nodes(space).find(item => item.id === url.searchParams.get('node')) ?? fail(404, 'No such node in this space');
       if (!node.enabled || node.mode !== 'drive') fail(409, 'Select an enabled active drive');
       if (!node.healthy || !node.url) fail(503, 'This drive is offline or has no reachable advertised URL');
       const listing = route === '/drive/files';
@@ -226,9 +226,9 @@ export async function handleSubhubControl(store: SubhubStore | null, deps: Subhu
       else await pipeline(Readable.fromWeb(response.body as any), res);
       return true;
     }
-    fail(404, 'No such sub-hub route');
+    fail(404, 'No such node route');
   } catch (error: any) {
-    if (!res.headersSent) json(res, error.status ?? 500, { error: error.status ? error.message : 'Sub-hub request failed' });
+    if (!res.headersSent) json(res, error.status ?? 500, { error: error.status ? error.message : 'Node request failed' });
     else res.destroy();
     return true;
   }

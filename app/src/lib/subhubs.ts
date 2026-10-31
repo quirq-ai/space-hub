@@ -27,14 +27,14 @@ export class SubhubError extends Error {
   constructor(status: number, message: string) { super(message); this.status = status; this.name = "SubhubError"; }
 }
 export function subhubErrorMessage(status: number, detail?: string) {
-  if (status === 401) return "Sign in to use this space’s sub-hubs.";
-  if (status === 403) return "You do not have permission to use these sub-hubs.";
-  if (status === 404) return "Sub-hubs are unavailable on this hub, or this item is no longer available.";
+  if (status === 401) return "Sign in to use this space’s nodes.";
+  if (status === 403) return "You do not have permission to use these nodes.";
+  if (status === 404) return "Nodes are unavailable on this hub, or this item is no longer available.";
   if (status === 412) return "This file changed. Review the refreshed file list before replacing it.";
   if (status === 413) return "This file is too large. Drive files can be up to 16 MiB.";
   if (status === 409) return detail || "This item changed. Refresh and try again.";
-  if (status === 502 || status === 503 || status === 504) return "The sub-hub is offline or unavailable. Try again when it reconnects.";
-  return detail || (status ? `Sub-hubs could not complete this request (${status}).` : "Cannot reach sub-hubs. Check your connection and try again.");
+  if (status === 502 || status === 503 || status === 504) return "The node is offline or unavailable. Try again when it reconnects.";
+  return detail || (status ? `Nodes could not complete this request (${status}).` : "Cannot reach nodes. Check your connection and try again.");
 }
 export async function subhubRequest<T>(url: string, init: RequestInit = {}): Promise<T> {
   let response: Response;
@@ -46,7 +46,7 @@ export async function subhubRequest<T>(url: string, init: RequestInit = {}): Pro
     const detail = body && typeof body === "object" && "error" in body && typeof body.error === "string" ? body.error : undefined;
     throw new SubhubError(response.status, subhubErrorMessage(response.status, detail));
   }
-  if (body === undefined) throw new SubhubError(response.status, "The hub returned an unreadable sub-hub response.");
+  if (body === undefined) throw new SubhubError(response.status, "The hub returned an unreadable node response.");
   return body as T;
 }
 export async function driveDownload(url: string): Promise<Blob> {
@@ -82,10 +82,10 @@ export function connectCommand({ space, id, mode, storage, advertise, shell = "p
     let url: URL; try { url = new URL(advertise); } catch { throw new Error("Enter a valid HTTPS address for this node."); }
     if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) throw new Error("Use an HTTPS node address without credentials, a query or a fragment.");
   }
-  const args = ["spacehub", "subhub", "run", "--space", space, "--id", id, "--mode", mode, "--storage", storage];
+  const args = ["spacehub", "node", "run", "--space", space, "--id", id, "--mode", mode, "--storage", storage];
   if (advertise) args.push("--advertise", advertise);
   return args.map(value => quote(value, shell)).join(" ");
 }
-export function restoreCommand(snapshot: string) { return `spacehub subhub restore ${quote(snapshot, "powershell")} <new-directory> --storage <node-storage-directory>`; }
+export function restoreCommand(snapshot: string) { return `spacehub node restore ${quote(snapshot, "powershell")} <new-directory> --storage <node-storage-directory>`; }
 export function ownsLease(work: SubhubWork, me: string | null, now = Date.now()) { return !!me && work.status === "claimed" && work.worker === me && (work.leaseUntil ?? 0) > now; }
 export function canClaim(work: SubhubWork, now = Date.now()) { return work.status === "queued" || (work.status === "claimed" && (work.leaseUntil ?? 0) <= now); }

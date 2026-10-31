@@ -10,19 +10,19 @@ import { NodeWorkSpool, createSubhubServer } from './subhubserver.ts';
 import { SubhubClient, parentWeb } from './subhubclient.ts';
 import { DriveStore } from './subhubdrive.ts';
 
-const HELP = `spacehub subhub run --space <space> --storage <directory>
+const HELP = `spacehub node run --space <space> --storage <directory>
     [--id <node>] [--listen 127.0.0.1:4080] [--advertise https://node.example]
     [--mode backup|drive]
     [--interval 30] [--max-storage-mb 1024] [--max-project-mb 128]
     [--project <space/project>] [--once] [--standalone]
-spacehub subhub status|snapshots [project] --storage <directory>
-spacehub subhub restore <snapshot> <new-directory> --storage <directory>
-spacehub subhub nodes --space <space>
-spacehub subhub work submit --space <space> --project <project> --title <text> --text <text> --key <id>
-spacehub subhub work list --space <space>
-spacehub subhub work claim <id> [--lease 60]
-spacehub subhub work complete <id> --fence <number> --result <text>
-spacehub subhub work release <id> --fence <number>
+spacehub node status|snapshots [project] --storage <directory>
+spacehub node restore <snapshot> <new-directory> --storage <directory>
+spacehub node list --space <space>
+spacehub node work submit --space <space> --project <project> --title <text> --text <text> --key <id>
+spacehub node work list --space <space>
+spacehub node work claim <id> [--lease 60]
+spacehub node work complete <id> --fence <number> --result <text>
+spacehub node work release <id> --fence <number>
 
 Work is stored and queued; this command never executes it.
 The parent needs the updated server for registration, queues and routing.
@@ -103,11 +103,11 @@ async function runNode(args: string[]) {
   if (project && (!project.startsWith(space + '/') || project.split('/').length !== 2)) throw new Error('--project must belong to --space');
   const once = yes(args, '--once');
   const standalone = yes(args, '--standalone');
-  if (args.length) throw new Error(`Unknown sub-hub arguments: ${args.join(' ')}`);
+  if (args.length) throw new Error(`Unknown node arguments: ${args.join(' ')}`);
   const cfg = loadConfig();
   const owner = new SubhubClient(cfg.server, cfg.token ?? '');
   if (!standalone) {
-    if (!cfg.token) throw new Error('Run spacehub auth login before registering a sub-hub');
+    if (!cfg.token) throw new Error('Run spacehub auth login before registering a node');
     await owner.protocol(requestedMode === 'drive' ? 'active-drive' : undefined);
   }
   const root = nodeRoot(storage);
@@ -148,7 +148,7 @@ async function runNode(args: string[]) {
   process.once('SIGINT', stop); process.once('SIGTERM', stop);
   if (!once) await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(port, address[1], resolve); });
   const statusPath = path.join(root, 'status.json');
-  const log = (text: string) => process.stderr.write(`subhub ${id}: ${text}\n`);
+  const log = (text: string) => process.stderr.write(`node ${id}: ${text}\n`);
   let polling = false;
   let parentError: string | null = null;
   let backupErrors: string[] = [];
@@ -226,7 +226,7 @@ export async function subhubCommand(command: string | undefined, args: string[])
   if (command === 'run') return runNode(args);
   if (['status', 'snapshots', 'restore'].includes(command)) {
     const root = path.resolve(required(flag(args, '--storage'), '--storage'));
-    if (!fs.existsSync(path.join(root, '.spacehub-node.json'))) throw new Error('No sub-hub storage at this location');
+    if (!fs.existsSync(path.join(root, '.spacehub-node.json'))) throw new Error('No node storage at this location');
     if (command === 'status') { print(JSON.parse(fs.readFileSync(path.join(root, 'status.json'), 'utf8'))); return; }
     const backups = new BackupStore(path.join(root, 'backup'));
     if (command === 'snapshots') { print(backups.list(args[0])); return; }
@@ -235,7 +235,7 @@ export async function subhubCommand(command: string | undefined, args: string[])
   const cfg = loadConfig();
   if (!cfg.token) throw new Error('Run spacehub auth login first');
   const client = new SubhubClient(cfg.server, cfg.token);
-  if (command === 'nodes') { print(await client.request('GET', '/nodes?' + new URLSearchParams({ space: required(flag(args, '--space'), '--space') }))); return; }
+  if (command === 'list' || command === 'nodes') { print(await client.request('GET', '/nodes?' + new URLSearchParams({ space: required(flag(args, '--space'), '--space') }))); return; }
   if (command === 'work') {
     const action = args.shift();
     if (action === 'submit') {

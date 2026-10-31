@@ -65,8 +65,8 @@ async function fixture(options: { mode?: 'backup' | 'drive'; heartbeatFails?: bo
   fs.writeFileSync(path.join(storage, '.spacehub-node.json'), JSON.stringify({ version: 1 }));
   fs.writeFileSync(path.join(storage, 'node.json'), JSON.stringify(saved));
 
-  const run = (extra: string[] = []) => new Promise<{ code: string | number | undefined; killed: boolean; stdout: string; stderr: string }>(resolve => {
-    execFile(process.execPath, [cli, 'subhub', 'run', '--space', 'quirq', '--id', NODE_ID, '--storage', storage, '--advertise', ADVERTISE, '--once', ...extra], {
+  const run = (extra: string[] = [], group = 'subhub') => new Promise<{ code: string | number | undefined; killed: boolean; stdout: string; stderr: string }>(resolve => {
+    execFile(process.execPath, [cli, group, 'run', '--space', 'quirq', '--id', NODE_ID, '--storage', storage, '--advertise', ADVERTISE, '--once', ...extra], {
       cwd: root, timeout: 10_000, killSignal: 'SIGKILL', maxBuffer: 1024 * 1024, windowsHide: true, encoding: 'utf8',
       env: { ...process.env, SPACEHUB_SERVER: origin, SPACEHUB_DB: 'runtime-test', SPACEHUB_TOKEN: OWNER_TOKEN, SPACEHUB_HOME: path.join(root, 'auth'), SPACEHUB_DEBUG: '' },
     }, (error, stdout, stderr) => resolve({ code: error ? error.code : 0, killed: !!error?.killed, stdout, stderr }));
@@ -82,6 +82,15 @@ async function fixture(options: { mode?: 'backup' | 'drive'; heartbeatFails?: bo
   const close = async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); removeTemporary(root); };
   return { storage, requests, saved, run, status, config, assertNoDatabase, close };
 }
+
+test('the node command runs with the same persisted storage and protocol as legacy commands', async t => {
+  const f = await fixture(); t.after(f.close);
+  const result = await f.run([], 'node');
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(f.status().mode, 'drive');
+  assert.equal(f.status().enabled, false);
+  f.assertNoDatabase();
+});
 
 test('restarting the original backup command preserves the parent-owned drive mode without PATCH', async t => {
   const f = await fixture(); t.after(f.close);

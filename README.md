@@ -677,17 +677,17 @@ login` on another machine gets the same token back. Otherwise, run
 override the saved settings; `SPACEHUB_WEB` points sign-in at a web service
 on its own port (a local test server).
 
-## Sub-hubs: backup, queued work and read routing
+## Nodes: backup, queued work and read routing
 
-A machine running `spacehub subhub run` can contribute durable disk storage
+A machine running `spacehub node run` can contribute durable disk storage
 to a space. The parent remains the authority for identity, permissions,
-writes and work claims. Sub-hubs retain Git snapshots, keep delivered work
+writes and work claims. Nodes retain Git snapshots, keep delivered work
 on disk, and serve an explicit gateway for immutable file reads. Work is
-stored and queued for workers to claim; a sub-hub never executes its text.
+stored and queued for workers to claim; a node never executes its text.
 
 ### In the app
 
-Open a space and choose **Sub-hubs** in its tabs or sidebar. Overview shows
+Open a space and choose **Nodes** in its tabs or sidebar. Overview shows
 connected machines, heartbeat status, storage and runtime errors. Owners
 can rename, pause/enable, and change a machine between Backups and Drive.
 Backups lists reported snapshots and copies an offline restore command.
@@ -704,7 +704,7 @@ remain owner-only. A hub without the updated API shows an unavailable
 message while its existing projects and chats continue to work.
 
 ```sh
-spacehub subhub run --space acme --id workstation --storage /srv/spacehub-node
+spacehub node run --space acme --id workstation --storage /srv/spacehub-node
 ```
 
 `--mode backup` is the default. `--mode` selects a new node's initial mode;
@@ -736,10 +736,10 @@ offline parents do not delete older snapshots. These are per-project
 snapshots, not a transaction across all projects in a space.
 
 ```sh
-spacehub subhub snapshots --storage /srv/spacehub-node
-spacehub subhub snapshots acme/site --storage /srv/spacehub-node
-spacehub subhub restore <snapshot-id> ./recovered-site --storage /srv/spacehub-node
-spacehub subhub status --storage /srv/spacehub-node
+spacehub node snapshots --storage /srv/spacehub-node
+spacehub node snapshots acme/site --storage /srv/spacehub-node
+spacehub node restore <snapshot-id> ./recovered-site --storage /srv/spacehub-node
+spacehub node status --storage /srv/spacehub-node
 ```
 
 Listing and restoring work offline. A restore creates a bare Git repository
@@ -770,12 +770,12 @@ Healthy nodes receive assignments and acknowledge them only after durable
 local storage. A worker then claims through the parent:
 
 ```sh
-spacehub subhub work submit --space acme --project site --title "Review launch" --text "Check the launch plan" --key launch-review-001
-spacehub subhub work list --space acme
-spacehub subhub work claim <work-id> --lease 60
-spacehub subhub work complete <work-id> --fence <returned-fence> --result "Review complete"
-spacehub subhub work release <work-id> --fence <returned-fence>
-spacehub subhub nodes --space acme
+spacehub node work submit --space acme --project site --title "Review launch" --text "Check the launch plan" --key launch-review-001
+spacehub node work list --space acme
+spacehub node work claim <work-id> --lease 60
+spacehub node work complete <work-id> --fence <returned-fence> --result "Review complete"
+spacehub node work release <work-id> --fence <returned-fence>
+spacehub node list --space acme
 ```
 
 Claims are exclusive, expire after 1–300 seconds, and carry increasing
@@ -791,7 +791,7 @@ from the parent's Git repositories. It needs an advertised address the
 parent can reach:
 
 ```sh
-spacehub subhub run --space acme --id office-drive --mode drive --storage /srv/office-drive --advertise https://drive.example
+spacehub node run --space acme --id office-drive --mode drive --storage /srv/office-drive --advertise https://drive.example
 ```
 
 Expose the node listener through your HTTPS reverse proxy. The browser
@@ -830,7 +830,7 @@ are not independent cryptographic proof of the file contents.
 
 Existing application, chat writes, login, database subscriptions and Git
 remotes continue using the parent. This gateway does not make a plain Node
-sub-hub into a second SpacetimeDB server or transparently reroute existing
+node into a second SpacetimeDB server or transparently reroute existing
 clients. A node behind NAT can contribute backup and queued storage while
 leaving read routing disabled.
 

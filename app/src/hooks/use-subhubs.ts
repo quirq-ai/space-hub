@@ -20,7 +20,7 @@ export function useSubhubResource<T>(url: string | undefined) {
         const data = await subhubRequest<T>(url, { signal: controller.signal });
         if (!closed) setState({ url, data, error: "", loading: false });
       } catch (error) {
-        if (!closed) setState(previous => ({ url, data: previous.url === url ? previous.data : undefined, error: error instanceof Error && error.name !== "AbortError" ? error.message : "The sub-hub request timed out. Try again.", loading: false }));
+        if (!closed) setState(previous => ({ url, data: previous.url === url ? previous.data : undefined, error: error instanceof Error && error.name !== "AbortError" ? error.message : "The node request timed out. Try again.", loading: false }));
       } finally { clearTimeout(timeout); running = false; }
     };
     void read();

@@ -91,7 +91,7 @@ export function App() {
   const primary = [
     { key: "home", label: "Home", href: "/", icon: <Home size={16} />, active: route.page === "home" },
     ...(me.name ? [{ key: "me", label: "Your profile", href: placeUrl({ space: me.name, project: "" }), icon: <User size={16} />, active: route.page === "space" && place.space === me.name }] : []),
-    ...(place.space ? [{ key: "subhubs", label: "Sub-hubs", href: placeUrl({ space: place.space, project: "" }, hashOf("subhubs")), icon: <Server size={16} />, active: route.page === "space" && route.tab === "subhubs" }] : []),
+    ...(place.space ? [{ key: "nodes", label: "Nodes", href: placeUrl({ space: place.space, project: "" }, hashOf("nodes")), icon: <Server size={16} />, active: route.page === "space" && route.tab === "nodes" }] : []),
   ];
   const sideSections: SideSection[] = [];
   if (channels && meta?.level === "project") {

@@ -57,9 +57,9 @@ SETUP
                     finds it (with the PATH line to add if not), whether the install
                     survives a restart, the CLI vs the hub, and who you are signed in as
 
-SUB-HUBS
-  subhub run --space <space> --storage <dir>  Back up projects, queue work and serve reads
-  subhub status|snapshots|restore|nodes|work  See spacehub subhub help
+NODES
+  node run --space <space> --storage <dir>  Back up projects, queue work and serve reads
+  node status|snapshots|restore|list|work  See spacehub node help
 
 SPACES
   space create <org> [-d <text>]           Create an org (you are its owner)
@@ -1350,7 +1350,7 @@ async function main() {
   if (!group || group === 'help' || group === '--help' || group === '-h') return out(HELP);
   if (group === '--version' || group === 'version') return out(`spacehub ${VERSION} (protocol ${PROTOCOL})`);
   if (group === 'doctor') return doctor();
-  if (group === 'subhub' || group === 'sub-hub') return subhubCommand(sub, args);
+  if (group === 'node' || group === 'subhub' || group === 'sub-hub') return subhubCommand(sub, args);
 
   if (group === 'auth') {
     switch (sub) {

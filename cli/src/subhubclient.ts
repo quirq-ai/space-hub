@@ -18,12 +18,12 @@ export class SubhubClient {
       body: value === undefined ? undefined : JSON.stringify(value),
     });
     const answer = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(answer?.error ?? `Parent does not support sub-hubs (HTTP ${response.status}); deploy the updated parent first`);
+    if (!response.ok) throw new Error(answer?.error ?? `Parent does not support nodes (HTTP ${response.status}); deploy the updated parent first`);
     return answer;
   }
   async protocol(capability?: string) {
     const value = await this.request('GET', '/protocol');
-    if (value.version !== 1) throw new Error('Update this CLI to match the parent sub-hub protocol');
+    if (value.version !== 1) throw new Error('Update this CLI to match the parent node protocol');
     if (capability && !value.capabilities?.includes(capability)) throw new Error(`The parent needs an update for ${capability}`);
   }
 }
