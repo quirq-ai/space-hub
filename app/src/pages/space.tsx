@@ -88,18 +88,21 @@ function GoalLabels({ progress, template }: { progress?: { done: number; total: 
 const roleNote = (agent: AgentInfo) =>
   `Owned by ${agent.parent} · ${agent.spaces.length ? `pushes to ${agent.spaces.join(", ")}` : "not connected to a space yet"}`;
 
-/** The agents of a space: the ones it owns and the ones allowed to push here, with where they run. */
-function AgentList({ space, kind, agents, canManage }: { space: string; kind: string; agents: AgentInfo[]; canManage: boolean }) {
+/**
+ * The agents of a space (the ones it owns and the ones allowed to push
+ * there), or of the whole hub when `space` is empty, with where they run.
+ */
+export function AgentList({ space, kind, agents, canManage }: { space: string; kind: string; agents: AgentInfo[]; canManage: boolean }) {
   const running = agents.filter(agent => agent.running.length).length;
   const commands = <CommandTabs tabs={[
     { label: "Create", lines: [`spacehub agent create <name>${kind === "org" ? ` --in ${space}` : ""} -d "what it does"`] },
-    { label: "Connect", lines: [`spacehub agent connect <agent> ${space}`] },
+    { label: "Connect", lines: [`spacehub agent connect <agent> ${space || "<space>"}`] },
     { label: "Run", lines: ["spacehub agent run <agent>"] },
   ]} note="An agent is a space with its own identity: its home project holds its instructions and memory, and it pushes to the spaces it is connected to." />;
-  if (!agents.length) return <Empty icon={<Bot size={20} />} title="No agents yet"><p>Create one{kind === "org" ? " for this org" : ""}, or connect an agent you own so it can push here.</p><div className="empty-commands">{commands}</div></Empty>;
+  if (!agents.length) return <Empty icon={<Bot size={20} />} title="No agents yet"><p>{space ? <>Create one{kind === "org" ? " for this org" : ""}, or connect an agent you own so it can push here.</> : "Create the first one: it gets a space of its own, owned by you."}</p><div className="empty-commands">{commands}</div></Empty>;
   return <>
     <Browser head={<>{agents.length} {agents.length === 1 ? "agent" : "agents"}{running ? <> · <span className="strip-here"><i className="online-dot" />{running} running</span></> : null}</>}
-      actions={canManage && <Popover label="Add an agent" icon={<Plus size={15} />}><div className="popover-title">Add an agent to {space}</div>{commands}</Popover>}
+      actions={canManage && <Popover label="Add an agent" icon={<Plus size={15} />}><div className="popover-title">{space ? `Add an agent to ${space}` : "Add an agent"}</div>{commands}</Popover>}
       groups={[{ key: "running", title: "Running", note: "Connected now, on the machine named.", keep: (agent: AgentInfo) => agent.running.length > 0 },
       { key: "idle", title: "Not running", note: "Start one with spacehub agent run, or from Agenthub.", keep: (agent: AgentInfo) => !agent.running.length }].map(group =>
       ({ key: group.key, title: group.title, note: group.note, cards: agents.filter(group.keep).map(agent => ({

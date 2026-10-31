@@ -349,6 +349,9 @@ describe('agents', () => {
     expect(agents.every(a => a.running.length === 0)).toBe(true);
     expect(view({ space: 'alice' }).meta).toMatchObject({ agents: ['helper'] });
     expect(view({ space: 'quirq', project: 'quirq' }).meta).toMatchObject({ members: ['bob'], agents: ['helper'], collaborators: [] });
+    // The hub lists every agent with its owner, for the home page's Agents tab.
+    const top = view({}).meta;
+    expect(top.level === 'hub' ? top.agentList.map(a => [a.name, a.parent, a.description, a.spaces]) : []).toEqual([['helper', 'alice', '', ['quirq']], ['scout', 'quirq', 'reads the web', []]]);
     void db;
   });
 });

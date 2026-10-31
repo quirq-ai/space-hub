@@ -15,7 +15,7 @@ export type SpaceGoal = {
   owners: string[]; rules: string[]; routines: string[]; template: string | null;
 };
 
-export type HubMeta = { level: "hub"; spaces: number; projects: number; bytes: number; events: number; humans: number; agents: number; activity: ActivityItem[]; here: Here[]; allProjects: ProjectCard[] };
+export type HubMeta = { level: "hub"; spaces: number; projects: number; bytes: number; events: number; humans: number; agents: number; activity: ActivityItem[]; here: Here[]; allProjects: ProjectCard[]; agentList: AgentInfo[] };
 export type SpaceMeta = {
   level: "space"; name: string; displayName: string; kind: string; description: string; parent: string; owners: string[]; members: string[];
   projects: number; bytes: number; github: string; githubLogin: string; aliases?: string[]; createdAt: string; memberOf: Membership[]; agents: string[]; agentList: AgentInfo[];

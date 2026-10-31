@@ -138,7 +138,7 @@ export interface Membership {
 }
 
 export type Meta =
-  | { level: 'hub'; spaces: number; projects: number; bytes: number; events: number; humans: number; agents: number; activity: ActivityItem[]; here: Here[]; allProjects: ProjectCard[] }
+  | { level: 'hub'; spaces: number; projects: number; bytes: number; events: number; humans: number; agents: number; activity: ActivityItem[]; here: Here[]; allProjects: ProjectCard[]; agentList: AgentInfo[] }
   | {
       level: 'space';
       name: string;
@@ -589,6 +589,11 @@ function hubLevel(db: Db, now: number) {
         .map(project => ({ fullName: project.fullName, description: project.description, pushedAt: iso(project.pushedAt) }))
         .sort((a, b) => b.pushedAt.localeCompare(a.pushedAt))
         .slice(0, 1000),
+      // Every agent on the hub, running ones first, for the home page's Agents tab.
+      agentList: spaces
+        .filter(space => space.kind === 'agent')
+        .map(space => agentInfo(db, space.name, space.parent, now))
+        .sort((a, b) => Number(b.running.length > 0) - Number(a.running.length > 0) || a.name.localeCompare(b.name)),
     }
   );
 }
