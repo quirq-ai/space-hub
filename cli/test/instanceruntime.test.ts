@@ -18,7 +18,7 @@ function put(root: string, filename: string, bytes: string | Buffer) {
   fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, bytes);
 }
 async function fixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'instance-runtime-'));
+  const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'instance-runtime-'));
   const prepared = path.join(root, 'prepared'); fs.mkdirSync(prepared);
   put(prepared, 'deployment.json', JSON.stringify({ Env: [`SIGNING_KEY=${SECRET}`] }));
   put(prepared, 'images/runtime.tar', Buffer.alloc(64 * 1024, 0x31));

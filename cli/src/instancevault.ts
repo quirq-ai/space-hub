@@ -52,6 +52,16 @@ function inside(root: string, filename: string) {
   const relative = path.relative(root, filename);
   return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }
+// A path given to the vault, with links above it resolved: the system's own
+// (macOS /tmp and /var are links to /private) are not links inside a vault.
+// The path itself and everything under it are checked as they are.
+export function canonicalPath(filename: string): string {
+  const full = path.resolve(filename);
+  let at = path.dirname(full);
+  const rest = [path.basename(full)];
+  while (!fs.existsSync(at) && path.dirname(at) !== at) { rest.unshift(path.basename(at)); at = path.dirname(at); }
+  return path.join(fs.realpathSync.native(at), ...rest);
+}
 function noLinks(filename: string) {
   for (let next = path.resolve(filename); ; next = path.dirname(next)) {
     if (present(next)?.isSymbolicLink()) fail(400, 'Instance paths must not contain symlinks or junctions');
@@ -217,7 +227,7 @@ export class InstanceVault {
   private tail: Promise<unknown> = Promise.resolve();
   constructor(storageDir: string, options: { maxBytes?: number } = {}) {
     if (!path.isAbsolute(storageDir)) fail(400, 'Instance storage must be an absolute dedicated directory');
-    this.storageDir = path.resolve(storageDir);
+    this.storageDir = canonicalPath(storageDir);
     if (this.storageDir === path.parse(this.storageDir).root || this.storageDir === path.resolve(os.homedir())) fail(400, 'A filesystem root or home directory cannot be an instance vault');
     this.maxBytes = options.maxBytes ?? DEFAULT_INSTANCE_VAULT_BYTES;
     if (!integer(this.maxBytes) || this.maxBytes <= 0) fail(400, 'maxBytes must be a positive safe integer');
@@ -320,7 +330,7 @@ export class InstanceVault {
   private async captureOne(sourceDir: string, info: CaptureInfo): Promise<Snapshot> {
     this.ready();
     if (!path.isAbsolute(sourceDir)) fail(400, 'Instance source must be an absolute prepared bundle');
-    const source = path.resolve(sourceDir);
+    const source = canonicalPath(sourceDir);
     if (inside(this.storageDir, source) || inside(source, this.storageDir)) fail(400, 'Instance source and vault must not overlap');
     const id = randomId(), details = metadata(info, id);
     const release = this.lock();
@@ -410,7 +420,7 @@ export class InstanceVault {
       return clone(existing.snapshot);
     }
     if (!path.isAbsolute(sourceDir)) fail(400, 'Instance transfer source must be absolute');
-    const source = path.resolve(sourceDir);
+    const source = canonicalPath(sourceDir);
     if (inside(this.storageDir, source) || inside(source, this.storageDir)) fail(400, 'Instance source and vault must not overlap');
     const release = this.lock();
     const stage = path.join(this.storageDir, 'staging', `${id}.${randomId()}.tmp`);
@@ -449,7 +459,7 @@ export class InstanceVault {
     await this.verify(id);
     const { root, manifest, snapshot } = this.load(id);
     if (!path.isAbsolute(newDest)) fail(400, 'Instance restore destination must be an absolute new directory');
-    const destination = path.resolve(newDest);
+    const destination = canonicalPath(newDest);
     if (inside(this.storageDir, destination) || inside(destination, this.storageDir)) fail(400, 'Instance restore destination must be outside the vault');
     noLinks(destination); directory(path.dirname(destination));
     if (present(destination)) fail(409, 'Instance restore destination already exists');

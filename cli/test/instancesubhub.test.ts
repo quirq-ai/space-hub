@@ -14,9 +14,9 @@ import { InstanceConnections } from '../src/instanceconnections.ts';
 import { handleInstanceRecovery } from '../src/instancerecovery.ts';
 
 let compiled: string, cli: string, assets: string;
-const temporary = () => fs.mkdtempSync(path.join(os.tmpdir(), 'instance-cli-'));
+const temporary = () => fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'instance-cli-'));
 function cleanup(directory: string) {
-  assert.equal(path.dirname(path.resolve(directory)), path.resolve(os.tmpdir()));
+  assert.equal(path.dirname(path.resolve(directory)), path.resolve(fs.realpathSync(os.tmpdir())));
   assert.ok(path.basename(directory).startsWith('instance-cli-'));
   fs.rmSync(directory, { recursive: true, force: true });
 }

@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import type { Snapshot } from './instancevault.ts';
+import { canonicalPath, type Snapshot } from './instancevault.ts';
 
 export type ConnectionState = 'waiting' | 'syncing' | 'up-to-date' | 'error';
 export interface ConnectionReport { state: ConnectionState; snapshots: Snapshot[]; error?: string }
@@ -79,7 +79,7 @@ export class InstanceConnections {
   readonly storageDir: string;
   private initialized = false;
   private now: () => number;
-  constructor(storageDir: string, options: { now?: () => number } = {}) { this.storageDir = path.resolve(storageDir); this.now = options.now ?? Date.now; }
+  constructor(storageDir: string, options: { now?: () => number } = {}) { this.storageDir = canonicalPath(storageDir); this.now = options.now ?? Date.now; }
   initialize() {
     noLinks(this.storageDir);
     if (!fs.existsSync(this.storageDir)) fs.mkdirSync(this.storageDir, { recursive: true, mode: 0o700 });

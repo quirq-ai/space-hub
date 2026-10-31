@@ -20,7 +20,7 @@ function totalBytes(root: string): number {
   return stat.isDirectory() ? fs.readdirSync(root).reduce((total, name) => total + totalBytes(path.join(root, name)), 0) : stat.size;
 }
 function fixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'spacehub-instance-test-'));
+  const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'spacehub-instance-test-'));
   const source = path.join(root, 'prepared'), storage = path.join(root, 'vault');
   fs.mkdirSync(source);
   write(source, 'deployment.json', JSON.stringify({ Image: 'sha256:original-runtime', Env: [`SPACEHUB_GITHUB_CLIENT_SECRET=${SECRET}`], Mounts: ['/data'] }));

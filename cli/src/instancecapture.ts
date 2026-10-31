@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { InstanceVault, DEFAULT_INSTANCE_VAULT_BYTES, type Snapshot } from './instancevault.ts';
+import { canonicalPath, InstanceVault, DEFAULT_INSTANCE_VAULT_BYTES, type Snapshot } from './instancevault.ts';
 
 interface DockerMount { Type: string; Source?: string; Destination: string; [key: string]: unknown }
 interface ContainerInspect {
@@ -130,7 +130,7 @@ export async function captureDeployment(options: CaptureDeploymentOptions, deps:
   if (!Array.isArray(options.containers) || !options.containers.length || options.containers.length > 64 || options.containers.some(name => typeof name !== 'string' || !CONTAINER.test(name)) || new Set(options.containers).size !== options.containers.length) throw new Error('Select 1 to 64 distinct Docker container names or IDs');
   const maxBytes = options.maxBytes ?? DEFAULT_INSTANCE_VAULT_BYTES;
   if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) throw new Error('Capture maxBytes must be a positive safe integer');
-  const storage = path.resolve(options.storage);
+  const storage = canonicalPath(options.storage);
   noLinks(storage);
   const docker = deps.runDocker ?? runDocker;
   const archive = deps.runDockerArchive ?? runDockerArchive;
@@ -145,7 +145,7 @@ export async function captureDeployment(options: CaptureDeploymentOptions, deps:
     // reported to a Windows client are not paths on this machine.
     const native = process.platform === 'win32' ? /^(?:[A-Za-z]:[\\/]|\\\\)/.test(mount.Source) : path.isAbsolute(mount.Source);
     if (native) {
-      const source = path.resolve(mount.Source);
+      const source = canonicalPath(mount.Source);
       if (inside(source, storage) || inside(storage, source) || inside(source, parent)) throw new Error('Vault storage and staging must be outside captured persistent mount sources');
     }
   }

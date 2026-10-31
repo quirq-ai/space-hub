@@ -11,8 +11,8 @@ import type { Snapshot } from '../src/instancevault.ts';
 const snapshot = (): Snapshot => ({ id: 'a'.repeat(32), createdAt: 1_700_000_000_000, source: 'primary-hub', services: ['spacehub', 'proxy'], scope: 'instance', consistency: 'stopped-containers', coverage: { data: true, runtime: true, configuration: true }, files: 5, bytes: 1024, sha256: 'b'.repeat(64) });
 const denied = (status: number) => (error: any) => error.status === status;
 function fixture(t: { after(callback: () => void): void }) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'instance-connections-'));
-  t.after(() => { const checked = path.resolve(root); assert.equal(path.dirname(checked), path.resolve(os.tmpdir())); assert.ok(path.basename(checked).startsWith('instance-connections-')); fs.rmSync(checked, { recursive: true, force: true }); });
+  const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'instance-connections-'));
+  t.after(() => { const checked = path.resolve(root); assert.equal(path.dirname(checked), path.resolve(fs.realpathSync(os.tmpdir()))); assert.ok(path.basename(checked).startsWith('instance-connections-')); fs.rmSync(checked, { recursive: true, force: true }); });
   const storage = path.join(root, 'registry'); let now = 1_700_000_000_000;
   const connections = new InstanceConnections(storage, { now: () => now }); connections.initialize();
   return { root, storage, connections, advance: (ms: number) => { now += ms; }, now: () => now };

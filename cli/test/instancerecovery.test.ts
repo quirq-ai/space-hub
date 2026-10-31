@@ -11,7 +11,7 @@ import { handleInstanceRecovery, recoveryRemote } from '../src/instancerecovery.
 import { InstanceConnections } from '../src/instanceconnections.ts';
 
 async function fixture(options: { noSource?: boolean } = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'instance-recovery-'));
+  const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'instance-recovery-'));
   const vault = new InstanceVault(path.join(root, 'vault')); vault.initialize();
   const source = path.join(root, 'prepared'); fs.mkdirSync(source);
   fs.mkdirSync(path.join(source, 'volumes', 'data', 'config'), { recursive: true });
@@ -33,7 +33,7 @@ async function fixture(options: { noSource?: boolean } = {}) {
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/-/api/instance-recovery`;
   const ask = (route: string, init: RequestInit = {}) => fetch(base + route, { ...init, headers: { authorization: 'Bearer hub-operator', ...Object.fromEntries(new Headers(init.headers)) } });
-  return { root, vault, source, snapshot, restoreRoot, base, ask, received, connections, binary, close: async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); assert.equal(path.dirname(path.resolve(root)), path.resolve(os.tmpdir())); assert.ok(path.basename(root).startsWith('instance-recovery-')); fs.rmSync(root, { recursive: true, force: true }); } };
+  return { root, vault, source, snapshot, restoreRoot, base, ask, received, connections, binary, close: async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); assert.equal(path.dirname(path.resolve(root)), path.resolve(fs.realpathSync(os.tmpdir()))); assert.ok(path.basename(root).startsWith('instance-recovery-')); fs.rmSync(root, { recursive: true, force: true }); } };
 }
 
 test('full-instance API is global and excludes private backup contents from listings', async () => {

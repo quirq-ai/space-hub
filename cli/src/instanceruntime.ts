@@ -5,7 +5,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
-import { InstanceVault, MAX_INSTANCE_FILES, type Snapshot, type TransferManifest } from './instancevault.ts';
+import { canonicalPath, InstanceVault, MAX_INSTANCE_FILES, type Snapshot, type TransferManifest } from './instancevault.ts';
 
 const PREFIX = '/-/api/instance-recovery';
 const MARKER = '.spacehub-instance-runtime.json';
@@ -178,7 +178,7 @@ export async function runInstanceSubhub(options: InstanceRuntimeOptions, deps: I
   const hub = hubAddress(options.hub);
   if (options.name !== undefined) machineLabel(options.name);
   if (!path.isAbsolute(options.storage)) refuse('Choose an absolute dedicated Sub-hub storage directory');
-  const storage = path.resolve(options.storage);
+  const storage = canonicalPath(options.storage);
   const interval = options.intervalSeconds ?? 60;
   if (!Number.isSafeInteger(interval) || interval < 1 || interval > 86400) refuse('Sub-hub interval must be between 1 and 86400 seconds');
   const heartbeatInterval = deps.heartbeatIntervalMs ?? 10_000;

@@ -6,7 +6,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { InstanceVault } from './instancevault.ts';
+import { canonicalPath, InstanceVault } from './instancevault.ts';
 import { InstanceConnections } from './instanceconnections.ts';
 
 const PREFIX = '/-/api/instance-recovery';
@@ -46,7 +46,7 @@ async function body(req: http.IncomingMessage, limit = 8192): Promise<Record<str
 export function restoreTarget(root: string, requested: string) {
   if (!root) fail(503, 'Set SPACEHUB_RESTORE_ROOT to enable UI restores; the CLI can restore to a new directory');
   if (!requested || !path.isAbsolute(requested)) fail(400, 'Choose an absolute new directory inside the configured restore root');
-  const resolvedRoot = path.resolve(root), target = path.resolve(requested);
+  const resolvedRoot = canonicalPath(root), target = canonicalPath(requested);
   const relative = path.relative(resolvedRoot, target);
   if (!relative || relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) fail(400, 'Restore destination must be a new child of the configured restore root');
   for (let at = resolvedRoot; ; at = path.dirname(at)) {

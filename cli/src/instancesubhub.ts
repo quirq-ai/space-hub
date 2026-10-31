@@ -3,7 +3,7 @@ import path from 'node:path';
 import http from 'node:http';
 import crypto from 'node:crypto';
 import os from 'node:os';
-import { InstanceVault } from './instancevault.ts';
+import { canonicalPath, InstanceVault } from './instancevault.ts';
 import { captureDeployment } from './instancecapture.ts';
 import { handleInstanceRecovery } from './instancerecovery.ts';
 import { APP_CSP, appDir, appPage, handleApp } from './app';
@@ -41,7 +41,7 @@ function remaining(args: string[]) { if (args.length) throw new Error(`Unknown S
 function print(value: unknown) { process.stdout.write(JSON.stringify(value, null, 2) + '\n'); }
 
 async function serve(args: string[], sourceMode = false) {
-  const storage = path.resolve(required(flag(args, '--storage'), '--storage'));
+  const storage = canonicalPath(required(flag(args, '--storage'), '--storage'));
   const containers: string[] = [];
   const captureFile = flag(args, '--capture-config');
   const captureEvery = Number(flag(args, '--capture-every') ?? 3600);
@@ -68,7 +68,7 @@ async function serve(args: string[], sourceMode = false) {
   const connections = new InstanceConnections(storage + '.connections'); connections.initialize();
   let token = crypto.randomBytes(32).toString('hex');
   if (tokenFile) {
-    const filename = path.resolve(tokenFile);
+    const filename = canonicalPath(tokenFile);
     for (let at = filename; ; at = path.dirname(at)) { if (fs.existsSync(at) && fs.lstatSync(at).isSymbolicLink()) throw new Error('Recovery token file cannot use symlinks'); if (path.dirname(at) === at) break; }
     if (fs.existsSync(filename)) {
       if (!fs.lstatSync(filename).isFile() || fs.statSync(filename).size > 100) throw new Error('Invalid recovery token file');
@@ -129,7 +129,7 @@ export async function instanceSubhubCommand(command: string | undefined, args: s
   if (!command || ['help', '--help', '-h'].includes(command)) { process.stdout.write(HELP + '\n'); return; }
   if (command === 'serve') return serve(args);
   if (command === 'source') return serve(args, true);
-  const storage = path.resolve(required(flag(args, '--storage'), '--storage'));
+  const storage = canonicalPath(required(flag(args, '--storage'), '--storage'));
   if (command === 'run' || command === 'backup') {
     const name = flag(args, '--name') ?? os.hostname();
     const intervalSeconds = Number(flag(args, '--interval') ?? 60);

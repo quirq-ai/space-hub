@@ -42,10 +42,10 @@ function tarEntries(bytes: Buffer) {
 }
 
 function fixture(t: { after(fn: () => void): void }) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'instance-capture-'));
+  const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'instance-capture-'));
   t.after(() => {
     const checked = path.resolve(root);
-    if (path.dirname(checked) !== path.resolve(os.tmpdir()) || !path.basename(checked).startsWith('instance-capture-')) throw new Error('Unsafe capture-test cleanup path');
+    if (path.dirname(checked) !== path.resolve(fs.realpathSync(os.tmpdir())) || !path.basename(checked).startsWith('instance-capture-')) throw new Error('Unsafe capture-test cleanup path');
     fs.rmSync(checked, { recursive: true, force: true });
   });
   const hubData = path.join(root, 'input-hub');
