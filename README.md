@@ -41,8 +41,9 @@ spacehub project sync --watch --auto     # edit together: commit, rebase and pus
 ## Sign up with GitHub
 
 On a hub whose builders sign up with GitHub (the server image's default), a
-builder is a GitHub account. `spacehub auth login` signs in one of two ways,
-depending on the hub.
+builder is a GitHub account. On the website, **Sign in with GitHub** (shown
+while the hub has its OAuth App) does it in the browser; from the terminal,
+`spacehub auth login` signs in one of two ways, depending on the hub.
 
 **With the hub's OAuth App** (`SPACEHUB_GITHUB_CLIENT_ID` and
 `SPACEHUB_GITHUB_CLIENT_SECRET` set on the server):
@@ -80,14 +81,24 @@ for that GitHub account (by account id, so a renamed login still signs in).
 The CLI saves the token. Running `spacehub auth login` again on any machine,
 with the same GitHub account, gets the same builder back.
 
+**On the website** (`cli/src/githubsignin.ts`), with the same OAuth App:
+`GET /-/login/github` keeps a random state and a PKCE verifier for 10
+minutes, ties them to the browser with an HttpOnly cookie, and sends it to
+GitHub to approve the app (no scopes); `GET /-/login/github/callback` checks
+the state against that cookie (once only), swaps GitHub's code for a token
+with the app's secret and the verifier, asks GitHub as the app whose token it
+is, and signs the browser in as that account's builder, made on the first
+sign-in as above. The token is used once and not kept; only the hub's own
+token goes into the session cookie.
+
 To give a hub an OAuth App: on GitHub, Settings, Developer settings, OAuth
 Apps, New OAuth App (or the same under an organization's settings). The
-homepage URL and the required Authorization callback URL can both be the
-hub's address; the device flow uses neither. Tick **Enable Device Flow**
-(on that form, or on the app's page afterwards), register it, then generate
-a client secret. Set both values on the server and restart it. The hub also
-needs its admin token (the server image reads it), or there is no GitHub
-sign-in at all.
+homepage URL is the hub's address, and the Authorization callback URL is
+`https://<hub>/-/login/github/callback` (the website's sign-in; the device
+flow uses neither). Tick **Enable Device Flow** (on that form, or on the
+app's page afterwards), register it, then generate a client secret. Set
+both values on the server and restart it. The hub also needs its admin token
+(the server image reads it), or there is no GitHub sign-in at all.
 
 ```sh
 gh auth login                  # only on a hub without an OAuth App, if gh is not logged in yet
@@ -369,11 +380,11 @@ Once the new hub is in use, delete the old database with
 | `SPACEHUB_GITHUB_MAX_REPOS` | `100` | Most repositories mirrored per linked space |
 | `SPACEHUB_GITHUB_TOKEN` | unset | A GitHub token for a higher API rate limit (read-only public access is enough) |
 | `SPACEHUB_ACCOUNTS` | `github` | How people sign up: `github` (with a GitHub account, see Sign up with GitHub), `open` (anyone registers a name) or `xo` (nobody: only xo's API makes builders). Set on every start |
-| `SPACEHUB_GITHUB_CLIENT_ID`, `SPACEHUB_GITHUB_CLIENT_SECRET` | unset | The hub's GitHub OAuth App, both or neither: sign-in then uses GitHub's device flow with a scope-less token (see Sign up with GitHub) and refuses other tokens |
-| `SPACEHUB_XO_KEY` | unset | Turns on xo.quirq.dev's API, which makes builders for xo's users whatever `SPACEHUB_ACCOUNTS` says, and the website's "Sign in with xo" (see xo below) |
+| `SPACEHUB_GITHUB_CLIENT_ID`, `SPACEHUB_GITHUB_CLIENT_SECRET` | unset | The hub's GitHub OAuth App, both or neither: the website's "Sign in with GitHub" (callback `https://<hub>/-/login/github/callback`), and the CLI's sign-in through GitHub's device flow with a scope-less token, refusing other tokens (see Sign up with GitHub) |
+| `SPACEHUB_XO_KEY` | unset | Turns on xo.quirq.dev's API, which signs xo's users in as the GitHub account connected to their XO account whatever `SPACEHUB_ACCOUNTS` says, the website's "Sign in with xo", and xo's requirement for launching agents (see xo below) |
 | `SPACEHUB_XO_URL` | `https://xo.quirq.dev` | The xo server the website's "Sign in with xo" asks (`off`: no button). https, or http to this machine |
 | `SPACEHUB_AGENTHUB_URL`, `SPACEHUB_AGENTHUB_TOKEN` | unset | Turn on worker agents: members launch them from a chat, as tasks on this Agents Hub with this API token (see Agents launched from chat below) |
-| `SPACEHUB_AGENTHUB_SPACES` | unset | The orgs that have agents, comma-separated. Their members (and owners) launch and steer them; nobody else can |
+| `SPACEHUB_AGENTHUB_SPACES` | unset | The orgs that have agents, comma-separated. Their members (and owners) launch and steer them, on a hub with xo only once signed in with xo; nobody else can |
 | `/data` volume | | Databases, the server's signing keys, and the identity that owns the module. **Mount persistent storage here and back it up.** Without it, a restart forgets every project and invalidates every client token |
 
 The container starts as root only to take ownership of `/data`, because
@@ -565,11 +576,12 @@ name.
   with `spacehub auth token`: with GitHub (`spacehub auth login`) and, on
   hub.quirq.dev, with xo, XO's command line (`pip install "quirq-xo @
   git+https://github.com/quirq-ai/xo"`, then `xo login`, which signs you in to
-  XO and hands your builder, named after your xo username, to spacehub). The
-  steps come from `module/src/howto.ts`, which the guide uses too. Where the
-  xo server offers it, a **Sign in with xo** button sits above them (and
-  **Sign up with xo** on `/-/signup`): one click, XO's sign-in in the
-  browser, and you are signed in, with no terminal (see xo below).
+  XO and hands your builder, the GitHub account connected to XO, to
+  spacehub). The steps come from `module/src/howto.ts`, which the guide uses
+  too. Above them sit **Sign in with GitHub** (with the hub's OAuth App) and,
+  where the xo server offers it, **Sign in with xo** (and **Sign up with ...**
+  on `/-/signup`): one click in the browser, and you are signed in, with no
+  terminal (see Sign up with GitHub, and xo below).
 - **New project** (`/-/new`) starts a project around its goal from a template
   (see Goals and templates), creates an empty project in your personal space
   or a space you belong to, or imports a public GitHub repository. Paste
@@ -1019,10 +1031,26 @@ change, so every client version can ask.
 xo.quirq.dev checks who an xo user is with Clerk and keeps everything else
 here: each user's projects, spaces with their refs, and invites, as one JSON
 record per Clerk user in the private `xo_record` table. It also asks the hub
-for the user's builder (named after their xo username, in the private
-`xo_agent` table), whose token the user's xo then pushes with. Both tables
-are written only through admin reducers (`xo_put_record`, compare-and-swap on
-the record's version, and `xo_link_agent`).
+for the user's builder, whose token the user's xo then pushes with. A
+builder is a GitHub account, so an xo user's builder is the builder of the
+GitHub account they connected to XO (Clerk keeps it; xo.quirq.dev sends its
+id and login): the same builder `spacehub auth login` and Sign in with GitHub
+reach, made on the first sign-in either way. The private `xo_link` table
+holds which GitHub account each xo user connected. Their xo username becomes
+the builder's display name and, when it is a free name here and no one
+else's GitHub login, a **second name**: `space_alias`, a public table, so
+`/<xo username>/...` shows the same pages as `/<GitHub login>/...` (the app
+moves the address to the GitHub login), and the CLI, git remotes and every
+reducer take either name; nobody else can take it. Without a connected
+GitHub account, xo.quirq.dev says where to connect one, and the website sends
+the visitor there. A builder xo made before GitHub was needed (named after
+the xo username, in the private `xo_agent` table) becomes the GitHub
+account's on its next sign-in: renamed to the GitHub login with its token,
+projects and places kept, or merged into the builder GitHub sign-in made
+(its projects move, a clashing name gets `-<old name>` after it), and its old
+name stays as a second name. These tables are written only through admin
+reducers (`xo_put_record`, compare-and-swap on the record's version,
+`xo_link_github`, and `xo_link_agent` for xo servers from before).
 
 - **The admin** is the identity that owns the database. The entrypoint calls
   `claim_admin` right after every publish; the first claim sticks, and if
@@ -1039,11 +1067,15 @@ the record's version, and `xo_link_agent`).
   `/-/api/xo/v1/` (see `cli/src/xo.ts`) with that key only, acting as the
   admin over SpacetimeDB's HTTP API inside the container. People still sign
   up with GitHub (or as `SPACEHUB_ACCOUNTS` says); `SPACEHUB_ACCOUNTS=xo`
-  leaves xo as the only source of builders. Names are shared: an xo username
-  and a GitHub login that are the same cannot both be builders.
+  leaves xo as the only source of builders. Names are shared: a second name
+  is taken like any other.
+- **Launching agents needs xo.** On a hub with xo, members of an org with
+  agents launch and steer them only once their account is linked to XO
+  (signed in with xo); signed in with GitHub alone they chat and follow the
+  workers, and the chat says to sign in with xo to launch.
 - **Sign in with xo** on the website (`cli/src/xosignin.ts`): the button
   takes the visitor through the same Clerk sign-in as `xo login`, and back
-  signed in as their xo builder, made on the first sign-in. The hub is a
+  signed in as their builder, made on the first sign-in. The hub is a
   client of xo login's Clerk OAuth application (public, with PKCE):
   `GET /-/login/xo` keeps a random state and a verifier for 10 minutes, ties
   them to the browser with an HttpOnly cookie, and sends it to Clerk;
@@ -1051,8 +1083,10 @@ the record's version, and `xo_link_agent`).
   only), then asks the xo server, with `SPACEHUB_XO_KEY`, to swap the code
   (`POST <xo>/login/hub` with the code, verifier and callback). The xo server
   answers the Clerk user and their builder, making it as `xo login` would;
-  the hub reads the builder's token from `xo_agent` and puts it only in the
-  usual session cookie. No token or verifier is in a URL, the code works once
+  the hub reads the builder's token (from `xo_link` and `github_account`, or
+  `xo_agent` for one made before) and puts it only in the usual session
+  cookie. With no GitHub connected to XO, the xo server's 409 names where to
+  connect one, and the page links there and back to Sign in with xo. No token or verifier is in a URL, the code works once
   and only with the verifier kept here, and nothing in the browser talks to
   the xo server. The button shows only while the xo server's `GET /login`
   offers this hub's own callback (as the browser reached it), which it does

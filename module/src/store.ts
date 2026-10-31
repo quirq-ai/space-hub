@@ -24,6 +24,20 @@ export function roleKey(space: string, member: string) {
   return `${space}:${member}`;
 }
 
+// The space a name stands for: a second name of a builder (space_alias)
+// stands for the builder's personal space, any other name for itself. Pages,
+// the API and reducers all take either.
+export function spaceFor(db: Db, name: string): string {
+  if (db.space.name.find(name)) return name;
+  return (db.spaceAlias.name.find(name) ?? db.spaceAlias.name.find(name.toLowerCase()))?.space ?? name;
+}
+
+// "space/project", with a second name of the space replaced by the space.
+export function projectFor(db: Db, fullName: string): string {
+  const at = fullName.indexOf('/');
+  return at < 0 ? fullName : spaceFor(db, fullName.slice(0, at)) + fullName.slice(at);
+}
+
 // Owners of a space: a personal space's builder, an org's owner rows,
 // an agent's parent's owners. A name without a space row owns itself.
 export function ownsSpace(db: Db, space: string, actor: string | null, depth = 0): boolean {

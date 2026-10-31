@@ -43,6 +43,7 @@ import UpdateRefReducer from "../update_ref_reducer";
 import WatchProjectReducer from "../watch_project_reducer";
 import WatchSpaceReducer from "../watch_space_reducer";
 import XoLinkAgentReducer from "../xo_link_agent_reducer";
+import XoLinkGithubReducer from "../xo_link_github_reducer";
 import XoPutRecordReducer from "../xo_put_record_reducer";
 
 export type AddProjectMemberParams = __Infer<typeof AddProjectMemberReducer>;
@@ -82,5 +83,6 @@ export type UpdateRefParams = __Infer<typeof UpdateRefReducer>;
 export type WatchProjectParams = __Infer<typeof WatchProjectReducer>;
 export type WatchSpaceParams = __Infer<typeof WatchSpaceReducer>;
 export type XoLinkAgentParams = __Infer<typeof XoLinkAgentReducer>;
+export type XoLinkGithubParams = __Infer<typeof XoLinkGithubReducer>;
 export type XoPutRecordParams = __Infer<typeof XoPutRecordReducer>;
 

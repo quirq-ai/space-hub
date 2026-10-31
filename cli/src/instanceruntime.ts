@@ -23,6 +23,7 @@ export interface InstanceRuntimeOptions {
 export interface InstanceRuntimeDeps { fetch?: typeof fetch; heartbeatIntervalMs?: number }
 interface Connection { version: 1; hub: string; storage: string; id: string; token: string; name: string; registered: boolean }
 class RuntimeAccessError extends Error {}
+class RuntimeLockError extends Error {}
 const isObject = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const integer = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
 const permissions = (value: unknown): value is number => integer(value) && value <= 0o7777;
@@ -101,7 +102,7 @@ function runtimeDirectory(storage: string) {
   const marked = privateJson(marker);
   if (!isObject(marked) || marked.kind !== 'spacehub-instance-runtime' || marked.version !== 1) refuse('Invalid Sub-hub runtime storage marker');
   for (const name of fs.readdirSync(root)) {
-    if (![MARKER, 'connection.json', '.writer.lock', 'staging'].includes(name) && !/^\.connection-[a-f0-9]{32}\.tmp$/.test(name)) refuse('Sub-hub runtime storage contains unrelated data');
+    if (![MARKER, 'connection.json', '.writer.lock', '.writer.lock.guard', 'staging'].includes(name) && !/^\.connection-[a-f0-9]{32}\.tmp$/.test(name)) refuse('Sub-hub runtime storage contains unrelated data');
     noLinks(path.join(root, name));
   }
   const staging = path.join(root, 'staging');
@@ -111,15 +112,32 @@ function runtimeDirectory(storage: string) {
 }
 function runtimeLock(root: string) {
   const filename = path.join(root, '.writer.lock');
-  if (exists(filename)) {
-    const previous = privateJson(filename);
-    if (!isObject(previous) || !integer(previous.pid) || !previous.pid) refuse('Invalid Sub-hub runtime lock; inspect it before removal');
-    let alive = true;
-    try { process.kill(previous.pid, 0); } catch (error) { alive = (error as NodeJS.ErrnoException).code !== 'ESRCH'; }
-    if (alive) refuse('This Sub-hub storage already has a running connection');
-    fs.unlinkSync(filename);
+  const guard = path.join(root, '.writer.lock.guard');
+  const guardNonce = crypto.randomBytes(16).toString('hex');
+  // Every acquisition participates, including one that sees no writer lock.
+  // A guard left by an interrupted startup is deliberately not auto-reaped.
+  try { writeJson(guard, { pid: process.pid, nonce: guardNonce }); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new RuntimeLockError('The Sub-hub startup guard (.writer.lock.guard) already exists. Confirm the previous startup process has stopped, then inspect the private runtime directory before removing that guard and retrying.');
+    throw error;
   }
-  const nonce = crypto.randomBytes(16).toString('hex'); writeJson(filename, { pid: process.pid, nonce }); syncDirectory(root);
+  const nonce = crypto.randomBytes(16).toString('hex');
+  try {
+    syncDirectory(root);
+    if (exists(filename)) {
+      const previous = privateJson(filename);
+      if (!isObject(previous) || !integer(previous.pid) || !previous.pid) refuse('Invalid Sub-hub runtime lock; inspect it before removal');
+      let alive = true;
+      try { process.kill(previous.pid, 0); } catch (error) { alive = (error as NodeJS.ErrnoException).code !== 'ESRCH'; }
+      if (alive) refuse('This Sub-hub storage already has a running connection');
+      fs.unlinkSync(filename);
+    }
+    writeJson(filename, { pid: process.pid, nonce }); syncDirectory(root);
+  } finally {
+    const current = privateJson(guard);
+    if (!isObject(current) || current.pid !== process.pid || current.nonce !== guardNonce) refuse('Sub-hub startup guard ownership changed');
+    fs.unlinkSync(guard); syncDirectory(root);
+  }
   return () => {
     const current = privateJson(filename);
     if (!isObject(current) || current.pid !== process.pid || current.nonce !== nonce) refuse('Sub-hub runtime lock ownership changed');
@@ -168,7 +186,10 @@ export async function runInstanceSubhub(options: InstanceRuntimeOptions, deps: I
   const vault = new InstanceVault(storage);
   let runtime: string, unlock: () => void, connection: Connection;
   try { runtime = runtimeDirectory(storage); unlock = runtimeLock(runtime); }
-  catch { return refuse('Cannot open private Sub-hub runtime storage; check its dedicated directory and running connection'); }
+  catch (error) {
+    if (error instanceof RuntimeLockError) throw error;
+    return refuse('Cannot open private Sub-hub runtime storage; check its dedicated directory and running connection');
+  }
   try { vault.initialize(); connection = connectionOf(runtime, hub, storage, options.name); }
   catch { unlock(); return refuse('Cannot open this Sub-hub storage or saved connection; check its hub binding and private state'); }
   const controller = new AbortController();

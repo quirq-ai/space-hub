@@ -9,7 +9,7 @@
 // whether the pin is that project's newest commit.
 //
 //   GET /api?space=&project=&view=deps
-import { readObject, refKey, type Db } from './store';
+import { projectFor, readObject, refKey, type Db } from './store';
 import { Renderer } from './ui';
 
 type Project = NonNullable<ReturnType<Db['project']['fullName']['find']>>;
@@ -125,7 +125,7 @@ export function depsView(db: Db, project: Project, now: number) {
     const github = githubRepo(pin.url);
     const byUrl = hubProject(pin.url);
     const id = github ? imported.get(github) : undefined;
-    const sp = byUrl ? db.project.fullName.find(byUrl) : id !== undefined ? db.project.id.find(id) : undefined;
+    const sp = byUrl ? db.project.fullName.find(projectFor(db, byUrl)) : id !== undefined ? db.project.id.find(id) : undefined;
     const dep: Dep = { ...pin, github, project: sp?.fullName ?? '', defaultBranch: sp?.defaultBranch ?? '', status: 'external', behind: 0, pinned: null, head: null };
     if (!/^[0-9a-f]{40}$/.test(pin.pin)) return { ...dep, status: 'invalid' };
     if (!sp) return dep;

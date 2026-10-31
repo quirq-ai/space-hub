@@ -42,7 +42,7 @@ function fakeHub() {
   return { server, tasks, seen };
 }
 
-async function setup(spaces = 'quirq') {
+async function setup(spaces = 'quirq', xo?: Set<string>) {
   const hub = fakeHub();
   await new Promise<void>(r => hub.server.listen(0, '127.0.0.1', r));
   const cfg = agentHubConfig({
@@ -62,6 +62,7 @@ async function setup(spaces = 'quirq') {
       chat.push({ as: session.username, project: input.project, conversation: input.conversation, content: input.turns[0].content });
     },
     sameOrigin: (req: http.IncomingMessage) => req.headers.origin === `http://${req.headers.host}`,
+    ...(xo ? { xoLinked: async (name: string) => xo.has(name) } : {}),
   };
   const web = http.createServer(async (req, res) => {
     if (!(await handleAgentHub(cfg, deps, req, res, new URL(req.url!, 'http://local')))) res.writeHead(418).end();
@@ -98,18 +99,32 @@ test('not set up: no URL or token means no agents', async () => {
     });
   });
   assert.equal(res.status, 503);
-  assert.deepEqual(JSON.parse(res.body), { enabled: false, signedIn: false, allowed: false });
+  assert.deepEqual(JSON.parse(res.body), { enabled: false, signedIn: false, allowed: false, needsXo: false });
 });
 
 test('members of an org with agents may launch in it; nobody else reaches the Agents Hub', async () => {
   const { hub, ask, close } = await setup();
-  assert.deepEqual((await ask('GET', '?space=quirq')).body, { enabled: true, signedIn: true, allowed: true });
-  assert.deepEqual((await ask('GET', '?space=suraj')).body, { enabled: false, signedIn: true, allowed: false });
+  assert.deepEqual((await ask('GET', '?space=quirq')).body, { enabled: true, signedIn: true, allowed: true, needsXo: false });
+  assert.deepEqual((await ask('GET', '?space=suraj')).body, { enabled: false, signedIn: true, allowed: false, needsXo: false });
   assert.equal((await ask('GET', '?space=quirq', { as: 'mallory' })).body.allowed, false);
   assert.equal((await ask('GET', '/tasks/t1', { as: '' })).status, 401);
   assert.equal((await ask('GET', '/tasks/t1', { as: 'mallory' })).status, 403);
   assert.equal((await ask('POST', '/tasks', { body: { ...WHERE, space: 'suraj', project: 'notes', text: 'x' } })).status, 403);
   assert.equal(hub.seen.length, 0);
+  close();
+});
+
+test('on a hub with xo, only members who signed in with xo launch and steer; others follow', async () => {
+  const { hub, ask, close } = await setup('quirq', new Set(['xoer']));
+  assert.deepEqual((await ask('GET', '?space=quirq', { as: 'plain' })).body, { enabled: true, signedIn: true, allowed: false, needsXo: true });
+  assert.deepEqual((await ask('GET', '?space=quirq', { as: 'xoer' })).body, { enabled: true, signedIn: true, allowed: true, needsXo: false });
+  const refused = await ask('POST', '/tasks', { as: 'plain', body: { ...WHERE, text: 'x' } });
+  assert.equal(refused.status, 403);
+  assert.match(refused.body.error, /Sign in with xo/);
+  assert.equal(hub.seen.length, 0);
+  assert.equal((await ask('POST', '/tasks', { as: 'xoer', body: { ...WHERE, text: 'Do it' } })).status, 201);
+  assert.equal((await ask('GET', '/tasks/t1', { as: 'plain' })).status, 200);
+  assert.equal((await ask('POST', '/tasks/t1/stop', { as: 'plain', body: {} })).status, 403);
   close();
 });
 

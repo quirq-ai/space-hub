@@ -93,7 +93,7 @@ export class InstanceConnections {
       const value = readPrivate(marker);
       if (!object(value) || value.version !== 1) fail(409, 'Invalid connection storage marker');
     }
-    for (const filename of fs.readdirSync(this.storageDir)) if (![MARKER, 'connections.json', '.writer.lock'].includes(filename) && !/^\.connections-[a-f0-9]{32}\.tmp$/.test(filename)) fail(409, 'Unexpected file in connection storage');
+    for (const filename of fs.readdirSync(this.storageDir)) if (![MARKER, 'connections.json', '.writer.lock', '.writer.lock.guard'].includes(filename) && !/^\.connections-[a-f0-9]{32}\.tmp$/.test(filename)) fail(409, 'Unexpected file in connection storage');
     registry(readPrivate(path.join(this.storageDir, 'connections.json'))); this.initialized = true;
   }
   private ready() { if (!this.initialized) this.initialize(); noLinks(this.storageDir); }
@@ -104,6 +104,11 @@ export class InstanceConnections {
   }
   private lock(): () => void {
     const filename = path.join(this.storageDir, '.writer.lock');
+    const guard = filename + '.guard';
+    // Every contender must hold this guard from stale detection through new
+    // writer creation. An abandoned guard is never automatically reclaimed.
+    try { writePrivate(guard, JSON.stringify({ pid: process.pid }) + '\n'); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'EEXIST') fail(409, 'Connection lock guard is active or stale; inspect .writer.lock.guard before removal'); throw error; }
     const read = () => {
       noLinks(filename);
       const stat = fs.lstatSync(filename);
@@ -112,19 +117,21 @@ export class InstanceConnections {
       if (!object(value) || !integer(value.pid) || !value.pid || (value.nonce !== undefined && (typeof value.nonce !== 'string' || !ID.test(value.nonce)))) fail(409, 'Invalid connection writer lock; inspect it before removal');
       return { stat, pid: value.pid, nonce: value.nonce };
     };
-    if (fs.existsSync(filename)) {
-      const previous = read();
-      let alive = true;
-      try { process.kill(previous.pid, 0); } catch (error) { alive = (error as NodeJS.ErrnoException).code !== 'ESRCH'; }
-      if (alive) fail(409, 'Another connection registry writer is active');
-      const current = read();
-      if (current.pid !== previous.pid || current.nonce !== previous.nonce || current.stat.dev !== previous.stat.dev || current.stat.ino !== previous.stat.ino || current.stat.mtimeMs !== previous.stat.mtimeMs) fail(409, 'Connection writer lock changed while recovering a stopped writer');
-      fs.unlinkSync(filename); syncDirectory(this.storageDir);
-    }
     const nonce = crypto.randomBytes(16).toString('hex');
-    try { writePrivate(filename, JSON.stringify({ pid: process.pid, nonce }) + '\n'); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === 'EEXIST') fail(409, 'Another connection registry writer is active'); throw error; }
-    syncDirectory(this.storageDir);
+    try {
+      if (fs.existsSync(filename)) {
+        const previous = read();
+        let alive = true;
+        try { process.kill(previous.pid, 0); } catch (error) { alive = (error as NodeJS.ErrnoException).code !== 'ESRCH'; }
+        if (alive) fail(409, 'Another connection registry writer is active');
+        const current = read();
+        if (current.pid !== previous.pid || current.nonce !== previous.nonce || current.stat.dev !== previous.stat.dev || current.stat.ino !== previous.stat.ino || current.stat.mtimeMs !== previous.stat.mtimeMs) fail(409, 'Connection writer lock changed while recovering a stopped writer');
+        fs.unlinkSync(filename); syncDirectory(this.storageDir);
+      }
+      try { writePrivate(filename, JSON.stringify({ pid: process.pid, nonce }) + '\n'); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === 'EEXIST') fail(409, 'Another connection registry writer is active'); throw error; }
+      syncDirectory(this.storageDir);
+    } finally { fs.unlinkSync(guard); syncDirectory(this.storageDir); }
     return () => {
       const current = read();
       if (current.pid !== process.pid || current.nonce !== nonce) fail(409, 'Connection writer lock ownership changed');

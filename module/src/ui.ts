@@ -26,7 +26,7 @@
 // SpacetimeDB (/v1/database/<db>/route/ui?p=<path>) links stay as ?p=<path>.
 // Sign-in state comes from a display-only cookie; every write goes through
 // the web service (/-/...), which checks the real session.
-import { PRESENCE_STALE_SECONDS, inSpace, objectSize, ownsSpace, readObject, readObjectRange, type Db } from './store';
+import { PRESENCE_STALE_SECONDS, inSpace, objectSize, ownsSpace, readObject, readObjectRange, spaceFor, type Db } from './store';
 import { DELETE, INSERT, diffLines, toHunks } from './diff';
 import { renderMarkdown, type Resolve } from './markdown';
 import { esc, navFor, PAGE_CSP, shell, sideFor } from './style';
@@ -963,7 +963,9 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     if (kind === 'agent' && row) return this.agentPage(row, list);
     const agents = this.agentsOf(name);
     if (kind === 'personal') {
-      const since = user ? `<p class="desc">Builder · joined ${this.ago(seconds(user.createdAt))} · ${plural(projects.length, 'project')} · ${this.totalOf(projects)}</p>` : '';
+      const aliases = [...this.db.spaceAlias.space.filter(name)].map(a => `/${esc(a.name)}`).sort();
+      const also = aliases.length ? ` · also ${aliases.join(', ')}` : '';
+      const since = user ? `<p class="desc">Builder${also} · joined ${this.ago(seconds(user.createdAt))} · ${plural(projects.length, 'project')} · ${this.totalOf(projects)}</p>` : '';
       const spaces = [...this.db.spaceRole.member.filter(name)]
         .map(r => `<tr><td>${this.a(r.space, `<b>${esc(r.space)}</b>`)} ${this.spacePill(r.space)}</td><td class="r muted">${esc(r.role)}</td></tr>`)
         .join('');
@@ -1406,6 +1408,8 @@ ${bodyText ? `<pre>${esc(bodyText)}</pre>` : ''}
   }
 
   route(segs: string[]): UiResponse {
+    // A builder's second name shows the builder's own pages.
+    if (segs.length && segs[0] !== '-') segs = [spaceFor(this.db, segs[0]), ...segs.slice(1)];
     // The hub's own pages stay still; everything else follows its data.
     this.live = segs[0] !== '-' && segs[2] !== 'raw';
     this.current = segs.length === 0 ? 'home' : segs[0] === '-' ? (segs[1] === 'guide' ? 'guide' : segs[1] === 'builders' ? 'builders' : '') : segs.length === 1 && segs[0] === this.viewer ? 'me' : '';

@@ -113,3 +113,34 @@ test('lock release verifies its owner nonce and never removes a replacement lock
   finally { fs.renameSync = original; }
   assert.equal(fs.readFileSync(lock, 'utf8'), replacement); assert.equal(f.connections.list().length, 1);
 });
+
+test('the acquisition guard excludes another stale reaper through writer creation and is released before normal mutation', t => {
+  const f = fixture(t), child = spawnSync(process.execPath, ['-e', ''], { windowsHide: true, timeout: 10_000 });
+  assert.equal(child.status, 0); assert.throws(() => process.kill(child.pid, 0), (error: any) => error.code === 'ESRCH');
+  const lock = path.join(f.storage, '.writer.lock'), guard = lock + '.guard';
+  fs.writeFileSync(lock, JSON.stringify({ pid: child.pid, nonce: 'd'.repeat(32) }));
+  const unlink = fs.unlinkSync, rename = fs.renameSync; let attempted = false, changed = false;
+  fs.unlinkSync = ((filename: fs.PathLike) => {
+    unlink(filename);
+    if (String(filename) === lock && !attempted) {
+      attempted = true; assert.equal(fs.existsSync(guard), true);
+      assert.throws(() => new InstanceConnections(f.storage).register('Concurrent stale reaper'), /guard.*inspect/);
+    }
+  }) as typeof fs.unlinkSync;
+  fs.renameSync = ((from: fs.PathLike, to: fs.PathLike) => {
+    if (String(to) === path.join(f.storage, 'connections.json')) { changed = true; assert.equal(fs.existsSync(guard), false); assert.equal(fs.existsSync(lock), true); }
+    rename(from, to);
+  }) as typeof fs.renameSync;
+  try { f.connections.register('Only acquired writer'); }
+  finally { fs.unlinkSync = unlink; fs.renameSync = rename; }
+  assert.equal(attempted, true); assert.equal(changed, true); assert.equal(f.connections.list().length, 1);
+  assert.equal(fs.existsSync(lock), false); assert.equal(fs.existsSync(guard), false);
+});
+
+test('an abandoned acquisition guard fails closed with an inspection message and never gets automatically reclaimed', t => {
+  const f = fixture(t), guard = path.join(f.storage, '.writer.lock.guard');
+  fs.writeFileSync(guard, '{"pid":1}');
+  const reopened = new InstanceConnections(f.storage); reopened.initialize(); assert.deepEqual(reopened.list(), []);
+  assert.throws(() => reopened.register('Blocked by guard'), /inspect \.writer\.lock\.guard before removal/);
+  assert.equal(fs.readFileSync(guard, 'utf8'), '{"pid":1}'); assert.equal(fs.existsSync(path.join(f.storage, '.writer.lock')), false);
+});

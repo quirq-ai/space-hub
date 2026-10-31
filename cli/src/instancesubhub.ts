@@ -137,12 +137,12 @@ export async function instanceSubhubCommand(command: string | undefined, args: s
     const config = loadConfig();
     const controller = new AbortController();
     const stop = () => controller.abort();
-    if (!once) { process.once('SIGINT', stop); process.once('SIGTERM', stop); }
+    process.once('SIGINT', stop); process.once('SIGTERM', stop);
     try {
       await runInstanceSubhub({ storage, hub: config.server.replace(/^ws/, 'http'), operatorToken: config.token, name, intervalSeconds, once, signal: controller.signal,
         onStatus: status => process.stderr.write(`Sub-hub ${status.state}; ${status.snapshots} retained full-instance backups${status.error ? '. ' + status.error : ''}\n`),
       });
-    } finally { if (!once) { process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); } }
+    } finally { process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); }
     return;
   }
   if (command === 'capture') {

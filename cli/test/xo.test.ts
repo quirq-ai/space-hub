@@ -12,6 +12,9 @@ const SUBJECT = 'user_2abc';
 function fakeDb() {
   const records = new Map<string, { doc: string; version: number }>();
   const agents = new Map<string, { username: string; token: string }>();
+  // xo_link (subject -> GitHub id) and github_account (id -> builder), as xo_link_github leaves them.
+  const links = new Map<string, { githubId: number; xoName: string; alias: string }>();
+  const github = new Map<number, { username: string; token: string }>();
   const seen: { path: string; auth: string | undefined; body: string }[] = [];
   let identities = 0;
   const server = http.createServer(async (req, res) => {
@@ -23,7 +26,17 @@ function fakeDb() {
       res.end(JSON.stringify([{ schema: { elements: names.map(n => ({ name: { some: n } })) }, rows }]));
     if (req.url === '/v1/identity') return res.end(JSON.stringify({ identity: `${++identities}`.padStart(64, '0'), token: `tok-${identities}` }));
     if (req.url === '/v1/database/spacehub/sql') {
+      const id = /github_id = (\d+)/.exec(body)?.[1];
+      const named = /FROM github_account WHERE username = '([^']*)'/.exec(body)?.[1];
+      if (id || named) {
+        const g = id ? github.get(Number(id)) : [...github.values()].find(a => a.username === named);
+        return table(['username', 'token'], g ? [[g.username, g.token]] : []);
+      }
       const subject = /subject = '([^']*)'/.exec(body)![1];
+      if (body.includes('FROM xo_link')) {
+        const l = links.get(subject);
+        return table(['username'], l ? [[github.get(l.githubId)!.username]] : []);
+      }
       if (body.includes('FROM xo_record')) {
         const r = records.get(subject);
         return table(['doc', 'version'], r ? [[r.doc, r.version]] : []);
@@ -45,9 +58,20 @@ function fakeDb() {
       agents.set(subject, { username, token });
       return res.end();
     }
+    if (req.url === '/v1/database/spacehub/call/xo_link_github') {
+      const [subject, githubId, login, xoName, alias, , token] = args;
+      if (!github.has(githubId)) {
+        const legacy = agents.get(subject);
+        if (legacy) agents.delete(subject);
+        else if (!token) return res.writeHead(530).end('a new builder needs an identity of 64 hex digits');
+        github.set(githubId, { username: login.toLowerCase(), token: legacy?.token ?? token });
+      }
+      links.set(subject, { githubId, xoName, alias });
+      return res.end();
+    }
     res.writeHead(404).end();
   });
-  return { server, records, agents, seen };
+  return { server, records, agents, links, github, seen };
 }
 
 async function setup() {
@@ -100,6 +124,61 @@ test('agents: made once, the same token after', async () => {
   const taken = await ask('POST', 'agents/user_other', { username: 'suraj' });
   assert.equal(taken.status, 409);
   assert.ok(db.seen.every(s => s.auth === 'Bearer admin-token'));
+  close();
+});
+
+// GitHub's /users/<name>, for whether an xo username is someone's GitHub login.
+async function fakeGithub(logins: Record<string, number>) {
+  const asked: string[] = [];
+  const server = http.createServer((req, res) => {
+    const name = decodeURIComponent((req.url ?? '').replace('/users/', ''));
+    asked.push(name);
+    if (!(name in logins)) return res.writeHead(404).end('{}');
+    res.end(JSON.stringify({ login: name, id: logins[name] }));
+  });
+  await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
+  return { server, asked, base: `http://127.0.0.1:${(server.address() as AddressInfo).port}` };
+}
+
+test('agents with GitHub: the builder of the GitHub account, the xo username its display name and second name', async () => {
+  const { db, ask, close, cfg } = await setup();
+  const gh = await fakeGithub({ octocat: 1, someone: 99 });
+  cfg.github = { base: gh.base, token: '', standIn: true };
+  const first = await ask('POST', `agents/${SUBJECT}`, { username: 'Suraj', github: { id: '1', login: 'Octocat' } });
+  assert.deepEqual(first, { status: 200, body: { agent: 'octocat', token: 'tok-1' } });
+  assert.deepEqual(db.links.get(SUBJECT), { githubId: 1, xoName: 'Suraj', alias: 'suraj' });
+  // The same account again: the same builder, no new identity.
+  assert.deepEqual(await ask('POST', `agents/${SUBJECT}`, { username: 'Suraj', github: { id: 1, login: 'octocat' } }), first);
+  assert.equal(db.seen.filter(s => s.path === '/v1/identity').length, 1);
+  // An xo username that is someone else's GitHub login stays only a display name.
+  await ask('POST', 'agents/user_two', { username: 'someone', github: { id: 2, login: 'two' } });
+  assert.equal(db.links.get('user_two')!.alias, '');
+  // The same login as the xo username needs no second name, nor a question to GitHub.
+  const before = gh.asked.length;
+  await ask('POST', 'agents/user_three', { username: 'three', github: { id: 3, login: 'three' } });
+  assert.equal(db.links.get('user_three')!.alias, '');
+  assert.equal(gh.asked.length, before);
+  // And signing in again (an older xo server, without "github") finds the linked builder.
+  assert.deepEqual(await ask('POST', `agents/${SUBJECT}`, { username: 'suraj' }), first);
+  gh.server.close();
+  close();
+});
+
+test('agents with GitHub: a builder xo made before keeps its token, now for the GitHub account', async () => {
+  const { db, ask, close } = await setup();
+  const old = await ask('POST', `agents/${SUBJECT}`, { username: 'suraj' });
+  const now = await ask('POST', `agents/${SUBJECT}`, { username: 'suraj', github: { id: 7, login: 'sharmasuraj0123' } });
+  assert.deepEqual(now, { status: 200, body: { agent: 'sharmasuraj0123', token: old.body.token } });
+  assert.equal(db.agents.size, 0);
+  assert.equal(db.seen.filter(s => s.path === '/v1/identity').length, 1);
+  close();
+});
+
+test('agents with GitHub: a GitHub account must have an id and a login', async () => {
+  const { ask, close } = await setup();
+  for (const github of [{}, { id: 0, login: 'a' }, { id: '12x', login: 'a' }, { id: 1, login: 'bad login' }, null]) {
+    assert.equal((await ask('POST', `agents/${SUBJECT}`, { username: 'a', github })).status, 400, JSON.stringify(github));
+  }
   close();
 });
 

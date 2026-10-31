@@ -51,6 +51,17 @@ export function App() {
   const view = live.data ?? (kept.current?.key === placeKey ? kept.current.view : undefined);
   const meta = view?.meta;
 
+  // A builder's second name shows their space: the address moves to its own name.
+  const fresh = live.data?.meta;
+  const own = fresh?.level === "space" ? fresh.name : fresh?.level === "project" ? fresh.space : "";
+  useEffect(() => {
+    if (!own || !place.space || own === place.space.toLowerCase()) return;
+    const parts = location.pathname.split("/");
+    parts[1] = own;
+    history.replaceState(null, "", parts.join("/") + location.search + location.hash);
+    dispatchEvent(new PopStateEvent("popstate"));
+  }, [own, place.space]);
+
   // Inside a project's Chat folder, its channels: in the sidebar like a chat app's, and on the folder's own page.
   const chatRoot = !recovery && route.page === "project" ? view?.snapshot.roots.find(root => root.name.toLowerCase() === "chat")?.path : undefined;
   const inChat = !!chatRoot && route.page === "project" && route.tab === "files" && (filesPath === chatRoot || filesPath.startsWith(chatRoot + "/"));
@@ -81,10 +92,12 @@ export function App() {
     return () => removeEventListener("keydown", key);
   }, [recoveryOnly]);
   useEffect(() => {
-    if (recoveryOnly) return;
+    // Only under a place's own name: a second name moves to it first (above).
+    if (recoveryOnly || route.page === "home" || own !== place.space.toLowerCase()) return;
     if (route.page === "project") rememberProject(placeKey);
-    if (route.page !== "home") { markSeen(route.page === "project" ? placeKey : place.space); setSeen(readSeen()); }
-  }, [route.page, placeKey, place.space, recoveryOnly]);
+    markSeen(route.page === "project" ? placeKey : place.space);
+    setSeen(readSeen());
+  }, [route.page, placeKey, place.space, own, recoveryOnly]);
   useEffect(() => {
     document.title = recovery ? "Settings · spacehub" : route.page === "home" ? "spacehub" : `${route.page === "project" ? placeKey : place.space} · spacehub`;
   }, [route.page, placeKey, place.space, recovery]);

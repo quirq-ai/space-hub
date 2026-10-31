@@ -263,3 +263,24 @@ test('unrelated runtime storage and filesystem links are never adopted', async t
     assert.deepEqual(fs.readdirSync(unrelated), []); assert.equal(f.registrations.length, 0);
   } finally { await f.close(); }
 });
+
+test('startup guard fails closed even with a dead owner and stale writer recovery releases its guard', async () => {
+  const f = await fixture();
+  try {
+    f.control.empty = true; await f.run();
+    const runtime = f.storage + '.runtime';
+    const writer = path.join(runtime, '.writer.lock'), guard = path.join(runtime, '.writer.lock.guard');
+    const deadOwner = JSON.stringify({ pid: 2147483647, nonce: '1'.repeat(32) });
+    fs.writeFileSync(writer, deadOwner); fs.writeFileSync(guard, deadOwner);
+    const requested = f.requests.length;
+    await assert.rejects(f.run(), /startup guard.*inspect.*removing that guard/i);
+    assert.equal(f.requests.length, requested);
+    assert.equal(fs.readFileSync(writer, 'utf8'), deadOwner);
+    assert.equal(fs.readFileSync(guard, 'utf8'), deadOwner);
+    fs.unlinkSync(guard);
+    await f.run({ operatorToken: undefined });
+    assert.equal(f.beats.at(-1).state, 'waiting');
+    assert.equal(fs.existsSync(writer), false); assert.equal(fs.existsSync(guard), false);
+    assert.equal(f.registrations.length, 1);
+  } finally { await f.close(); }
+});

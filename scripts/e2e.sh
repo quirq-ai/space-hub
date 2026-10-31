@@ -346,13 +346,16 @@ PY
   # A stand-in for the xo server and Clerk behind it, for "Sign in with xo"
   # (cli/src/xosignin.ts): it offers this hub's callback, "signs in" one xo
   # user at its /oauth/authorize, and swaps the code only with the verifier,
-  # making the user's agent through the hub's xo API as xo.quirq.dev does.
+  # making the user's builder through the hub's xo API as xo.quirq.dev does:
+  # with the GitHub account connected to XO once PUT /e2e/github names one
+  # ({"github": {"id", "login"}}), or {"missing": true}: none connected.
   XO_PORT=$((PORT + 3)); XO_KEY="e2e-xo-key-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
   cat >"$WORK/xo-fake.py" <<'PY'
 import base64, hashlib, http.server, json, secrets, sys, urllib.parse, urllib.request
 port, web, key, user, name = int(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
 callback = web + '/-/login/xo/callback'
 codes = {}
+mode = {}
 class Xo(http.server.BaseHTTPRequestHandler):
     def reply(self, status, body, location=None):
         data = json.dumps(body).encode()
@@ -377,6 +380,10 @@ class Xo(http.server.BaseHTTPRequestHandler):
             codes[code] = q['code_challenge']
             return self.reply(302, {}, callback + '?' + urllib.parse.urlencode({'code': code, 'state': q['state']}))
         self.reply(404, {})
+    def do_PUT(self):
+        global mode
+        mode = json.loads(self.rfile.read(int(self.headers.get('content-length') or 0)) or b'{}')
+        self.reply(200, {})
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers.get('content-length') or 0)) or b'{}')
         if self.path != '/login/hub' or self.headers.get('authorization') != 'Bearer ' + key:
@@ -385,7 +392,10 @@ class Xo(http.server.BaseHTTPRequestHandler):
         proof = base64.urlsafe_b64encode(hashlib.sha256(str(body.get('verifier')).encode()).digest()).rstrip(b'=').decode()
         if challenge is None or challenge != proof or body.get('redirect') != callback:
             return self.reply(401, {'success': False, 'error': 'The sign-in did not work (it expired or was already used); sign in again'})
-        req = urllib.request.Request(f'{web}/-/api/xo/v1/agents/{user}', data=json.dumps({'username': name}).encode(),
+        if mode.get('missing'):
+            return self.reply(409, {'success': False, 'error': 'Connect GitHub to your XO account first', 'connect': 'https://accounts.example/user'})
+        made = {'username': name, **({'github': mode['github']} if mode.get('github') else {})}
+        req = urllib.request.Request(f'{web}/-/api/xo/v1/agents/{user}', data=json.dumps(made).encode(),
                                      headers={'authorization': 'Bearer ' + key, 'content-type': 'application/json'}, method='POST')
         agent = json.loads(urllib.request.urlopen(req).read())['agent']
         self.reply(200, {'success': True, 'data': {'subject': user, 'agent': agent}})
@@ -550,6 +560,32 @@ if [[ -z "${SPACEHUB_E2E_SERVER:-}" ]]; then
   STATE="$(sed -n 's/.*[?&]state=\([^&]*\).*/\1/p' <<<"$(to "$(hop -c "$WORK/jar4" "$WEB/-/login/xo")")")"
   same "a sign-in cancelled at XO says so" "$(hop -b "$WORK/jar4" "$WEB/-/login/xo/callback?error=access_denied&state=$STATE" | cut -d' ' -f1) $(grep -c 'not finished (access_denied)' "$WORK/hop.html")" "400 1"
   same "an unknown sign-in is refused" "$(hop "$WEB/-/login/xo/callback?code=x&state=nope" | cut -d' ' -f1)" "400"
+
+  echo "sign in with xo as the GitHub account connected to XO"
+  xomode() { curl -s -o /dev/null -X PUT --data "$1" "http://127.0.0.1:$XO_PORT/e2e/github"; }
+  xosignin() { hop -b "$1" -c "$1" "$(to "$(hop "$(to "$(hop -c "$1" "$WEB/-/login/xo?next=/-/new")")")")"; }  # <jar>
+  same "the builder xo made makes a project" \
+    "$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' -b "$XJAR" -H "Origin: $WEB" -X POST --data-urlencode name=xonotes "$WEB/-/new")" "303 $WEB/$XOUSER/xonotes"
+  xomode '{"missing": true}'
+  same "with no GitHub connected to XO, the page says where to connect it" \
+    "$(xosignin "$WORK/jar5" | cut -d' ' -f1) $(grep -c 'Connect GitHub to XO' "$WORK/hop.html") $(grep -c 'href="https://accounts.example/user"' "$WORK/hop.html") $(grep -c 'href="/-/login/xo?next=%2F-%2Fnew"' "$WORK/hop.html")" "409 1 1 1"
+  same "and signs nobody in" "$(grep -c spacehub_session "$WORK/jar5")" "0"
+  XGH="xgh-$RUN"
+  xomode "{\"github\": {\"id\": \"$((16#$RUN + 3))\", \"login\": \"$XGH\"}}"
+  same "with GitHub connected, xo signs in as the GitHub account's builder" "$(xosignin "$WORK/jar6") $(grep -c "spacehub_user.$XGH\$" "$WORK/jar6")" "303 $WEB/-/new 1"
+  same "the builder xo made became it, token and all" "$(grep -c "$XTOKEN" "$WORK/jar6")" "1"
+  page_has "its project moved with it" "$XGH/xonotes" "xonotes"
+  page_has "the xo username is its second name" "$XGH" "also /$XOUSER"
+  same "which shows the same page" "$(curl -sf "$(ui "$XOUSER")" | md5sum)" "$(curl -sf "$(ui "$XGH")" | md5sum)"
+  same "and the same project" "$(curl -sf "$(ui "$XOUSER/xonotes")" | md5sum)" "$(curl -sf "$(ui "$XGH/xonotes")" | md5sum)"
+  same "the app's view answers as the GitHub name" "$(curl -sf "$WEB/-/api/view?space=$XOUSER" | python3 -c 'import json,sys; m=json.load(sys.stdin)["meta"]; print(m["name"], m["aliases"])')" "$XGH ['$XOUSER']"
+  printf '%s' "$XTOKEN" | as xo spacehub auth login --with-token >/dev/null 2>&1
+  check "git reaches the project by the second name" as xo git -C "$WORK" ls-remote "$HUB/$XOUSER/xonotes"
+  check "and the CLI finds it by that name" bash -c "SPACEHUB_HOME='$WORK/home-xo' spacehub project list $XOUSER | grep -q $XGH/xonotes"
+  expect_fail "nobody else can take the second name" "taken" as carol spacehub auth login --builder "$XOUSER"
+  same "signing in again is the same builder" "$(xosignin "$WORK/jar7" | cut -d' ' -f1) $(grep -c "$XTOKEN" "$WORK/jar7")" "303 1"
+  xomode '{}'
+  same "an xo server from before GitHub finds that builder too" "$(xosignin "$WORK/jar8" | cut -d' ' -f1) $(grep -c "spacehub_user.$XGH\$" "$WORK/jar8")" "303 1"
 fi
 
 echo "orgs"

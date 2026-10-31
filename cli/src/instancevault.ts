@@ -182,6 +182,9 @@ function metadata(info: CaptureInfo, id: string): Manifest['info'] {
 function canonical(manifest: Manifest) {
   return JSON.stringify({ version: 1, info: manifest.info, rootMode: manifest.rootMode, directories: manifest.directories.map(({ path, mode }) => ({ path, mode })), files: manifest.files.map(({ path, size, sha256, mode }) => ({ path, size, sha256, mode })) });
 }
+function completeBundle(files: { path: string }[]) {
+  if (!files.some(file => file.path === 'deployment.json') || !files.some(file => file.path.startsWith('images/') && file.path.endsWith('.tar')) || !files.some(file => file.path.startsWith('containers/') && file.path.endsWith('.tar')) || !files.some(file => file.path.startsWith('volumes/'))) fail(400, 'Prepared instance bundle needs deployment.json, runtime images, container filesystem archives and persistent volume bytes');
+}
 function snapshotOf(manifest: Manifest): Snapshot {
   return { ...clone(manifest.info), files: manifest.files.length, bytes: manifest.files.reduce((total, file) => sum(total, file.size), 0), sha256: crypto.createHash('sha256').update(canonical(manifest)).digest('hex') };
 }
@@ -233,7 +236,7 @@ export class InstanceVault {
     const sentinel = readJson(marker, 4096);
     if (!object(sentinel) || sentinel.kind !== 'spacehub-instance-vault' || sentinel.version !== 1) fail(400, 'Invalid instance vault marker');
     for (const name of fs.readdirSync(this.storageDir)) {
-      if (![MARKER, 'snapshots', 'staging', '.writer.lock'].includes(name)) fail(400, 'Instance vault contains unrelated data');
+      if (![MARKER, 'snapshots', 'staging', '.writer.lock', '.writer.lock.guard'].includes(name)) fail(400, 'Instance vault contains unrelated data');
       noLinks(path.join(this.storageDir, name));
     }
     for (const name of ['snapshots', 'staging']) {
@@ -248,18 +251,27 @@ export class InstanceVault {
   private ready() { if (!this.initialized) this.initialize(); noLinks(this.storageDir); }
   private lock() {
     const filename = path.join(this.storageDir, '.writer.lock');
-    if (present(filename)) {
-      const previous = readJson(filename, 4096) as { pid?: number };
-      if (!object(previous) || !integer(previous.pid) || !previous.pid) fail(409, 'Invalid instance writer lock; inspect it before removal');
-      let alive = true;
-      try { process.kill(previous.pid, 0); } catch (error) { alive = (error as NodeJS.ErrnoException).code !== 'ESRCH'; }
-      if (alive) fail(409, 'Instance vault already has a writer');
-      fs.unlinkSync(filename);
-    }
     const nonce = randomId();
-    try { writePrivate(filename, { pid: process.pid, nonce }); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === 'EEXIST') fail(409, 'Instance vault already has a writer'); throw error; }
-    syncDirectory(this.storageDir);
+    // Serialize stale recovery and ordinary acquisition together. Without
+    // this guard, two stale reapers could unlink a replacement active lock.
+    const guard = filename + '.guard';
+    let guardFd: number;
+    try { guardFd = fs.openSync(guard, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | NO_FOLLOW, 0o600); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'EEXIST') fail(409, 'Instance lock acquisition is busy; inspect an abandoned lock guard before removal'); throw error; }
+    try {
+      fs.writeFileSync(guardFd, JSON.stringify({ pid: process.pid, nonce })); fs.fsyncSync(guardFd);
+      if (present(filename)) {
+        const previous = readJson(filename, 4096) as { pid?: number };
+        if (!object(previous) || !integer(previous.pid) || !previous.pid) fail(409, 'Invalid instance writer lock; inspect it before removal');
+        let alive = true;
+        try { process.kill(previous.pid, 0); } catch (error) { alive = (error as NodeJS.ErrnoException).code !== 'ESRCH'; }
+        if (alive) fail(409, 'Instance vault already has a writer');
+        fs.unlinkSync(filename);
+      }
+      try { writePrivate(filename, { pid: process.pid, nonce }); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === 'EEXIST') fail(409, 'Instance vault already has a writer'); throw error; }
+      syncDirectory(this.storageDir);
+    } finally { fs.closeSync(guardFd); fs.unlinkSync(guard); syncDirectory(this.storageDir); }
     return () => {
       const current = readJson(filename, 4096) as { pid?: number; nonce?: string };
       if (current.pid !== process.pid || current.nonce !== nonce) fail(409, 'Instance writer lock ownership changed');
@@ -316,7 +328,7 @@ export class InstanceVault {
     let staged = false;
     try {
       const tree = inventory(source);
-      if (!tree.files.some(file => file.path === 'deployment.json') || !tree.files.some(file => file.path.startsWith('images/') && file.path.endsWith('.tar')) || !tree.files.some(file => file.path.startsWith('containers/') && file.path.endsWith('.tar')) || !tree.files.some(file => file.path.startsWith('volumes/'))) fail(400, 'Prepared instance bundle needs deployment.json, runtime images, container filesystem archives and persistent volume bytes');
+      completeBundle(tree.files);
       const used = this.measuredBytes();
       if (sum(used, tree.bytes) > this.maxBytes) fail(413, 'Instance vault quota exceeded');
       fs.mkdirSync(stage, { mode: 0o700 }); staged = true;
@@ -387,6 +399,8 @@ export class InstanceVault {
     if (!object(transfer) || transfer.version !== 1 || !object(transfer.snapshot) || typeof transfer.snapshot.id !== 'string' || !ID.test(transfer.snapshot.id)) fail(400, 'Invalid instance transfer manifest');
     const id = transfer.snapshot.id;
     const manifest = validateManifest({ version: 1, info: transfer.snapshot, rootMode: transfer.rootMode, directories: transfer.directories, files: transfer.files }, id);
+    completeBundle(manifest.files);
+    if (Buffer.byteLength(canonical(manifest)) > METADATA_LIMIT) fail(413, 'Instance manifest is too large');
     const snapshot = snapshotOf(manifest);
     if (snapshot.sha256 !== transfer.snapshot.sha256 || snapshot.files !== transfer.snapshot.files || snapshot.bytes !== transfer.snapshot.bytes) fail(409, 'Instance transfer manifest failed integrity verification');
     const target = joined(path.join(this.storageDir, 'snapshots'), id);

@@ -101,11 +101,32 @@ test('automatic transfer rejects altered manifests and corrupt files before publ
     const replica = new InstanceVault(path.join(f.root, 'replica')); replica.initialize();
     const changed = structuredClone(manifest); changed.files[0].sha256 = '0'.repeat(64);
     await assert.rejects(replica.importSnapshot(f.source, changed), /integrity/);
+    const empty = structuredClone(manifest);
+    empty.files = []; empty.directories = [];
+    const { files: _files, bytes: _bytes, sha256: _hash, ...info } = empty.snapshot;
+    empty.snapshot.files = 0; empty.snapshot.bytes = 0;
+    empty.snapshot.sha256 = crypto.createHash('sha256').update(JSON.stringify({ version: 1, info, rootMode: empty.rootMode, directories: [], files: [] })).digest('hex');
+    await assert.rejects(replica.importSnapshot(f.source, empty), /bundle needs/);
     fs.writeFileSync(path.join(f.source, 'containers', 'spacehub.tar'), 'corrupt-transfer');
     await assert.rejects(replica.importSnapshot(f.source, manifest));
     assert.deepEqual(replica.list(), []);
     assert.deepEqual(fs.readdirSync(path.join(replica.storageDir, 'staging')), []);
     assert.equal((await f.vault.verify(snapshot.id)).snapshot.sha256, snapshot.sha256);
+  } finally { f.close(); }
+});
+
+test('a concurrent lock recovery guard is never adopted or removed by another writer', async () => {
+  const f = fixture();
+  try {
+    const guard = path.join(f.storage, '.writer.lock.guard');
+    fs.writeFileSync(guard, JSON.stringify({ pid: process.pid, nonce: 'another-acquirer' }));
+    const reopened = new InstanceVault(f.storage); reopened.initialize();
+    await assert.rejects(reopened.capture(f.source, INFO), /lock acquisition is busy/);
+    assert.match(fs.readFileSync(guard, 'utf8'), /another-acquirer/);
+    assert.equal(fs.existsSync(path.join(f.storage, '.writer.lock')), false);
+    fs.unlinkSync(guard);
+    const snapshot = await reopened.capture(f.source, INFO);
+    await reopened.verify(snapshot.id);
   } finally { f.close(); }
 });
 

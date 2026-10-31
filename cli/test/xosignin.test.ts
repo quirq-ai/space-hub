@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { Reply } from '../src/admin.ts';
-import { finishSignIn, forgetOffer, MAX_PENDING, offerFor, resetXoSignIns, startSignIn, START_LIMIT, xoSignInConfig, type XoSignInConfig } from '../src/xosignin.ts';
+import { ConnectGithub, finishSignIn, forgetOffer, MAX_PENDING, offerFor, resetXoSignIns, startSignIn, START_LIMIT, xoSignInConfig, type XoSignInConfig } from '../src/xosignin.ts';
 import type { XoConfig } from '../src/xo.ts';
 
 const KEY = 'k'.repeat(40);
@@ -18,11 +18,15 @@ const listen = async (server: http.Server) => {
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 };
 
-// The hub's private xo_agent table, as the admin reads it.
+// The hub's private xo_agent table, as the admin reads it (and an empty
+// xo_link: these xo users signed in before GitHub was needed).
 function fakeDb(agents: Map<string, { username: string; token: string }>) {
   return http.createServer(async (req, res) => {
     let body = '';
     for await (const c of req) body += c;
+    if (req.headers.authorization === 'Bearer admin-token' && body.includes('FROM xo_link')) {
+      return res.end(JSON.stringify([{ schema: { elements: [{ name: { some: 'username' } }] }, rows: [] }]));
+    }
     if (req.headers.authorization !== 'Bearer admin-token' || !body.includes('FROM xo_agent')) return res.writeHead(400).end('no');
     const a = agents.get(/subject = '([^']*)'/.exec(body)![1]);
     res.end(JSON.stringify([{ schema: { elements: [{ name: { some: 'username' } }, { name: { some: 'token' } }] }, rows: a ? [[a.username, a.token]] : [] }]));
@@ -191,6 +195,22 @@ test('what the xo server refuses is shown as it says it', async () => {
   await assert.rejects(run(), /this hub does not have/, 'an agent missing here is not signed in');
   xo.answer = [200, { success: true, data: { subject: "x' OR 1=1", agent: 'alice' } }];
   await assert.rejects(run(), /cannot read/);
+  close();
+});
+
+test('no GitHub connected to XO: where to connect it, and where the sign-in was going', async () => {
+  const { cfg, signIn, close, xo } = await setup();
+  const offer = (await offerFor(cfg, CALLBACK))!;
+  const run = async (next: string) => {
+    const { state, location } = startSignIn(offer, next);
+    const back = signIn(location);
+    return finishSignIn(cfg, { state: back.state, cookie: state, code: back.code, error: null });
+  };
+  xo.answer = [409, { success: false, error: 'Connect GitHub to your XO account first', connect: 'https://accounts.xo.example/user' }];
+  await assert.rejects(run('/quirq/quirq'), (e: unknown) => e instanceof ConnectGithub && e.url === 'https://accounts.xo.example/user' && e.next === '/quirq/quirq' && /Connect GitHub/.test(e.message));
+  // A page that is not https is not linked to: the refusal is shown as it is.
+  xo.answer = [409, { success: false, error: 'Connect GitHub to your XO account first', connect: 'javascript:alert(1)' }];
+  await assert.rejects(run('/'), (e: unknown) => !(e instanceof ConnectGithub) && e instanceof Reply && e.status === 400);
   close();
 });
 
