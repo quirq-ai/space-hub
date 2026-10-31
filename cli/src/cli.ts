@@ -11,7 +11,7 @@ import readline from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import { configFile, githubLogin, loadConfig, removeToken, saveSettings, saveToken } from './config';
 import os from 'node:os';
-import { connect, connectTo, errorMessage, findSpace, findProject, findUser, hubProtocol, listRefs, projectsIn, PROTOCOL, quietSdkLogs, snapshot, spaceRoles, tables, type Conn } from './conn';
+import { connect, connectTo, errorMessage, findSpace, findProject, findUser, hubProtocol, listRefs, projectsIn, PROTOCOL, quietSdkLogs, snapshot, spaceOf, spaceRoles, tables, type Conn } from './conn';
 import { accountCheck, binDir, findOnPath, hubCheck, pathCheck, report, restartCheck, type Account, type Check } from './doctor';
 import { permissionHelp, spacesNamed } from './permission';
 import { AgentRun } from './agentrun';
@@ -306,7 +306,8 @@ async function requireHubSpace(name: string) {
 async function spaceOrProject(arg: string | undefined): Promise<{ space: string } | { project: string }> {
   if (!arg || arg.includes('/') || parseHubUrl(arg)) return { project: await resolveProject(arg) };
   const { conn } = await open();
-  if (await findSpace(conn, arg.toLowerCase())) return { space: arg.toLowerCase() };
+  const found = await findSpace(conn, arg.toLowerCase());
+  if (found) return { space: found.name };
   const mine = `${await username()}/${arg.replace(/\.git$/, '')}`;
   if (await findProject(conn, mine)) return { project: mine };
   die(`no space named "${arg}" (and no project ${mine})`);
@@ -647,8 +648,8 @@ async function projectCreate(args: string[]) {
 }
 
 async function projectList(args: string[]) {
-  const owner = args[0];
   const { conn } = await open();
+  const owner = args[0] ? await spaceOf(conn, args[0].toLowerCase()) : undefined;
   const query = owner ? tables.project.where(s => s.owner.eq(owner)) : tables.project;
   const spaces = await snapshot(conn, query, () => [...conn.db.project.iter()].filter(s => !owner || s.owner === owner));
   if (spaces.length === 0) {

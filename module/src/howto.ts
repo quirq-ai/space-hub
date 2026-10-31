@@ -26,6 +26,7 @@ export interface Hub {
   host: string;
   accounts: string; // "open", "github" or "xo"
   xo?: boolean; // this website signs in with xo too (the web service asks the xo server)
+  github?: boolean; // this website signs in with GitHub (the hub's OAuth App)
 }
 
 // `spacehub auth login` for this hub: --server only when it is not the default.
@@ -38,19 +39,28 @@ export function loginCommand(hub: Hub) {
 // only if it is that hub, or if its builders come from xo.
 export const xoSignsIn = (hub: Hub) => hub.host === DEFAULT_HOST || hub.accounts === 'xo';
 
-// One click on this website, through XO's own sign-in (xosignin.ts in the web
-// service); it is shown only while the xo server offers it to this hub.
-export function xoButton(label: string, next: string, or = 'Or from the terminal') {
-  const href = `/-/login/xo${next && next !== '/' ? `?next=${encodeURIComponent(next)}` : ''}`;
-  return `<div class="xo-signin"><a class="btn primary" href="${esc(href)}">${esc(label)}</a><span>Uses your XO account. Your builder name is your xo username.</span></div>
-<h2 class="section-title or-terminal">${esc(or)}</h2>`;
+// One click on this website: with GitHub (githubsignin.ts in the web service,
+// shown while the hub has its OAuth App), or through XO's own sign-in
+// (xosignin.ts, shown while the xo server offers it to this hub). Either way
+// the account is the GitHub account's builder; xo adds the XO username as its
+// display name, and launching agents needs it.
+export function signInButtons(hub: Hub, verb: 'Sign in' | 'Sign up', next: string, or = 'Or from the terminal') {
+  if (!hub.github && !hub.xo) return '';
+  const query = next && next !== '/' ? `?next=${encodeURIComponent(next)}` : '';
+  const github = hub.github
+    ? `<div class="xo-signin"><a class="btn primary" href="${esc(`/-/login/github${query}`)}">${verb} with GitHub</a><span>Your builder name is your GitHub login.</span></div>`
+    : '';
+  const xo = hub.xo
+    ? `<div class="xo-signin"><a class="btn${hub.github ? '' : ' primary'}" href="${esc(`/-/login/xo${query}`)}">${verb} with xo</a><span>Uses your XO account and the GitHub account connected to it: your builder name is your GitHub login, and your XO username its display name. Launching agents needs it.</span></div>`
+    : '';
+  return `${github}${xo}<h2 class="section-title or-terminal">${esc(or)}</h2>`;
 }
 
 // Every way to sign in to this hub, side by side. forWebsite adds the last
 // step of each: print the token to paste into this site's sign-in form.
 export function signInWays(hub: Hub, forWebsite: boolean) {
   const token = forWebsite ? [step('Print your token', 'Paste it below.', cmd('spacehub auth token'))] : [];
-  const xo = `<section class="way"><h2 class="section-title">With xo <span>Use XO? One login for XO and this hub. Your builder name is your xo username.</span></h2>
+  const xo = `<section class="way"><h2 class="section-title">With xo <span>Use XO? One login for XO and this hub. Your builder name is the GitHub login connected to your XO account.</span></h2>
 ${steps(
   step("Install the hub's CLI and xo", 'Needs git, Node 22 or newer and Python 3.11 or newer.', cmd(INSTALL_CLI, INSTALL_XO)),
   step('Log in', 'It signs you in to XO and hands your hub builder to spacehub.', cmd('xo login')),

@@ -111,7 +111,7 @@ export function guidePage(ctx: GuideContext): string {
   const c = commands(ctx);
   const github = ctx.accounts === 'github';
   const xo = xoSignsIn(ctx)
-    ? `<p class="or">Use XO? Sign in with xo instead: one login for XO and this hub, as your xo username. It needs Python 3.11 or newer.</p>${cmd(c.installXo, 'xo login')}`
+    ? `<p class="or">Use XO? Sign in with xo instead: one login for XO and this hub, as the GitHub account connected to XO. It needs Python 3.11 or newer.</p>${cmd(c.installXo, 'xo login')}`
     : '';
   const signIn = github
     ? step(

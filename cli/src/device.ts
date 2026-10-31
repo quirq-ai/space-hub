@@ -92,3 +92,18 @@ export async function pollToken(web: string, clientId: string, code: string): Pr
       throw new Error(`GitHub refused the sign-in: ${body.error_description ?? body.error ?? 'no token'}`);
   }
 }
+
+// The website's sign-in (githubsignin.ts): the code GitHub sent the browser
+// back with, swapped for a token. Only with the app's secret, the verifier
+// the hub kept (PKCE) and the same redirect, so a code works only here, once.
+export async function webToken(web: string, app: { clientId: string; clientSecret: string }, code: string, redirect: string, verifier: string): Promise<string> {
+  const body = await post(`${web}/login/oauth/access_token`, {
+    client_id: app.clientId,
+    client_secret: app.clientSecret,
+    code,
+    redirect_uri: redirect,
+    code_verifier: verifier,
+  });
+  if (typeof body.access_token === 'string' && body.access_token) return body.access_token;
+  throw new Error(`GitHub refused the sign-in: ${body.error_description ?? body.error ?? 'no token'}`);
+}

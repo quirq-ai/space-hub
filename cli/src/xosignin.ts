@@ -5,8 +5,11 @@
 //
 // This hub is a client of xo login's Clerk OAuth application (public, with
 // PKCE), and the xo server swaps the code: POST <xo>/login/hub, with this
-// hub's xo key, answers the Clerk user id and their builder, which the xo
-// server makes on the first sign-in as xo login does. The builder's token
+// hub's xo key, answers the Clerk user id and their builder: the builder of
+// the GitHub account they connected to XO, which the xo server has the hub
+// make on the first sign-in (xo.ts). Without a connected GitHub account the
+// xo server says where to connect one (ConnectGithub), and the page sends
+// the visitor there. The builder's token
 // never leaves this server: it comes from the private xo_agent table and goes
 // only into the HttpOnly session cookie. Only the state and the code travel in
 // URLs; the code works once, and only with the verifier kept here.
@@ -174,6 +177,29 @@ function sameText(a: string, b: string) {
   return x.length === y.length && timingSafeEqual(x, y);
 }
 
+// XO has no GitHub account for this user: the page where they connect one.
+export class ConnectGithub extends Reply {
+  url: string;
+  next: string; // where the sign-in was going
+  constructor(message: string, url: string, next = '/') {
+    super(409, message);
+    this.url = url;
+    this.next = next;
+  }
+}
+
+// An https page (http only to this machine, in tests), or "".
+function pageUrl(raw: unknown): string {
+  if (typeof raw !== 'string' || raw.length > 500) return '';
+  try {
+    const u = new URL(raw);
+    const local = u.protocol === 'http:' && u.hostname === '127.0.0.1';
+    return (u.protocol === 'https:' || local) && !u.username && !u.password ? u.href : '';
+  } catch {
+    return '';
+  }
+}
+
 export interface Returned {
   state: string | null; // from the URL
   cookie: string | null; // STATE_COOKIE
@@ -207,9 +233,11 @@ export async function finishSignIn(cfg: XoSignInConfig, back: Returned, now = Da
   } catch {
     throw new Reply(502, 'XO did not answer. Try again.');
   }
-  const body = (await res.json().catch(() => null)) as { data?: { subject?: unknown; agent?: unknown }; error?: unknown } | null;
+  const body = (await res.json().catch(() => null)) as { data?: { subject?: unknown; agent?: unknown }; error?: unknown; connect?: unknown } | null;
   if (!res.ok) {
     const said = typeof body?.error === 'string' ? body.error.slice(0, 300) : '';
+    const connect = pageUrl(body?.connect);
+    if (res.status === 409 && connect) throw new ConnectGithub(said || 'Connect GitHub to your XO account first.', connect, p.next);
     throw new Reply(res.status < 500 ? 400 : 502, said ? `XO: ${said}` : `XO answered ${res.status}. Try again.`);
   }
   const subject = body?.data?.subject;

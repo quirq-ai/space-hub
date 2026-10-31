@@ -151,7 +151,9 @@ export async function signIn(cfg: SignInConfig, githubToken: string) {
   return signInUser(cfg, await githubUser(cfg.github, githubToken));
 }
 
-async function signInUser(cfg: SignInConfig, user: { id: number; login: string }) {
+// The builder of a GitHub account, made on its first sign-in (also the
+// website's sign-in, githubsignin.ts).
+export async function signInUser(cfg: SignInConfig, user: { id: number; login: string }) {
   const known = await builderOf(cfg, user.id);
   if (known) return { ...known, created: false };
   if ((await accountsSetting(cfg)) === 'xo') throw new Reply(403, 'builders on this hub are made by xo: run xo login');

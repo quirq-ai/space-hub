@@ -38,6 +38,8 @@ export function ChatView({ place, path, data, repliesPath, logExists, me, canWri
   // Members of an org with agents launch a worker with the message instead of only sending it.
   const agents = useLive<AgentHubStatus>(!blocked ? `/-/api/agenthub?space=${encodeURIComponent(place.space)}` : undefined, 0);
   const canLaunch = !!agents.data?.enabled && agents.data.allowed;
+  // Launching needs an account linked to XO; a member signed in with GitHub only is told how.
+  const needsXo = !!agents.data?.enabled && !!agents.data.needsXo;
   const [launching, setLaunching] = useState(false);
 
   useEffect(() => { end.current?.scrollIntoView({ block: "end", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" }); }, [all.length, chat.pending]);
@@ -91,7 +93,7 @@ export function ChatView({ place, path, data, repliesPath, logExists, me, canWri
           {chat.pending ? <button type="button" className="send stop" aria-label="Stop the sample reply" onClick={chat.stop}><Square size={13} fill="currentColor" /></button>
             : <button type="submit" className="send" aria-label="Send" disabled={!chat.ready || !chat.draft.trim()}><ArrowUp size={17} /></button>}
         </form>
-        <p className="composer-note">Saved to {place.space}/{place.project} as {me}{chat.sampleReplies ? " · sample replies on" : ""} · Enter to send, Shift+Enter for a new line{canLaunch ? ` · Launch runs it as a worker of ${place.space}` : ""}</p>
+        <p className="composer-note">Saved to {place.space}/{place.project} as {me}{chat.sampleReplies ? " · sample replies on" : ""} · Enter to send, Shift+Enter for a new line{canLaunch ? ` · Launch runs it as a worker of ${place.space}` : ""}{needsXo && <> · <a href={`/-/login/xo?next=${encodeURIComponent(location.pathname + location.hash)}`}>Sign in with xo</a> to launch workers</>}</p>
       </>}
     </div>
   </div>;

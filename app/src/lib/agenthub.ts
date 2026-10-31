@@ -6,7 +6,7 @@
 // The Agents Hub's event kinds: user · message · thinking · tool / tool_done ·
 // command / command_done · link · env · status · turn · note · error.
 
-export type AgentHubStatus = { enabled: boolean; signedIn: boolean; allowed: boolean };
+export type AgentHubStatus = { enabled: boolean; signedIn: boolean; allowed: boolean; needsXo?: boolean };
 export type TaskStatus = "running" | "ending" | "done" | "stopped" | "failed" | string;
 export type Task = { id: string; title: string; status: TaskStatus; repo: string; createdAt: string; updatedAt: string };
 export type TaskResult = { summary: string; links: { label: string; url: string }[]; error: string };
