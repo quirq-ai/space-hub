@@ -14,6 +14,7 @@ ROOT="${SPACETIME_ROOT:-/data}"
 DB="${SPACEHUB_DB:-spacehub}"
 INTERNAL="127.0.0.1:${SPACETIME_INTERNAL_PORT:-3001}"
 export PORT="${PORT:-3000}"
+export SPACEHUB_SUBHUB_DIR="${SPACEHUB_SUBHUB_DIR:-$ROOT/subhubs}"
 
 # Platform volumes usually arrive owned by root. Started as root, take the
 # data directory for the spacetime user, then drop root for everything else.

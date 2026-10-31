@@ -23,7 +23,7 @@
 // the user's identity token in an HttpOnly cookie, so every action runs as
 // that user and the module's own ownership checks apply.
 import http from 'node:http';
-import { connectTo, errorMessage, findProject, findUser, quietSdkLogs, snapshot, tables, type Conn } from './conn';
+import { connectTo, errorMessage, findProject, findSpace, findUser, listRefs, quietSdkLogs, snapshot, spaceRoles, tables, type Conn } from './conn';
 import { githubLogin, normalizeServer } from './config';
 import { esc, navFor, PAGE_CSP, shell, sideFor } from '../../module/src/style';
 import { signInWays, xoButton, type Hub } from '../../module/src/howto';
@@ -35,6 +35,8 @@ import { CALLBACK_ROUTE, finishSignIn, offerFor, START_ROUTE, startSignIn, STATE
 import { appDir, handleApp } from './app';
 import { Reply } from './admin';
 import { agentHubConfig, handleAgentHub } from './agenthub';
+import { SubhubStore } from './subhubstore';
+import { handleSubhubControl } from './subhubcontrol';
 
 quietSdkLogs();
 
@@ -56,6 +58,13 @@ const githubInfo = (owner: string, repo: string) => infoOf(GITHUB, owner, repo);
 const githubBuilder = (login: string) => builderOf(GITHUB, login);
 // GitHub sign-in makes builders as the hub admin.
 const SIGNIN = signInConfig(DB, INTERNAL_HTTP, GITHUB);
+const SUBHUBS = process.env.SPACEHUB_SUBHUB_DIR ? new SubhubStore(process.env.SPACEHUB_SUBHUB_DIR) : null;
+if (SUBHUBS) {
+  process.once('exit', () => SUBHUBS.close());
+  // Explicit exits run the lock cleanup on normal container shutdown too.
+  process.once('SIGINT', () => process.exit(0));
+  process.once('SIGTERM', () => process.exit(0));
+}
 // Spaces linked to GitHub sync as the hub admin, whose token the entrypoint
 // hands over.
 const ADMIN_TOKEN = process.env.SPACEHUB_ADMIN_TOKEN ?? '';
@@ -186,6 +195,31 @@ async function spacesOf(session: { token: string; username: string }): Promise<s
     )
   ).catch(() => [] as string[]);
   return [session.username, ...others.sort()];
+}
+
+async function subhubActor(req: http.IncomingMessage, space: string, ownerOnly: boolean): Promise<string | null> {
+  const bearer = /^Bearer (\S+)$/.exec(req.headers.authorization ?? '')?.[1];
+  if (req.headers.origin && !sameOrigin(req)) return null;
+  if (!bearer && req.method !== 'GET' && req.method !== 'HEAD' && !sameOrigin(req)) return null;
+  const token = bearer ?? cookieValue(req, 'spacehub_session');
+  if (!token || !USERNAME.test(space)) return null;
+  return withConn(token, async (conn, identity) => {
+    const builder = await findUser(conn, identity);
+    const agent = builder ? null : await snapshot(conn, tables.agent, () => [...conn.db.agent.iter()].find(a => a.identity.isEqual(identity)));
+    const actor = builder?.username ?? agent?.name;
+    if (!actor) return null;
+    const owns = async (name: string, depth = 0): Promise<boolean> => {
+      if (depth > 4) return false;
+      const row = await findSpace(conn, name);
+      if (!row) return false;
+      if (row.kind === 'personal') return name === actor;
+      if (row.kind === 'agent') return owns(row.parent, depth + 1);
+      return (await spaceRoles(conn, name)).some(role => role.member === actor && role.role === 'owner');
+    };
+    if (await owns(space)) return actor;
+    if (!ownerOnly && agent?.name === space) return actor;
+    return !ownerOnly && (await spaceRoles(conn, space)).some(role => role.member === actor) ? actor : null;
+  }).catch(() => null);
 }
 
 // ---------------------------------------------------------------- GitHub
@@ -394,6 +428,16 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   if (await handleXo(XO, req, res)) return;
   // Called by the CLI with a GitHub token, not from the site's forms.
   if (await handleSignIn(SIGNIN, req, res)) return;
+  if (await handleSubhubControl(SUBHUBS, {
+    authorize: subhubActor,
+    currentHead: project => withConn(undefined, async conn => { const row = await findProject(conn, project); return row ? (await listRefs(conn, row.id)).find(ref => ref.name === `refs/heads/${row.defaultBranch}`)?.oid ?? null : null; }),
+    localRead: (project, oid, filename, request) => fetch(`${INTERNAL_HTTP}/v1/database/${encodeURIComponent(DB)}/route/ui`, {
+      // The module exposes GET routes. The gateway suppresses and cancels
+      // this body for HEAD after keeping the same response metadata.
+      method: 'GET', redirect: 'error', signal: AbortSignal.timeout(30_000),
+      headers: { 'X-Spacehub-Uri': '/' + project.split('/').map(encodeURIComponent).join('/') + '/raw/' + oid + '/' + filename.split('/').map(encodeURIComponent).join('/'), ...(request.headers.range ? { range: request.headers.range } : {}) },
+    }),
+  }, req, res, url)) return;
   if (LIVE.handle(req, res, url)) return;
   if (req.method === 'POST' && !sameOrigin(req)) return send(res, 403, page('Forbidden', null, '<h1>Forbidden</h1><p class="desc">This form must be sent from this site.</p>'));
   if (await handleAgentHub(AGENTHUB, { sessionOf, spacesOf, appendChat, sameOrigin }, req, res, url)) return;

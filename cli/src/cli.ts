@@ -21,6 +21,7 @@ import { git } from './git';
 import { cloneProject, findManifest, SpaceSync, writeManifest } from './spacesync';
 import { DEFAULT_HUB_HOST, githubTokenTarget, hubUrl, parseHubUrl, REMOTE } from './url';
 import { deviceSignIn } from './devicelogin';
+import { subhubCommand } from './subhub';
 
 quietSdkLogs();
 
@@ -55,6 +56,10 @@ SETUP
   doctor          Check this machine: where the CLI is installed and whether your shell
                     finds it (with the PATH line to add if not), whether the install
                     survives a restart, the CLI vs the hub, and who you are signed in as
+
+SUB-HUBS
+  subhub run --space <space> --storage <dir>  Back up projects, queue work and serve reads
+  subhub status|snapshots|restore|nodes|work  See spacehub subhub help
 
 SPACES
   space create <org> [-d <text>]           Create an org (you are its owner)
@@ -1345,6 +1350,7 @@ async function main() {
   if (!group || group === 'help' || group === '--help' || group === '-h') return out(HELP);
   if (group === '--version' || group === 'version') return out(`spacehub ${VERSION} (protocol ${PROTOCOL})`);
   if (group === 'doctor') return doctor();
+  if (group === 'subhub' || group === 'sub-hub') return subhubCommand(sub, args);
 
   if (group === 'auth') {
     switch (sub) {

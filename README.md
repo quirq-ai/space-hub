@@ -677,6 +677,116 @@ login` on another machine gets the same token back. Otherwise, run
 override the saved settings; `SPACEHUB_WEB` points sign-in at a web service
 on its own port (a local test server).
 
+## Sub-hubs: backup, queued work and read routing
+
+A machine running `spacehub subhub run` can contribute durable disk storage
+to a space. The parent remains the authority for identity, permissions,
+writes and work claims. Sub-hubs retain Git snapshots, keep delivered work
+on disk, and serve an explicit gateway for immutable file reads. Work is
+stored and queued for workers to claim; a sub-hub never executes its text.
+
+```sh
+spacehub subhub run --space acme --id workstation --storage /srv/spacehub-node
+```
+
+The node defaults to a private listener at `127.0.0.1:4080`. It registers
+with the configured parent using the signed-in space owner, receives a
+separate node credential, and sends heartbeats and pulls work every 20
+seconds, independently of backups. No inbound connection is needed for
+backup and queue delivery. To contribute read traffic, expose that listener
+through your TLS proxy and add `--advertise https://node.example`. The
+advertised endpoint must be reachable from the parent. A non-loopback
+listener is opt-in with `--listen 0.0.0.0:4080`.
+
+The parent needs this version of the web service. The Docker entrypoint
+keeps its private control state under `$SPACETIME_ROOT/subhubs` (normally
+`/data/subhubs`). A separately launched web service enables the control
+plane with `SPACEHUB_SUBHUB_DIR=<dedicated-directory>`. This directory needs
+persistent storage and one writer process. Existing hubs without this API
+are detected before registration or local storage initialization.
+
+### Retained backups
+
+Backups are self-contained Git bundles with complete ref manifests and
+checksums. New generations are published only after integrity checks;
+force pushes, deleted refs, deleted projects, interrupted transfers and
+offline parents do not delete older snapshots. These are per-project
+snapshots, not a transaction across all projects in a space.
+
+```sh
+spacehub subhub snapshots --storage /srv/spacehub-node
+spacehub subhub snapshots acme/site --storage /srv/spacehub-node
+spacehub subhub restore <snapshot-id> ./recovered-site --storage /srv/spacehub-node
+spacehub subhub status --storage /srv/spacehub-node
+```
+
+Listing and restoring work offline. A restore creates a bare Git repository
+in a new destination; use `git clone ./recovered-site ./checkout` for a
+working copy. It never pushes recovered history to the parent. To make a
+local backup before upgrading a parent, use `--standalone --once`; omit
+`--once` to keep backing up and serve the node's authenticated local API.
+Registered and standalone nodes use distinct storage configurations.
+
+Default storage preflight limits are 1,024 MiB per node and 128 MiB per
+project, adjustable with `--max-storage-mb` and `--max-project-mb`.
+`--project acme/site` restricts replication to one project. No snapshots
+are silently pruned to make room. These are conservative application
+preflights, not OS disk quotas; use filesystem quotas for a hard ceiling.
+The current Git helper buffers fetched packs in memory, so choose a
+per-project limit appropriate for the machine.
+
+Snapshots preserve committed project files, chats and Git history. Private
+accounts, agent tokens, permissions and other database-only state still
+need a backup of the parent server's `/data` volume. Node configuration and
+queued work are private operational data outside project snapshots.
+
+### Durable work items
+
+Members submit bounded text with an idempotency key. The parent persists
+the item before accepting it, and retains it when nodes are unavailable.
+Healthy nodes receive assignments and acknowledge them only after durable
+local storage. A worker then claims through the parent:
+
+```sh
+spacehub subhub work submit --space acme --project site --title "Review launch" --text "Check the launch plan" --key launch-review-001
+spacehub subhub work list --space acme
+spacehub subhub work claim <work-id> --lease 60
+spacehub subhub work complete <work-id> --fence <returned-fence> --result "Review complete"
+spacehub subhub work release <work-id> --fence <returned-fence>
+spacehub subhub nodes --space acme
+```
+
+Claims are exclusive, expire after 1–300 seconds, and carry increasing
+fences. Completion and release reject an expired or superseded fence.
+They update queue state only; they do not authorize or fence independent
+Git pushes or actions in external systems. There is no automatic runtime
+execution in this version.
+
+### Read traffic
+
+The explicit gateway is
+`GET /-/api/subhubs/read?project=acme/site&path=README.md`, with optional
+`oid=<40-character-commit>`. Without an oid, the parent resolves its current
+default-branch head. It uses only an owner-approved, recently heartbeating
+node advertising a completed snapshot for that exact head. It forwards no
+browser cookies or builder credentials, checks the returned snapshot/head,
+and falls back to the parent if the node is stale, unreachable, oversized
+or inconsistent. Range requests go to the parent with their range headers.
+Read replicas are trusted space-owner-approved machines; response headers
+are not independent cryptographic proof of the file contents.
+
+Existing application, chat writes, login, database subscriptions and Git
+remotes continue using the parent. This gateway does not make a plain Node
+sub-hub into a second SpacetimeDB server or transparently reroute existing
+clients. A node behind NAT can contribute backup and queued storage while
+leaving read routing disabled.
+
+Keep the node's dedicated storage directory private. Graceful shutdown
+releases its writer locks; after a forced termination, verify the process
+has stopped before removing a stale `.node.lock` or backup writer lock.
+The parent's control directory also uses a `.writer.lock`; inspect it after
+an unclean server exit if startup reports that another writer is active.
+
 ## Local development
 
 ```sh
