@@ -686,7 +686,51 @@ their contents and restores a chosen backup into a new directory. Access
 requires the hub's global administrator identity or an explicitly delegated
 recovery operator. Owning a space does not grant instance recovery access.
 
-### Cold capture of the complete deployment
+### Run a connected Sub-hub
+
+On the backup machine, sign in to the configured hub as a recovery operator
+and run:
+
+```sh
+spacehub subhub run --storage /srv/spacehub-backups --name office-backup
+```
+
+The CLI enrolls a private machine identity, stays connected and automatically
+copies complete source backups into an immutable local vault. Settings shows
+the connection, heartbeat, automatic backup state and retained generations.
+It does not ask for deployment containers or start services through a form.
+The receiving machine needs the CLI and writable disk; it does not need Docker.
+Restarting the same storage folder reuses its identity. Private enrollment
+state lives beside the vault in `<storage>.runtime`; keep that directory private.
+
+The default sync interval is 60 seconds (`--interval` changes it); heartbeats
+continue independently while a backup downloads. A stopped CLI becomes offline
+in Settings after its heartbeat expires. An unavailable or empty source is
+reported as waiting: connection alone does not mean the hub has been backed up.
+Generations retain their source ID, creation time and manifest hash; transfers
+are published only after every file verifies. Interrupted or corrupt copies
+do not replace an earlier verified backup.
+
+```sh
+spacehub subhub backup --storage /srv/spacehub-backups  # one immediate sync
+spacehub subhub snapshots --storage /srv/spacehub-backups
+spacehub subhub verify <snapshot-id> --storage /srv/spacehub-backups
+spacehub subhub restore <snapshot-id> /srv/recovered-instance --storage /srv/spacehub-backups
+```
+
+Restore runs on the machine containing that vault. The UI distinguishes the
+recovery service's vault from other connected machines' retained catalogs.
+Machine credentials authorize full-instance backup reads, never org work or
+agent execution. The hub stores only their hashes and does not show credentials
+in connection status.
+
+### Deployment operator: provide complete source backups
+
+The hub needs a complete source backup before receiving Sub-hubs can copy it.
+This is deployment setup, separate from the receiving CLI and Settings UI.
+SpacetimeDB's private database and server identities cannot be reconstructed
+from project Git repositories. The current source adapter captures the whole
+deployment while stopped, including private configuration and exact runtime.
 
 Run the CLI on a machine with access to the deployment's Docker daemon.
 Select every stack container, including Spacehub, the TLS proxy and any
@@ -694,7 +738,7 @@ other service with persistent state or private configuration:
 
 ```sh
 spacehub subhub help
-spacehub subhub backup --container spacehub --container caddy --storage /srv/instance-vault --allow-stop
+spacehub subhub capture --container spacehub --container caddy --storage /srv/instance-vault --allow-stop
 spacehub subhub snapshots --storage /srv/instance-vault
 spacehub subhub verify <snapshot-id> --storage /srv/instance-vault
 spacehub subhub restore <snapshot-id> /srv/recovered-instance --storage /srv/instance-vault
@@ -706,9 +750,21 @@ them while stopped, and attempts to restart every originally running
 container afterward, including on failure. Containers already stopped stay
 stopped; a fully stopped deployment can be captured without `--allow-stop`.
 Keep other processes that write shared mounts stopped too. This is a cold
-capture, not a consistent backup of files changing underneath it. The UI
-prepares the command for manual execution; a browser action does not stop
-the primary hub.
+capture, not a consistent backup of files changing underneath it.
+
+For automatic source creation, save a private JSON file containing
+`{"containers":["spacehub","caddy"],"allowStop":true}` and run the source
+service outside the selected deployment:
+
+```sh
+spacehub subhub source --storage /srv/instance-vault --capture-config /srv/capture.json --capture-every 3600 --token-file /srv/recovery-token
+```
+
+It captures immediately and then at the configured interval, retaining the
+previous generation if capture fails. Stopping selected services is an actual
+maintenance window; choose the interval accordingly. Point the main web
+service's recovery source connection at this independent service as described
+below. Connected receivers then download new verified generations automatically.
 
 Each backup includes:
 
@@ -772,7 +828,7 @@ The same built app can run against a local vault while the primary hub is
 offline, without a database connection or a primary-hub sign-in:
 
 ```sh
-spacehub subhub serve --storage /srv/instance-vault --container spacehub --container caddy --restore-root /srv/instance-restores --token-file /srv/recovery-token
+spacehub subhub serve --storage /srv/instance-vault --restore-root /srv/instance-restores --token-file /srv/recovery-token
 ```
 
 Open the printed URL, normally `http://127.0.0.1:4092/#/settings`.
@@ -790,13 +846,13 @@ The local browser receives a separate recovery session cookie.
 The web service exposes the same UI through the protected
 `/-/api/instance-recovery` endpoints. Configure a local vault with
 `SPACEHUB_RECOVERY_DIR`, an allowed restore parent with
-`SPACEHUB_RESTORE_ROOT`, and comma-separated Docker container names with
-`SPACEHUB_RECOVERY_CONTAINERS`. The container names supply the backup command
-shown in the UI. `SPACEHUB_PUBLIC_URL` (or the database name) labels the
+`SPACEHUB_RESTORE_ROOT`. `SPACEHUB_PUBLIC_URL` (or the database name) labels the
 source. Explicitly delegate access to registered builder usernames with
 comma-separated `SPACEHUB_RECOVERY_OPERATORS`; otherwise only the global
 administrator recorded by the module qualifies. The web service uses its
 private `SPACEHUB_ADMIN_TOKEN` to check that administrator identity.
+`SPACEHUB_RECOVERY_STATE_DIR` chooses the private connected-machine registry;
+otherwise it is stored under the server's persistent root or CLI home.
 
 Alternatively, set `SPACEHUB_RECOVERY_URL` and `SPACEHUB_RECOVERY_TOKEN` to
 connect the main web service to a separate recovery service. The URL must

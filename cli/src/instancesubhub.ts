@@ -2,25 +2,31 @@ import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
 import crypto from 'node:crypto';
+import os from 'node:os';
 import { InstanceVault } from './instancevault.ts';
 import { captureDeployment } from './instancecapture.ts';
 import { handleInstanceRecovery } from './instancerecovery.ts';
 import { APP_CSP, appDir, appPage, handleApp } from './app';
+import { loadConfig } from './config';
+import { runInstanceSubhub } from './instanceruntime.ts';
+import { InstanceConnections } from './instanceconnections.ts';
 
-const HELP = `spacehub subhub backup --container <spacehub> [--container <proxy>] --storage <vault> [--allow-stop]
+const HELP = `spacehub subhub run --storage <folder> [--name <name>] [--interval <seconds>]
+spacehub subhub backup --storage <folder>
 spacehub subhub snapshots --storage <vault>
 spacehub subhub verify <snapshot> --storage <vault>
 spacehub subhub restore <snapshot> <new-directory> --storage <vault>
-spacehub subhub serve --storage <vault> [--container <spacehub>] [--container <proxy>]
+spacehub subhub serve --storage <vault>
     [--listen 127.0.0.1:4092] [--restore-root <directory>] [--source <hub-name>]
     [--token-file <private-file>]
+spacehub subhub capture --container <spacehub> [--container <proxy>] --storage <vault> [--allow-stop]
+spacehub subhub source --storage <vault> --capture-config <private-json> [--capture-every <seconds>]
 
-Sub-hubs back up an entire Spacehub deployment: persistent data, identities,
-private configuration, and exact runtime images. Include every service in
-the deployment, including its TLS proxy. No --space or project filter.
---allow-stop permits a cold backup's maintenance window; initially running
-containers are restarted afterward. Restore writes a new directory only;
-it never replaces or starts the running instance.`;
+run connects to your configured hub and automatically retains verified full-instance
+backups. Sign in as a hub recovery operator before the first connection.
+Settings shows connection, backup and offline status. backup runs one sync.
+Capture/source are deployment-operator setup commands for producing complete
+source backups. Restore writes a new directory without starting an instance.`;
 
 function flag(args: string[], name: string) {
   const at = args.indexOf(name); if (at < 0) return undefined;
@@ -34,9 +40,21 @@ function required(value: string | undefined, label: string) { if (!value) throw 
 function remaining(args: string[]) { if (args.length) throw new Error(`Unknown Sub-hub arguments: ${args.join(' ')}`); }
 function print(value: unknown) { process.stdout.write(JSON.stringify(value, null, 2) + '\n'); }
 
-async function serve(args: string[]) {
+async function serve(args: string[], sourceMode = false) {
   const storage = path.resolve(required(flag(args, '--storage'), '--storage'));
-  const containers = repeated(args, '--container');
+  const containers: string[] = [];
+  const captureFile = flag(args, '--capture-config');
+  const captureEvery = Number(flag(args, '--capture-every') ?? 3600);
+  if (sourceMode && !captureFile) throw new Error('Source setup needs --capture-config with the deployment capture configuration');
+  if (!Number.isSafeInteger(captureEvery) || captureEvery < 60 || captureEvery > 86400) throw new Error('--capture-every must be 60 to 86400 seconds');
+  let captureConfig: { containers: string[]; allowStop: boolean } | undefined;
+  if (captureFile) {
+    const filename = path.resolve(captureFile), stat = fs.lstatSync(filename);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 65536) throw new Error('Invalid private capture configuration');
+    const input = JSON.parse(fs.readFileSync(filename, 'utf8'));
+    if (!input || !Array.isArray(input.containers) || !input.containers.length || input.containers.length > 64 || input.containers.some((name: unknown) => typeof name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(name)) || typeof input.allowStop !== 'boolean') throw new Error('Capture configuration needs deployment containers and explicit allowStop');
+    captureConfig = { containers: input.containers, allowStop: input.allowStop };
+  }
   const source = flag(args, '--source') ?? 'Spacehub instance';
   const tokenFile = flag(args, '--token-file');
   const restoreRoot = path.resolve(flag(args, '--restore-root') ?? path.join(path.dirname(storage), 'spacehub-restores'));
@@ -47,6 +65,7 @@ async function serve(args: string[]) {
   const origin = `http://127.0.0.1:${Number(address[2])}`;
   const hosts = new Set([`127.0.0.1:${Number(address[2])}`, `localhost:${Number(address[2])}`]);
   const vault = new InstanceVault(storage); vault.initialize();
+  const connections = new InstanceConnections(storage + '.connections'); connections.initialize();
   let token = crypto.randomBytes(32).toString('hex');
   if (tokenFile) {
     const filename = path.resolve(tokenFile);
@@ -71,7 +90,7 @@ async function serve(args: string[]) {
     void (async () => {
       if (!hosts.has(req.headers.host ?? '')) { res.writeHead(403); res.end('Use the printed loopback URL'); return; }
       const url = new URL(req.url!, origin);
-      if (await handleInstanceRecovery({ vault, authorize: authorized, source, storage, containers, restoreRoot }, req, res, url)) return;
+      if (await handleInstanceRecovery({ vault, connections, authorize: authorized, source, storage, containers, restoreRoot }, req, res, url)) return;
       if (url.pathname === '/-/recovery-entry.js' && req.method === 'GET') {
         res.writeHead(200, { 'content-type': 'text/javascript', 'cache-control': 'no-store' });
         res.end("if (!location.hash) history.replaceState(null, '', '/#/settings');"); return;
@@ -90,17 +109,43 @@ async function serve(args: string[]) {
   });
   await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(Number(address[2]), '127.0.0.1', resolve); });
   process.stderr.write(`Sub-hubs recovery UI: ${origin}/#/settings\nVault: ${storage}\n`);
+  let captureActive: Promise<void> | undefined;
+  const capture = () => {
+    if (!captureConfig || captureActive) return;
+    captureActive = captureDeployment({ ...captureConfig, storage }).then(snapshot => {
+      process.stderr.write(`Full-instance source backup ready: ${snapshot.id}\n`);
+    }).catch(() => { process.stderr.write('Full-instance source capture failed; retained backups remain available. Check the deployment configuration.\n'); }).finally(() => { captureActive = undefined; });
+  };
+  const captureTimer = captureConfig ? setInterval(capture, captureEvery * 1000) : undefined;
+  capture();
   await new Promise<void>(resolve => {
-    const stop = () => { server.closeAllConnections(); server.close(() => resolve()); };
+    const stop = () => { clearInterval(captureTimer); server.closeAllConnections(); server.close(() => resolve()); };
     process.once('SIGINT', stop); process.once('SIGTERM', stop);
   });
+  await captureActive;
 }
 
 export async function instanceSubhubCommand(command: string | undefined, args: string[]) {
   if (!command || ['help', '--help', '-h'].includes(command)) { process.stdout.write(HELP + '\n'); return; }
   if (command === 'serve') return serve(args);
+  if (command === 'source') return serve(args, true);
   const storage = path.resolve(required(flag(args, '--storage'), '--storage'));
-  if (command === 'backup') {
+  if (command === 'run' || command === 'backup') {
+    const name = flag(args, '--name') ?? os.hostname();
+    const intervalSeconds = Number(flag(args, '--interval') ?? 60);
+    const once = command === 'backup' || yes(args, '--once'); remaining(args);
+    const config = loadConfig();
+    const controller = new AbortController();
+    const stop = () => controller.abort();
+    if (!once) { process.once('SIGINT', stop); process.once('SIGTERM', stop); }
+    try {
+      await runInstanceSubhub({ storage, hub: config.server.replace(/^ws/, 'http'), operatorToken: config.token, name, intervalSeconds, once, signal: controller.signal,
+        onStatus: status => process.stderr.write(`Sub-hub ${status.state}; ${status.snapshots} retained full-instance backups${status.error ? '. ' + status.error : ''}\n`),
+      });
+    } finally { if (!once) { process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); } }
+    return;
+  }
+  if (command === 'capture') {
     const containers = repeated(args, '--container');
     if (!containers.length) throw new Error('Choose every deployment service with --container, including the Spacehub server');
     const allowStop = yes(args, '--allow-stop'); remaining(args);

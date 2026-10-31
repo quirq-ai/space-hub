@@ -29,6 +29,10 @@ export interface Snapshot {
   consistency: 'stopped-containers'; coverage: Coverage; files: number; bytes: number; sha256: string;
 }
 export interface ManifestFile { path: string; size: number; sha256: string; mode: number }
+export interface TransferManifest {
+  version: 1; snapshot: Snapshot; rootMode: number;
+  directories: { path: string; mode: number }[]; files: ManifestFile[];
+}
 interface ManifestDirectory { path: string; mode: number }
 interface Manifest {
   version: 1; info: Omit<Snapshot, 'files' | 'bytes' | 'sha256'>; rootMode: number;
@@ -354,6 +358,78 @@ export class InstanceVault {
       if (result.size !== file.size) fail(409, 'Instance file size does not match its manifest');
     }
     return { snapshot: clone(snapshot), files: snapshot.files, bytes: snapshot.bytes, verifiedAt: Date.now() };
+  }
+  async exportManifest(id: string): Promise<TransferManifest> {
+    await this.verify(id);
+    const { manifest, snapshot } = this.load(id);
+    return clone({ version: 1, snapshot, rootMode: manifest.rootMode, directories: manifest.directories, files: manifest.files });
+  }
+  async openPayload(id: string, relative: string): Promise<{ stream: fs.ReadStream; size: number; sha256: string }> {
+    const { root, manifest } = this.load(id);
+    const file = manifest.files.find(item => item.path === relativePath(relative));
+    if (!file) fail(404, 'No such instance backup file');
+    const filename = joined(root, `payload/${file.path}`);
+    regular(filename);
+    const handle = await fsp.open(filename, fs.constants.O_RDONLY | NO_FOLLOW);
+    try {
+      const stat = await handle.stat();
+      if (!stat.isFile() || stat.size !== file.size) fail(409, 'Instance backup file changed');
+      return { stream: handle.createReadStream({ autoClose: true }), size: file.size, sha256: file.sha256 };
+    } catch (error) { await handle.close(); throw error; }
+  }
+  async importSnapshot(sourceDir: string, transfer: TransferManifest): Promise<Snapshot> {
+    const run = this.tail.then(() => this.importOne(sourceDir, transfer));
+    this.tail = run.catch(() => undefined);
+    return run;
+  }
+  private async importOne(sourceDir: string, transfer: TransferManifest): Promise<Snapshot> {
+    this.ready();
+    if (!object(transfer) || transfer.version !== 1 || !object(transfer.snapshot) || typeof transfer.snapshot.id !== 'string' || !ID.test(transfer.snapshot.id)) fail(400, 'Invalid instance transfer manifest');
+    const id = transfer.snapshot.id;
+    const manifest = validateManifest({ version: 1, info: transfer.snapshot, rootMode: transfer.rootMode, directories: transfer.directories, files: transfer.files }, id);
+    const snapshot = snapshotOf(manifest);
+    if (snapshot.sha256 !== transfer.snapshot.sha256 || snapshot.files !== transfer.snapshot.files || snapshot.bytes !== transfer.snapshot.bytes) fail(409, 'Instance transfer manifest failed integrity verification');
+    const target = joined(path.join(this.storageDir, 'snapshots'), id);
+    if (present(target)) {
+      const existing = await this.verify(id);
+      if (existing.snapshot.sha256 !== snapshot.sha256) fail(409, 'Instance snapshot ID already has different content');
+      return clone(existing.snapshot);
+    }
+    if (!path.isAbsolute(sourceDir)) fail(400, 'Instance transfer source must be absolute');
+    const source = path.resolve(sourceDir);
+    if (inside(this.storageDir, source) || inside(source, this.storageDir)) fail(400, 'Instance source and vault must not overlap');
+    const release = this.lock();
+    const stage = path.join(this.storageDir, 'staging', `${id}.${randomId()}.tmp`);
+    let staged = false;
+    try {
+      const tree = inventory(source);
+      if (tree.files.length !== manifest.files.length || tree.bytes !== snapshot.bytes || JSON.stringify(tree.files.map(file => file.path)) !== JSON.stringify(manifest.files.map(file => file.path)) || JSON.stringify(tree.directories.map(dir => dir.path)) !== JSON.stringify(manifest.directories.map(dir => dir.path))) fail(409, 'Transferred instance files do not match their manifest');
+      const used = this.measuredBytes();
+      if (sum(used, snapshot.bytes) > this.maxBytes) fail(413, 'Instance vault quota exceeded');
+      fs.mkdirSync(stage, { mode: 0o700 }); staged = true;
+      const payload = path.join(stage, 'payload'); fs.mkdirSync(payload, { mode: 0o700 });
+      for (const dir of manifest.directories) fs.mkdirSync(joined(payload, dir.path), { mode: 0o700 });
+      let transferred = 0;
+      const sourceFiles = new Map(tree.files.map(file => [file.path, file]));
+      for (const file of manifest.files) {
+        const original = sourceFiles.get(file.path)!;
+        const saved = await copyAndHash(joined(source, file.path), joined(payload, file.path), original, file.sha256, Math.min(file.size, this.maxBytes - used - transferred));
+        if (saved.size !== file.size) fail(409, 'Transferred instance file size changed');
+        transferred = sum(transferred, saved.size);
+      }
+      if (JSON.stringify(inventory(source)) !== JSON.stringify(tree)) fail(409, 'Instance transfer source changed');
+      writePrivate(path.join(stage, 'manifest.json'), manifest); writePrivate(path.join(stage, 'snapshot.json'), snapshot);
+      if (this.measuredBytes() > this.maxBytes) fail(413, 'Instance vault quota exceeded');
+      for (const dir of manifest.directories.slice().sort((a, b) => b.path.length - a.path.length)) syncDirectory(joined(payload, dir.path));
+      syncDirectory(payload); syncDirectory(stage);
+      if (present(target)) fail(409, 'Instance snapshot already exists');
+      fs.renameSync(stage, target); staged = false;
+      syncDirectory(path.join(this.storageDir, 'snapshots')); syncDirectory(path.join(this.storageDir, 'staging'));
+      return clone(snapshot);
+    } finally {
+      try { if (staged && present(stage)) { noLinks(stage); if (!inside(path.join(this.storageDir, 'staging'), stage)) fail(400, 'Invalid instance staging directory'); fs.rmSync(stage, { recursive: true, force: true }); } }
+      finally { release(); }
+    }
   }
   async restore(id: string, newDest: string) {
     await this.verify(id);

@@ -689,17 +689,12 @@ a.label:hover { text-decoration: none; filter: brightness(.96); }
 .subhub-section-heading h3, .subhub-form h3 { margin: 0; font-size: 15px; }
 .subhub-note { color: var(--text-3); font-size: 12px; line-height: 1.6; margin: 14px 0; }
 .subhub-note code { font-size: 11px; overflow-wrap: anywhere; }
-.subhub-dialog { width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; padding: 24px; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--panel); color: var(--text); box-shadow: 0 20px 80px #0003; }
-.subhub-dialog::backdrop { background: #0006; backdrop-filter: blur(3px); }
-.subhub-dialog-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
-.subhub-dialog-heading h2 { font-size: 20px; margin: 0; letter-spacing: -.025em; }
-.subhub-dialog-heading p { font-size: 12px; margin: 7px 0 0; line-height: 1.5; }
 .subhub-form { display: grid; gap: 14px; }
 .subhub-form label { display: grid; gap: 7px; font-size: 12px; font-weight: 500; color: var(--text-2); }
 .subhub-form label .quiet { font-weight: 400; font-size: 11px; line-height: 1.5; }
-.subhubs input, .subhubs select, .subhubs textarea, .subhub-dialog input, .subhub-dialog select { min-width: 0; max-width: 100%; padding: 9px 11px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--bg); color: var(--text); font: 13px var(--font); }
+.subhubs input, .subhubs select, .subhubs textarea { min-width: 0; max-width: 100%; padding: 9px 11px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--bg); color: var(--text); font: 13px var(--font); }
 .subhubs textarea { resize: vertical; line-height: 1.5; }
-.subhubs input:focus-visible, .subhubs select:focus-visible, .subhubs textarea:focus-visible, .subhub-dialog input:focus-visible, .subhub-dialog select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.subhubs input:focus-visible, .subhubs select:focus-visible, .subhubs textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .subhubs :disabled { opacity: .55; cursor: not-allowed; }
 .subhub-form > .button { justify-self: start; }
 @media (max-width: 640px) {
@@ -709,7 +704,6 @@ a.label:hover { text-decoration: none; filter: brightness(.96); }
   .subhub-sections { width: 100%; }
   .subhub-sections button { flex: 1; justify-content: center; padding: 8px; gap: 5px; font-size: 12px; }
   .subhub-sections button svg { display: none; }
-  .subhub-dialog { padding: 20px; }
 }
 
 /* Full-instance recovery details. */
@@ -736,20 +730,43 @@ a.label:hover { text-decoration: none; filter: brightness(.96); }
 .instance-backup-details { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); font-size: 12px; }
 .instance-backup-details summary { color: var(--text-3); cursor: pointer; }
 .instance-restore { max-width: 720px; }
-.instance-restore-note, .instance-capture-note { display: flex; align-items: flex-start; gap: 10px; padding: 13px 14px; border: 1px solid var(--line); border-radius: 7px; background: var(--fill); color: var(--text-2); font-size: 12px; line-height: 1.6; }
-.instance-restore-note svg, .instance-capture-note svg { flex: none; margin-top: 2px; }
-.instance-restore-note p, .instance-capture-note p { margin: 0; }
-.instance-capture-note { margin-bottom: 20px; background: var(--amber-soft); color: var(--amber); border-color: transparent; }
-.instance-capture-note strong { display: block; margin-bottom: 4px; }
+.instance-restore-note { display: flex; align-items: flex-start; gap: 10px; padding: 13px 14px; border: 1px solid var(--line); border-radius: 7px; background: var(--fill); color: var(--text-2); font-size: 12px; line-height: 1.6; }
+.instance-restore-note svg { flex: none; margin-top: 2px; }
+.instance-restore-note p { margin: 0; }
 .instance-restored { display: flex; align-items: flex-start; gap: 10px; padding: 16px; border-radius: 8px; color: var(--green); background: var(--green-soft); }
 .instance-restored svg { flex: none; }
 .instance-restored h3 { font-size: 14px; margin: 0; }
 .instance-restored p { margin: 6px 0; font-size: 12px; }
 .instance-restored code { font-size: 11px; overflow-wrap: anywhere; }
-.instance-command-dialog textarea { min-width: 0; max-width: 100%; padding: 9px 11px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--bg); color: var(--text); font: 13px/1.5 var(--mono); resize: vertical; }
-.instance-command-dialog textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.instance-review { display: flex; align-items: flex-start; gap: 9px; margin: 20px 0 14px; color: var(--text-2); font-size: 12px; line-height: 1.6; cursor: pointer; }
-.instance-review input { margin-top: 3px; flex: none; accent-color: var(--accent); }
+.instance-connections { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 14px; }
+.instance-connection { min-width: 0; padding: 18px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--panel); }
+.instance-connection-name { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.instance-connection-name svg { flex: none; color: var(--accent-text); }
+.instance-connection-name h3 { margin: 0; font-size: 15px; overflow-wrap: anywhere; }
+.instance-connection dl { display: grid; gap: 12px; margin: 18px 0 0; font-size: 12px; }
+.instance-connection dl > div { display: grid; grid-template-columns: minmax(100px, .8fr) minmax(0, 1fr); gap: 10px; }
+.instance-connection dt { color: var(--text-3); }
+.instance-connection dd { margin: 0; color: var(--text-2); overflow-wrap: anywhere; }
+.instance-backup-fact { display: block; margin: 4px 0; color: var(--text-3); font-size: 11px; overflow-wrap: anywhere; }
+.instance-connection-error { margin: 14px 0 0; padding: 10px 12px; border-radius: 6px; color: var(--red); background: var(--red-soft); font-size: 12px; line-height: 1.5; }
+.instance-waiting { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 18px; padding: 14px 16px; border-radius: 8px; color: var(--amber); background: var(--amber-soft); font-size: 12px; line-height: 1.6; }
+.instance-waiting svg { flex: none; margin-top: 2px; }
+.instance-waiting p { margin: 3px 0 0; }
+.instance-setup { margin-top: 22px; padding: 20px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg); }
+.instance-setup h3 { margin: 0; font-size: 15px; }
+.instance-setup > p { margin: 7px 0 16px; font-size: 13px; line-height: 1.6; }
+.instance-setup-fields { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 12px; margin-bottom: 14px; }
+.instance-setup-fields label { display: grid; gap: 6px; min-width: 0; font-size: 12px; color: var(--text-2); }
+.instance-local-commands { margin-top: 16px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 8px; font-size: 12px; }
+.instance-local-commands > summary { color: var(--text-2); cursor: pointer; }
+.instance-remote-catalog { margin-top: 28px; }
+.instance-remote-backup { margin-top: 12px; }
+.instance-remote-backup h3 { display: flex; align-items: center; gap: 7px; overflow-wrap: anywhere; }
+.instance-remote-backup ul { list-style: none; margin: 14px 0 0; padding: 0; }
+.instance-remote-backup li { padding: 14px 0; border-top: 1px solid var(--line); font-size: 12px; }
+.instance-remote-backup li code { font-size: 11px; overflow-wrap: anywhere; }
+.instance-remote-backup details { margin-top: 10px; }
+.instance-remote-backup summary { color: var(--accent-text); cursor: pointer; }
 @media (max-width: 640px) {
   .page.settings-page { padding: 16px 16px 20px; }
   .instance-recovery .page-title-row { flex-wrap: wrap; }
@@ -761,4 +778,6 @@ a.label:hover { text-decoration: none; filter: brightness(.96); }
   .instance-stats .subhub-stat .instance-stat-text { min-width: 0; max-width: 55%; text-align: right; overflow-wrap: anywhere; }
   .instance-vault, .instance-backup, .instance-restore { padding: 16px; }
   .instance-vault dl > div, .instance-backup-details dl > div { grid-template-columns: 1fr; gap: 4px; }
+  .instance-setup { padding: 16px; }
+  .instance-setup-fields { grid-template-columns: minmax(0, 1fr); }
 }

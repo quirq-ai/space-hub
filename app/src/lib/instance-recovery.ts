@@ -6,7 +6,12 @@ export type InstanceSnapshot = {
 };
 export type InstanceRecoveryStatus = {
   scope: "instance"; source: string; available: boolean; canManage: boolean;
-  cli: { containers: string[]; storage: string; restoreRoot: string }; error?: string;
+  cli: { storage: string; restoreRoot: string }; error?: string;
+  sourceAvailable?: boolean; sourceError?: string; machineName?: string;
+};
+export type InstanceConnection = {
+  id: string; name: string; connectedAt: number; lastSeen: number; online: boolean;
+  state: "waiting" | "syncing" | "up-to-date" | "error"; snapshots: InstanceSnapshot[]; error?: string;
 };
 export type InstanceVerification = { snapshot: InstanceSnapshot; files: number; bytes: number; verifiedAt: number };
 export type InstanceRestore = { directory: string; snapshot: InstanceSnapshot; files: number; bytes: number };
@@ -17,10 +22,14 @@ function argument(value: string, shell: CommandShell) {
   return /^[a-zA-Z0-9_./:@-]+$/.test(value) ? value : "'" + (shell === "powershell" ? value.replace(/'/g, "''") : value.replace(/'/g, "'\"'\"'")) + "'";
 }
 function snapshotId(id: string) { if (!/^[a-f0-9]{32}$/.test(id)) throw new Error("Choose a valid full-instance backup."); return id; }
-export function instanceBackupCommand({ containers, storage, shell = "powershell" }: { containers: string[]; storage: string; shell?: CommandShell }) {
-  if (!containers.length || containers.some(name => !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name))) throw new Error("Enter the Docker container names, one per line.");
-  return ["spacehub subhub backup", ...containers.map(name => `--container ${argument(name, shell)}`), `--storage ${argument(storage, shell)}`, "--allow-stop"].join(" ");
+export function instanceRunCommand({ storage, name, interval, shell = "powershell" }: { storage: string; name?: string; interval?: number; shell?: CommandShell }) {
+  if (interval !== undefined && (!Number.isInteger(interval) || interval < 1)) throw new Error("Use a positive whole number of seconds for the backup interval.");
+  const args = ["spacehub subhub run", `--storage ${argument(storage, shell)}`];
+  if (name !== undefined) args.push(`--name ${argument(name, shell)}`);
+  if (interval !== undefined) args.push(`--interval ${interval}`);
+  return args.join(" ");
 }
+export function instanceBackupCommand(storage: string, shell: CommandShell = "powershell") { return `spacehub subhub backup --storage ${argument(storage, shell)}`; }
 export function instanceSnapshotsCommand(storage: string, shell: CommandShell = "powershell") { return `spacehub subhub snapshots --storage ${argument(storage, shell)}`; }
 export function instanceVerifyCommand(id: string, storage: string, shell: CommandShell = "powershell") { return `spacehub subhub verify ${snapshotId(id)} --storage ${argument(storage, shell)}`; }
 export function instanceRestoreBody(id: string, directory: string) {
@@ -32,6 +41,12 @@ export function instanceRestoreCommand(id: string, directory: string, storage: s
   const body = instanceRestoreBody(id, directory);
   return `spacehub subhub restore ${body.id} ${argument(body.directory, shell)} --storage ${argument(storage, shell)}`;
 }
+export function instanceRemoteRestoreCommand(id: string) { return `spacehub subhub restore ${snapshotId(id)} <new-directory> --storage <folder>`; }
+export function instanceConnectionLabel(connection: InstanceConnection) {
+  if (!connection.online) return "Offline";
+  return { waiting: "Waiting for source", syncing: "Backing up", "up-to-date": "Up to date", error: "Needs attention" }[connection.state];
+}
+export function latestInstanceSnapshot(snapshots: InstanceSnapshot[]) { return snapshots.reduce<InstanceSnapshot | undefined>((latest, snapshot) => !latest || snapshot.createdAt > latest.createdAt ? snapshot : latest, undefined); }
 export function instanceErrorMessage(status: number, detail?: string) {
   if (status === 401 || status === 403) return "Full-instance recovery requires permission from the operator of this Spacehub server.";
   if (status === 404) return "Full-instance recovery is not available or configured on this server.";

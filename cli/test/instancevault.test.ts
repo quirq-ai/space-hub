@@ -72,6 +72,43 @@ test('captures, verifies and restores all private deployment bytes, runtime, key
   } finally { f.close(); }
 });
 
+test('verified full-instance transfer retains source identity and private bytes without a new generation', async () => {
+  const f = fixture();
+  try {
+    const snapshot = await f.vault.capture(f.source, INFO);
+    const manifest = await f.vault.exportManifest(snapshot.id);
+    const replica = new InstanceVault(path.join(f.root, 'replica')); replica.initialize();
+    const imported = await replica.importSnapshot(f.source, manifest);
+    assert.deepEqual(imported, snapshot);
+    assert.deepEqual(await replica.importSnapshot(f.source, manifest), snapshot, 'Retries reuse the immutable generation');
+    assert.equal(replica.list().length, 1);
+    await replica.verify(snapshot.id);
+    const output = await f.vault.openPayload(snapshot.id, 'volumes/data/config/id_ecdsa');
+    const parts: Buffer[] = []; for await (const part of output.stream) parts.push(Buffer.from(part));
+    assert.equal(Buffer.concat(parts).toString('utf8'), SECRET);
+    assert.equal(output.size, Buffer.byteLength(SECRET));
+    await assert.rejects(f.vault.openPayload(snapshot.id, '../manifest.json'));
+    await assert.rejects(f.vault.openPayload(snapshot.id, 'private-unlisted-file'));
+    const restored = path.join(f.root, 'replica-restored'); await replica.restore(snapshot.id, restored);
+    assert.equal(fs.readFileSync(path.join(restored, 'volumes/data/config/id_ecdsa'), 'utf8'), SECRET);
+  } finally { f.close(); }
+});
+
+test('automatic transfer rejects altered manifests and corrupt files before publication', async () => {
+  const f = fixture();
+  try {
+    const snapshot = await f.vault.capture(f.source, INFO), manifest = await f.vault.exportManifest(snapshot.id);
+    const replica = new InstanceVault(path.join(f.root, 'replica')); replica.initialize();
+    const changed = structuredClone(manifest); changed.files[0].sha256 = '0'.repeat(64);
+    await assert.rejects(replica.importSnapshot(f.source, changed), /integrity/);
+    fs.writeFileSync(path.join(f.source, 'containers', 'spacehub.tar'), 'corrupt-transfer');
+    await assert.rejects(replica.importSnapshot(f.source, manifest));
+    assert.deepEqual(replica.list(), []);
+    assert.deepEqual(fs.readdirSync(path.join(replica.storageDir, 'staging')), []);
+    assert.equal((await f.vault.verify(snapshot.id)).snapshot.sha256, snapshot.sha256);
+  } finally { f.close(); }
+});
+
 test('refuses partial coverage and incomplete prepared bundles rather than publishing misleading snapshots', async () => {
   const f = fixture();
   try {

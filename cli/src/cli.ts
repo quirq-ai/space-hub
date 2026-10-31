@@ -58,6 +58,7 @@ SETUP
                     survives a restart, the CLI vs the hub, and who you are signed in as
 
 SUB-HUBS
+  subhub run --storage <folder>             Connect and automatically retain full backups
   subhub backup|snapshots|verify|restore|serve  Entire Spacehub instance recovery
                                              See spacehub subhub help
 
@@ -1422,6 +1423,9 @@ async function main() {
 main()
   .then(() => {
     session?.conn.disconnect();
+    // Fetch-backed Sub-hubs close their own streams and timers. Let Node
+    // drain network cleanup rather than interrupting native callbacks.
+    if (process.argv[2] === 'subhub' || process.argv[2] === 'sub-hub') { process.exitCode = 0; return; }
     process.exit(0);
   })
   .catch(async err => {
@@ -1429,5 +1433,6 @@ main()
     if (message) note(`spacehub: ${message}`);
     for (const line of await refusalHelp(message)) note(`  ${line}`);
     session?.conn.disconnect();
+    if (process.argv[2] === 'subhub' || process.argv[2] === 'sub-hub') { process.exitCode = err instanceof Exit ? err.status : 1; return; }
     process.exit(err instanceof Exit ? err.status : 1);
   });

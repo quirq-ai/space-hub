@@ -3,7 +3,11 @@
 import type http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { InstanceVault } from './instancevault.ts';
+import { InstanceConnections } from './instanceconnections.ts';
 
 const PREFIX = '/-/api/instance-recovery';
 export interface InstanceRecoveryDeps {
@@ -14,6 +18,8 @@ export interface InstanceRecoveryDeps {
   containers: string[];
   restoreRoot: string;
   remote?: { url: string; token: string } | null;
+  connections?: InstanceConnections;
+  machineName?: string;
 }
 export function recoveryRemote(url: string | undefined, token: string | undefined) {
   if (!url && !token) return null;
@@ -27,11 +33,11 @@ function json(res: http.ServerResponse, status: number, value: unknown) {
   res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
   res.end(JSON.stringify(value));
 }
-async function body(req: http.IncomingMessage): Promise<Record<string, unknown>> {
+async function body(req: http.IncomingMessage, limit = 8192): Promise<Record<string, unknown>> {
   if (req.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'application/json') fail(415, 'Send JSON');
   const chunks: Buffer[] = [];
   let size = 0;
-  for await (const chunk of req) { size += chunk.length; if (size > 8192) fail(413, 'Recovery request is too large'); chunks.push(chunk); }
+  for await (const chunk of req) { size += chunk.length; if (size > limit) fail(413, 'Recovery request is too large'); chunks.push(chunk); }
   let value: unknown;
   try { value = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { fail(400, 'Invalid recovery request'); }
   if (!value || typeof value !== 'object' || Array.isArray(value)) fail(400, 'Send a recovery request object');
@@ -49,30 +55,80 @@ export function restoreTarget(root: string, requested: string) {
   }
   return target;
 }
+function bearer(req: http.IncomingMessage) { return /^Bearer ([a-f0-9]{64})$/.exec(req.headers.authorization ?? '')?.[1]; }
+function payloadPath(url: URL): string {
+  const value = url.searchParams.get('path');
+  if (url.searchParams.getAll('path').length !== 1 || [...url.searchParams.keys()].some(key => key !== 'path') || !value || value.length > 4096 || /[\\:\x00-\x1f\x7f]/.test(value) || value.startsWith('/') || value.split('/').some(part => !part || part === '.' || part === '..')) fail(400, 'Choose a relative file from the instance manifest');
+  return value;
+}
+async function proxy(deps: InstanceRecoveryDeps, req: http.IncomingMessage, res: http.ServerResponse, route: string, query?: URLSearchParams) {
+  const target = new URL(PREFIX.slice(1) + route, deps.remote!.url + '/');
+  if (query) target.search = query.toString();
+  const input = req.method === 'POST' ? route === '/restore' ? await body(req) : {} : undefined;
+  let response: Response;
+  try { response = await fetch(target, { method: req.method, redirect: 'error', signal: AbortSignal.timeout(30 * 60_000),
+    headers: { authorization: `Bearer ${deps.remote!.token}`, ...(input ? { 'content-type': 'application/json' } : {}) }, body: input ? JSON.stringify(input) : undefined }); }
+  catch { fail(502, 'The full-instance backup source could not be reached'); }
+  const file = /^\/source\/snapshots\/([a-f0-9]{32})\/file$/.exec(route);
+  if (file && response.ok) {
+    const size = response.headers.get('content-length'), sha256 = response.headers.get('x-spacehub-sha256');
+    if (!size || !/^\d+$/.test(size) || !Number.isSafeInteger(Number(size)) || !sha256 || !/^[a-f0-9]{64}$/.test(sha256) || response.headers.get('x-spacehub-snapshot') !== file[1] || !response.body) { await response.body?.cancel(); fail(502, 'The backup source returned invalid file metadata'); }
+    res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': size, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'x-spacehub-sha256': sha256, 'x-spacehub-snapshot': file[1] });
+    await pipeline(Readable.fromWeb(response.body as any), res); return;
+  }
+  const limit = /\/manifest$/.test(route) ? 64 * 1024 * 1024 : 2 * 1024 * 1024;
+  const parts: Uint8Array[] = []; let size = 0;
+  if (response.body) for await (const part of response.body as any) { size += part.length; if (size > limit) { await response.body.cancel().catch(() => {}); fail(502, 'Recovery service response is too large'); } parts.push(part); }
+  let value: any;
+  try { value = JSON.parse(Buffer.concat(parts).toString('utf8')); } catch { fail(502, 'The Sub-hub returned an invalid recovery response'); }
+  if (route === '/status' && response.ok && value && typeof value === 'object') value = { ...value, sourceAvailable: value.sourceAvailable ?? value.available === true };
+  json(res, response.status, value);
+}
 export async function handleInstanceRecovery(deps: InstanceRecoveryDeps, req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<boolean> {
   if (url.pathname !== PREFIX && !url.pathname.startsWith(PREFIX + '/')) return false;
   try {
-    if (!(await deps.authorize(req))) fail(403, 'Full-instance recovery requires a hub operator; org ownership does not grant this access');
     const route = url.pathname.slice(PREFIX.length);
+    const heartbeat = /^\/connections\/([a-f0-9]{32})\/heartbeat$/.exec(route);
+    if (heartbeat && req.method === 'POST') {
+      if (req.headers.origin || !bearer(req)) fail(403, 'Use the private Sub-hub machine credential');
+      const connections = deps.connections ?? fail(503, 'Sub-hub connections are unavailable');
+      json(res, 200, connections.heartbeat(heartbeat[1], bearer(req)!, await body(req, 256 * 1024))); return true;
+    }
+    if (route.startsWith('/source/')) {
+      const machine = !req.headers.origin && bearer(req) && deps.connections?.authorize(bearer(req)!);
+      if (!machine && !(await deps.authorize(req))) fail(403, 'Full-instance source access requires a registered Sub-hub or hub operator');
+      const manifest = /^\/source\/snapshots\/([a-f0-9]{32})\/manifest$/.exec(route), file = /^\/source\/snapshots\/([a-f0-9]{32})\/file$/.exec(route);
+      if (req.method !== 'GET' || !(route === '/source/snapshots' || manifest || file)) fail(404, 'No such full-instance source action');
+      const relative = file ? payloadPath(url) : undefined;
+      if (deps.remote) { await proxy(deps, req, res, route, relative ? new URLSearchParams({ path: relative }) : undefined); return true; }
+      const vault = deps.vault ?? fail(503, 'No full-instance backup source is configured');
+      if (route === '/source/snapshots') { json(res, 200, { snapshots: vault.list() }); return true; }
+      if (manifest) { json(res, 200, await vault.exportManifest(manifest[1])); return true; }
+      const saved = await vault.openPayload(file![1], relative!);
+      res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': saved.size, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'x-spacehub-sha256': saved.sha256, 'x-spacehub-snapshot': file![1] });
+      await pipeline(saved.stream, res); return true;
+    }
+    if (!(await deps.authorize(req))) fail(403, 'Full-instance recovery requires a hub operator; org ownership does not grant this access');
+    if (route === '/connections') {
+      const connections = deps.connections ?? fail(503, 'Sub-hub connections are unavailable');
+      if (req.method === 'GET') { json(res, 200, { connections: connections.list() }); return true; }
+      if (req.method === 'POST') {
+        const input = await body(req);
+        if (typeof input.name !== 'string' || ((input.id === undefined) !== (input.token === undefined)) || (input.id !== undefined && (typeof input.id !== 'string' || typeof input.token !== 'string'))) fail(400, 'Choose a machine name and valid optional enrollment');
+        json(res, 200, connections.register(input.name, input.id === undefined ? undefined : { id: input.id as string, token: input.token as string })); return true;
+      }
+      fail(404, 'No such Sub-hub connection action');
+    }
     if (deps.remote) {
       const allowed = (req.method === 'GET' && ['/status', '/snapshots'].includes(route)) || (req.method === 'POST' && (route === '/restore' || /^\/snapshots\/[a-f0-9]{32}\/verify$/.test(route)));
       if (!allowed) fail(404, 'No such full-instance recovery action');
-      const input = req.method === 'POST' ? route === '/restore' ? await body(req) : {} : undefined;
-      const target = new URL('' + PREFIX.slice(1) + route, deps.remote.url + '/');
-      let response: Response;
-      try { response = await fetch(target, { method: req.method, redirect: 'error', signal: AbortSignal.timeout(10 * 60_000),
-        headers: { authorization: `Bearer ${deps.remote.token}`, ...(input ? { 'content-type': 'application/json' } : {}) }, body: input ? JSON.stringify(input) : undefined }); }
-      catch { fail(502, 'The full-instance Sub-hub could not be reached'); }
-      const parts: Uint8Array[] = []; let size = 0;
-      if (response.body) for await (const part of response.body as any) { size += part.length; if (size > 2 * 1024 * 1024) fail(502, 'Recovery service response is too large'); parts.push(part); }
-      let value: unknown;
-      try { value = JSON.parse(Buffer.concat(parts).toString('utf8')); } catch { fail(502, 'The Sub-hub returned an invalid recovery response'); }
-      json(res, response.status, value); return true;
+      await proxy(deps, req, res, route); return true;
     }
     if (route === '/status' && req.method === 'GET') {
-      json(res, 200, { scope: 'instance', source: deps.source, available: !!deps.vault, canManage: true,
-        cli: { containers: deps.containers, storage: deps.storage, restoreRoot: deps.restoreRoot },
+      json(res, 200, { scope: 'instance', source: deps.source, machineName: deps.machineName ?? os.hostname(), available: !!deps.vault, sourceAvailable: !!deps.vault, canManage: true,
+        cli: { storage: deps.storage, restoreRoot: deps.restoreRoot },
         ...(!deps.vault ? { error: 'Connect a full-instance vault with SPACEHUB_RECOVERY_DIR, or open spacehub subhub serve on the recovery machine' } : {}),
+        ...(!deps.vault ? { sourceError: 'No full-instance backup source is configured. Connected Sub-hubs will wait and retry automatically.' } : {}),
       }); return true;
     }
     const vault = deps.vault ?? fail(503, 'No full-instance backup vault is connected');
@@ -88,7 +144,8 @@ export async function handleInstanceRecovery(deps: InstanceRecoveryDeps, req: ht
     }
     fail(404, 'No such full-instance recovery action');
   } catch (error: any) {
-    if (!res.headersSent) json(res, error.status ?? 400, { error: error.message ?? 'Instance recovery failed' });
+    const status = error.status ?? (error.code === 'ENOENT' ? 404 : 500);
+    if (!res.headersSent) json(res, status, { error: error.status ? error.message : status === 404 ? 'No such full-instance backup file' : 'Instance recovery failed' });
     else res.destroy();
     return true;
   }

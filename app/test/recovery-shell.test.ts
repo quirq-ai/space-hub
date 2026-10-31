@@ -8,10 +8,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 // Exercise the actual shell components without browser effects or production data.
 const appDirectory = fileURLToPath(new URL("..", import.meta.url));
-const built = await build({ absWorkingDir: appDirectory, stdin: { contents: 'export { TopBar, Sidebar } from "./src/shell/shell"; export { SettingsPage } from "./src/pages/settings";', resolveDir: appDirectory, loader: "tsx" }, bundle: true, write: false, platform: "node", format: "cjs", jsx: "automatic", external: ["react", "react/jsx-runtime", "react-dom", "react-dom/server"], logLevel: "silent" });
+const built = await build({ absWorkingDir: appDirectory, stdin: { contents: 'export { TopBar, Sidebar } from "./src/shell/shell"; export { SettingsPage } from "./src/pages/settings"; export { SubhubConnectionCard, RemoteBackupCatalog } from "./src/pages/instance-recovery";', resolveDir: appDirectory, loader: "tsx" }, bundle: true, write: false, platform: "node", format: "cjs", jsx: "automatic", external: ["react", "react/jsx-runtime", "react-dom", "react-dom/server"], logLevel: "silent" });
 const compiled: { exports: Record<string, ComponentType<any>> } = { exports: {} };
 new Function("require", "module", "exports", built.outputFiles[0].text)(createRequire(import.meta.url), compiled, compiled.exports);
-const { TopBar, Sidebar, SettingsPage } = compiled.exports;
+const { TopBar, Sidebar, SettingsPage, SubhubConnectionCard, RemoteBackupCatalog } = compiled.exports;
 const nothing = () => {};
 
 test("standalone recovery shell offers its own home without hub search or sign-in", () => {
@@ -47,7 +47,23 @@ test("Settings embeds full-instance Sub-hubs as a section with the three recover
   const markup = renderToStaticMarkup(createElement(SettingsPage));
   assert.match(markup, /<h1>Settings<\/h1>/);
   assert.match(markup, /<h2>[\s\S]*?Sub-hubs<\/h2>/);
-  assert.match(markup, /Backup and restore this entire Spacehub instance/);
+  assert.match(markup, /Automatic backups of this entire Spacehub instance/);
+  assert.match(markup, /spacehub subhub run --storage &lt;folder&gt;/);
   for (const label of ["Overview", "Backups", "Restore"]) assert.match(markup, new RegExp(`>${label}<`));
-  assert.doesNotMatch(markup, /Work queue|Sessions|Active drive/);
+  assert.doesNotMatch(markup, /Work queue|Sessions|Active drive|Docker|containers|allow-stop|Back up instance/);
+});
+
+test("reported connections display heartbeat and source backup time while remote copies have no local restore action", () => {
+  const snapshot = { id: "ab".repeat(16), createdAt: 1_700_000_000_000, source: "hub.example", bytes: 1024, files: 4 };
+  const connection = { id: "backup-laptop", name: "Backup laptop", connectedAt: 1_700_000_100_000, lastSeen: 1_700_000_200_000, online: true, state: "waiting", snapshots: [snapshot] };
+  const card = renderToStaticMarkup(createElement(SubhubConnectionCard, { connection }));
+  assert.match(card, /Waiting for source/);
+  assert.ok(card.includes(new Date(snapshot.createdAt).toISOString()));
+  assert.ok(card.includes(new Date(connection.lastSeen).toISOString()));
+  assert.match(card, /hub.example/);
+  assert.match(card, /1.0 KB/);
+  const remote = renderToStaticMarkup(createElement(RemoteBackupCatalog, { connection }));
+  assert.match(remote, /Restore on Backup laptop/);
+  assert.match(remote, /--storage &lt;folder&gt;/);
+  assert.doesNotMatch(remote, /<form|<button[^>]*>Restore|\/restore/);
 });

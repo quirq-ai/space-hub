@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { INSTANCE_RECOVERY_API, instanceBackupCommand, instanceErrorMessage, instancePost, instanceRestoreBody, instanceRestoreCommand, instanceSnapshotsCommand, instanceVerifyCommand } from "../src/lib/instance-recovery.ts";
+import { INSTANCE_RECOVERY_API, instanceBackupCommand, instanceConnectionLabel, instanceErrorMessage, instancePost, instanceRemoteRestoreCommand, instanceRestoreBody, instanceRestoreCommand, instanceRunCommand, instanceSnapshotsCommand, instanceVerifyCommand, latestInstanceSnapshot, type InstanceConnection, type InstanceSnapshot } from "../src/lib/instance-recovery.ts";
 import { parseRoute } from "../src/router.ts";
 
 const id = "ab".repeat(16);
@@ -13,20 +13,36 @@ test("global Settings includes legacy instance recovery routes while retaining s
   assert.deepEqual(parseRoute("/", ""), { page: "home" });
 });
 
-test("full-instance capture commands map directly to Docker container capture with explicit stop permission", () => {
-  const command = instanceBackupCommand({ containers: ["spacehub", "spacehub-proxy"], storage: "/srv/full vault", shell: "sh" });
-  assert.equal(command, "spacehub subhub backup --container spacehub --container spacehub-proxy --storage '/srv/full vault' --allow-stop");
-  for (const unrelated of ["--space", "--mode", "--project", "--agent"]) assert.equal(command.includes(unrelated), false);
-  assert.throws(() => instanceBackupCommand({ containers: [], storage: "/vault" }), /container/);
-  assert.throws(() => instanceBackupCommand({ containers: ["hub;stop"], storage: "/vault" }), /container/);
-  assert.throws(() => instanceBackupCommand({ containers: ["hub"], storage: "/vault\ncommand" }), /line breaks/);
+test("CLI connection starts automatic backups using its configured hub", () => {
+  const command = instanceRunCommand({ storage: "/srv/full vault", shell: "sh" });
+  assert.equal(command, "spacehub subhub run --storage '/srv/full vault'");
+  assert.equal(instanceRunCommand({ storage: "D:\\Backups", name: "Backup laptop", interval: 60 }), "spacehub subhub run --storage 'D:\\Backups' --name 'Backup laptop' --interval 60");
+  for (const unrelated of ["--space", "--mode", "--project", "--container", "--allow-stop"]) assert.equal(command.includes(unrelated), false);
+  assert.throws(() => instanceRunCommand({ storage: "/vault\ncommand" }), /line breaks/);
+  assert.throws(() => instanceRunCommand({ storage: "/vault", interval: -1 }), /positive whole/);
 });
 
 test("list, verify and restore CLI commands use the full-instance vault and safe path quoting", () => {
   assert.equal(instanceSnapshotsCommand("D:\\Hub vault"), "spacehub subhub snapshots --storage 'D:\\Hub vault'");
+  assert.equal(instanceBackupCommand("/vault"), "spacehub subhub backup --storage /vault");
   assert.equal(instanceVerifyCommand(id, "/vault"), `spacehub subhub verify ${id} --storage /vault`);
   assert.equal(instanceRestoreCommand(id, "/restore/Sam's hub", "/vault", "sh"), `spacehub subhub restore ${id} '/restore/Sam'"'"'s hub' --storage /vault`);
   assert.throws(() => instanceVerifyCommand("project/snapshot", "/vault"), /full-instance backup/);
+});
+
+test("connection state distinguishes a connected waiting client from an offline client", () => {
+  const connection = { online: true, state: "waiting" } as InstanceConnection;
+  assert.equal(instanceConnectionLabel(connection), "Waiting for source");
+  assert.equal(instanceConnectionLabel({ ...connection, state: "syncing" }), "Backing up");
+  assert.equal(instanceConnectionLabel({ ...connection, state: "up-to-date" }), "Up to date");
+  assert.equal(instanceConnectionLabel({ ...connection, online: false, state: "up-to-date" }), "Offline");
+});
+
+test("last backup uses source snapshot time and remote restore keeps the other machine's folder unspecified", () => {
+  const older = { id, createdAt: 100 } as InstanceSnapshot;
+  const newer = { id: "cd".repeat(16), createdAt: 200 } as InstanceSnapshot;
+  assert.equal(latestInstanceSnapshot([newer, older]), newer);
+  assert.equal(instanceRemoteRestoreCommand(id), `spacehub subhub restore ${id} <new-directory> --storage <folder>`);
 });
 
 test("restore submits only the selected instance ID and required new directory", () => {

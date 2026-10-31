@@ -10,6 +10,8 @@ import { execFile, spawn } from 'node:child_process';
 import type { AddressInfo } from 'node:net';
 import { build } from 'esbuild';
 import { InstanceVault } from '../src/instancevault.ts';
+import { InstanceConnections } from '../src/instanceconnections.ts';
+import { handleInstanceRecovery } from '../src/instancerecovery.ts';
 
 let compiled: string, cli: string, assets: string;
 const temporary = () => fs.mkdtempSync(path.join(os.tmpdir(), 'instance-cli-'));
@@ -26,9 +28,9 @@ before(async () => {
   await build({ entryPoints: [path.resolve(import.meta.dirname, '../src/cli.ts')], outfile: cli, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent' });
 });
 after(() => { if (compiled) cleanup(compiled); });
-function run(args: string[]) {
+function run(args: string[], environment: Record<string, string> = {}) {
   return new Promise<{ code: number | string | undefined; stdout: string; stderr: string }>(resolve => {
-    execFile(process.execPath, [cli, ...args], { timeout: 10_000, windowsHide: true, encoding: 'utf8', env: { ...process.env, SPACEHUB_APP_DIR: assets } }, (error, stdout, stderr) => resolve({ code: error?.code ?? 0, stdout, stderr }));
+    execFile(process.execPath, [cli, ...args], { timeout: 10_000, windowsHide: true, encoding: 'utf8', env: { ...process.env, SPACEHUB_APP_DIR: assets, ...environment } }, (error, stdout, stderr) => resolve({ code: error?.code ?? 0, stdout, stderr }));
   });
 }
 async function fixture() {
@@ -46,16 +48,44 @@ async function fixture() {
 test('full-instance Sub-hubs commands remain available without Nodes or org filters', async () => {
   const subhub = await run(['subhub', 'help']), node = await run(['node', 'help']), help = await run(['help']);
   assert.equal(subhub.code, 0, subhub.stderr); assert.equal(help.code, 0, help.stderr);
-  assert.match(subhub.stdout, /subhub backup --container/);
+  assert.match(subhub.stdout, /subhub run --storage <folder>/);
+  assert.match(subhub.stdout, /subhub backup --storage <folder>/);
   assert.match(subhub.stdout, /subhub restore <snapshot> <new-directory>/);
   assert.notEqual(node.code, 0);
   assert.doesNotMatch(help.stdout, /(?:NODES|spacehub node|node run)/);
   assert.doesNotMatch(subhub.stdout, /(?:Nodes|spacehub node)/);
   assert.match(help.stdout, /subhub backup\|snapshots\|verify\|restore\|serve/);
-  assert.doesNotMatch(subhub.stdout, /subhub (?:work|run|register)/);
-  const invalid = await run(['subhub', 'backup', '--container', 'hub', '--storage', path.join(compiled, 'invalid'), '--space', 'quirq']);
+  assert.doesNotMatch(subhub.stdout, /subhub (?:work|register)/);
+  const invalid = await run(['subhub', 'capture', '--container', 'hub', '--storage', path.join(compiled, 'invalid'), '--space', 'quirq']);
   assert.notEqual(invalid.code, 0);
   assert.match(invalid.stderr, /Unknown Sub-hub arguments: --space quirq/);
+});
+
+test('CLI automatically connects and retains full source backups using only a local storage folder', { timeout: 20_000 }, async () => {
+  const f = await fixture();
+  const source = new InstanceVault(f.storage); source.initialize();
+  const connections = new InstanceConnections(path.join(f.root, 'connections')); connections.initialize();
+  const server = http.createServer((req, res) => { void handleInstanceRecovery({ vault: source, connections, source: 'CLI integration fixture', storage: f.storage, containers: [], restoreRoot: path.join(f.root, 'restores'), authorize: async request => request.headers.authorization === 'Bearer test-global-operator' }, req, res, new URL(req.url!, 'http://test')); });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const hub = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const receiver = path.join(f.root, 'receiver');
+  try {
+    const first = await run(['subhub', 'backup', '--storage', receiver, '--name', 'CLI test receiver'], { SPACEHUB_SERVER: hub, SPACEHUB_TOKEN: 'test-global-operator' });
+    assert.equal(first.code, 0, first.stderr);
+    const local = new InstanceVault(receiver); local.initialize();
+    assert.deepEqual(local.list(), [f.snapshot]);
+    assert.equal((await local.verify(f.snapshot.id)).snapshot.sha256, f.snapshot.sha256);
+    assert.equal(connections.list()[0].state, 'up-to-date');
+    assert.equal(connections.list()[0].online, true);
+    const restart = await run(['subhub', 'run', '--storage', receiver, '--once'], { SPACEHUB_SERVER: hub, SPACEHUB_TOKEN: '' });
+    assert.equal(restart.code, 0, restart.stderr);
+    assert.equal(connections.list().length, 1);
+    const restored = path.join(f.root, 'receiver-restored');
+    const result = await run(['subhub', 'restore', f.snapshot.id, restored, '--storage', receiver]);
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(fs.readFileSync(path.join(restored, 'deployment.json'), 'utf8'), /test-only-secret/);
+    assert.equal(JSON.stringify(connections.list()).includes('test-global-operator'), false);
+  } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); cleanup(f.root); }
 });
 
 test('CLI list, verify and new-directory restore retain the entire instance bundle', async () => {

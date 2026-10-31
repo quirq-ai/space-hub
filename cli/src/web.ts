@@ -23,8 +23,9 @@
 // the user's identity token in an HttpOnly cookie, so every action runs as
 // that user and the module's own ownership checks apply.
 import http from 'node:http';
+import path from 'node:path';
 import { connectTo, errorMessage, findProject, findUser, quietSdkLogs, snapshot, tables, type Conn } from './conn';
-import { githubLogin, normalizeServer } from './config';
+import { configFile, githubLogin, normalizeServer } from './config';
 import { esc, navFor, PAGE_CSP, shell, sideFor } from '../../module/src/style';
 import { signInWays, xoButton, type Hub } from '../../module/src/howto';
 import { Fail, GithubSync, githubApi, githubBuilder as builderOf, githubInfo as infoOf, mirrorProject } from './github';
@@ -37,6 +38,7 @@ import { Reply, select } from './admin';
 import { agentHubConfig, handleAgentHub } from './agenthub';
 import { InstanceVault } from './instancevault';
 import { handleInstanceRecovery, recoveryRemote } from './instancerecovery';
+import { InstanceConnections } from './instanceconnections';
 
 quietSdkLogs();
 
@@ -65,6 +67,9 @@ const RECOVERY_DIR = process.env.SPACEHUB_RECOVERY_DIR ?? '';
 const RECOVERY_REMOTE = recoveryRemote(process.env.SPACEHUB_RECOVERY_URL, process.env.SPACEHUB_RECOVERY_TOKEN);
 const RECOVERY_VAULT = RECOVERY_DIR ? new InstanceVault(RECOVERY_DIR) : null;
 RECOVERY_VAULT?.initialize();
+const RECOVERY_CONNECTIONS = new InstanceConnections(process.env.SPACEHUB_RECOVERY_STATE_DIR
+  || (process.env.SPACETIME_ROOT ? path.join(process.env.SPACETIME_ROOT, '.spacehub', 'recovery-connections') : path.join(path.dirname(configFile()), 'recovery-connections')));
+RECOVERY_CONNECTIONS.initialize();
 // Explicit deployment-level delegation; org membership never grants it.
 const RECOVERY_OPERATORS = new Set((process.env.SPACEHUB_RECOVERY_OPERATORS ?? '').split(',').map(name => name.trim()).filter(Boolean));
 const SYNC = ADMIN_TOKEN
@@ -419,7 +424,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   if (await handleXo(XO, req, res)) return;
   // Called by the CLI with a GitHub token, not from the site's forms.
   if (await handleSignIn(SIGNIN, req, res)) return;
-  if (await handleInstanceRecovery({ vault: RECOVERY_VAULT, authorize: recoveryOperator,
+  if (await handleInstanceRecovery({ vault: RECOVERY_VAULT, connections: RECOVERY_CONNECTIONS, authorize: recoveryOperator,
     source: process.env.SPACEHUB_PUBLIC_URL ?? DB,
     storage: RECOVERY_DIR,
     containers: (process.env.SPACEHUB_RECOVERY_CONTAINERS ?? '').split(',').map(name => name.trim()).filter(Boolean),
