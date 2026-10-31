@@ -689,6 +689,197 @@ login` on another machine gets the same token back. Otherwise, run
 override the saved settings; `SPACEHUB_WEB` points sign-in at a web service
 on its own port (a local test server).
 
+## Sub-hubs: full-instance backup and recovery
+
+**Settings**, directly below **Guide** in the navigation, opens
+`/#/settings`. Its **Sub-hubs** section is the recovery view
+for an entire Spacehub deployment. It lists immutable backups, verifies
+their contents and restores a chosen backup into a new directory. Access
+requires the hub's global administrator identity or an explicitly delegated
+recovery operator. Owning a space does not grant instance recovery access.
+
+### Run a connected Sub-hub
+
+On the backup machine, sign in to the configured hub as a recovery operator
+and run:
+
+```sh
+spacehub subhub run --storage /srv/spacehub-backups --name office-backup
+```
+
+The CLI enrolls a private machine identity, stays connected and automatically
+copies complete source backups into an immutable local vault. Settings shows
+the connection, heartbeat, automatic backup state and retained generations.
+It does not ask for deployment containers or start services through a form.
+The receiving machine needs the CLI and writable disk; it does not need Docker.
+Restarting the same storage folder reuses its identity. Private enrollment
+state lives beside the vault in `<storage>.runtime`; keep that directory private.
+
+The default sync interval is 60 seconds (`--interval` changes it); heartbeats
+continue independently while a backup downloads. A stopped CLI becomes offline
+in Settings after its heartbeat expires. An unavailable or empty source is
+reported as waiting: connection alone does not mean the hub has been backed up.
+Generations retain their source ID, creation time and manifest hash; transfers
+are published only after every file verifies. Interrupted or corrupt copies
+do not replace an earlier verified backup.
+
+```sh
+spacehub subhub backup --storage /srv/spacehub-backups  # one immediate sync
+spacehub subhub snapshots --storage /srv/spacehub-backups
+spacehub subhub verify <snapshot-id> --storage /srv/spacehub-backups
+spacehub subhub restore <snapshot-id> /srv/recovered-instance --storage /srv/spacehub-backups
+```
+
+Restore runs on the machine containing that vault. The UI distinguishes the
+recovery service's vault from other connected machines' retained catalogs.
+Machine credentials authorize full-instance backup reads, never org work or
+agent execution. The hub stores only their hashes and does not show credentials
+in connection status.
+
+### Deployment operator: provide complete source backups
+
+The hub needs a complete source backup before receiving Sub-hubs can copy it.
+This is deployment setup, separate from the receiving CLI and Settings UI.
+SpacetimeDB's private database and server identities cannot be reconstructed
+from project Git repositories. The current source adapter captures the whole
+deployment while stopped, including private configuration and exact runtime.
+
+Run the CLI on a machine with access to the deployment's Docker daemon.
+Select every stack container, including Spacehub, the TLS proxy and any
+other service with persistent state or private configuration:
+
+```sh
+spacehub subhub help
+spacehub subhub capture --container spacehub --container caddy --storage /srv/instance-vault --allow-stop
+spacehub subhub snapshots --storage /srv/instance-vault
+spacehub subhub verify <snapshot-id> --storage /srv/instance-vault
+spacehub subhub restore <snapshot-id> /srv/recovered-instance --storage /srv/instance-vault
+```
+
+`--allow-stop` authorizes a maintenance window. The adapter stops the
+selected running containers, checks that they stopped gracefully, captures
+them while stopped, and attempts to restart every originally running
+container afterward, including on failure. Containers already stopped stay
+stopped; a fully stopped deployment can be captured without `--allow-stop`.
+Keep other processes that write shared mounts stopped too. This is a cold
+capture, not a consistent backup of files changing underneath it.
+
+For automatic source creation, save a private JSON file containing
+`{"containers":["spacehub","caddy"],"allowStop":true}` and run the source
+service outside the selected deployment:
+
+```sh
+spacehub subhub source --storage /srv/instance-vault --capture-config /srv/capture.json --capture-every 3600 --token-file /srv/recovery-token
+```
+
+It captures immediately and then at the configured interval, retaining the
+previous generation if capture fails. Stopping selected services is an actual
+maintenance window; choose the interval accordingly. Point the main web
+service's recovery source connection at this independent service as described
+below. Connected receivers then download new verified generations automatically.
+
+Each backup includes:
+
+- All persistent bind and volume mounts of the selected containers,
+  including the hub's `/data` or configured `SPACETIME_ROOT`: databases,
+  all spaces, identities, permissions, agent tokens, signing keys and
+  private server state present there.
+- Exact base image archives, deduplicated by image ID, plus a merged
+  filesystem export of every selected container. The latter includes its
+  writable layer and custom files outside mounted volumes.
+- A private `deployment.json` with full Docker inspect configuration,
+  environment values, image IDs, mount mappings and archive mappings.
+  OAuth/XO secrets and TLS state are included when present in the selected
+  containers or their persistent mounts.
+
+The prepared layout is `deployment.json`, `images/*.tar`,
+`containers/*.tar` and `volumes/*.tar`. Persistent mounts are retained as
+opaque [Docker copy TAR streams](https://docs.docker.com/reference/cli/docker/container/cp/), so binary data, modes, owner/group IDs,
+symlinks and hard links do not depend on the capture host's filesystem.
+Container exports exclude mounted volume contents, which have their own
+archives. Nonpersistent tmpfs contents are excluded and recorded as such.
+External databases, object stores, DNS, host services and containers you
+did not select need their own coordinated backup. There is no space or
+project filter for a full-instance capture.
+
+Use a dedicated private vault outside every captured mount source, with
+room for both staging and the retained snapshot. The vault defaults to a
+100 GiB application preflight limit and retains older generations; it does
+not prune them automatically. Snapshots contain credentials and must be
+protected as carefully as the running server's data directory. Copy the
+complete vault to independent storage for protection against disk loss.
+
+### Verification and recovery
+
+`verify` checks the immutable manifest and every saved file's SHA-256.
+It leaves the backup unchanged and works without the primary hub. This
+proves the saved bytes match the manifest; test startup separately to
+confirm the recovered deployment works with its host and external services.
+
+`restore` verifies and copies the complete prepared bundle into a new,
+previously nonexistent directory outside the vault. It never overwrites a
+running deployment, extracts volume archives, loads images or starts
+containers. Use `deployment.json` to identify each archive and reconstruct
+the deployment manually on the recovery host: load the exact images,
+restore the container filesystem changes and persistent mounts, recreate
+the recorded runtime configuration and networks, then start and validate
+the recovered stack before switching traffic.
+
+File and directory modes are preserved where the host supports them.
+Mount archives retain the UID/GID, modes and links emitted by Docker;
+apply them with suitable tools when restoring the actual Linux volumes.
+UID/GID mappings, ACLs, extended attributes and security labels may need
+additional host restoration. Docker's archive format and the target
+filesystem determine which metadata can be recovered. The CLI preserves
+archive bytes without interpreting them, so recovery on Windows does not
+silently flatten the Linux mount metadata.
+
+### Recovery UI independent of the primary hub
+
+The same built app can run against a local vault while the primary hub is
+offline, without a database connection or a primary-hub sign-in:
+
+```sh
+spacehub subhub serve --storage /srv/instance-vault --restore-root /srv/instance-restores --token-file /srv/recovery-token
+```
+
+Open the printed URL, normally `http://127.0.0.1:4092/#/settings`.
+`--listen 127.0.0.1:4092` changes the loopback port; public listeners are
+not supported. `--source <hub-name>` labels the source. The service needs
+the built app assets (`npm run build` in `app/` for a source checkout).
+It serves backup listing, verification and new-directory restore, with
+restores restricted to children of `--restore-root`. The default restore
+root is `spacehub-restores` alongside the vault. `--token-file` creates or
+reuses a private recovery key for a web-service connection; keep it secret.
+The local browser receives a separate recovery session cookie.
+
+### Recovery in the main web service
+
+The web service exposes the same UI through the protected
+`/-/api/instance-recovery` endpoints. Configure a local vault with
+`SPACEHUB_RECOVERY_DIR`, an allowed restore parent with
+`SPACEHUB_RESTORE_ROOT`. `SPACEHUB_PUBLIC_URL` (or the database name) labels the
+source. Explicitly delegate access to registered builder usernames with
+comma-separated `SPACEHUB_RECOVERY_OPERATORS`; otherwise only the global
+administrator recorded by the module qualifies. The web service uses its
+private `SPACEHUB_ADMIN_TOKEN` to check that administrator identity.
+`SPACEHUB_RECOVERY_STATE_DIR` chooses the private connected-machine registry;
+otherwise it is stored under the server's persistent root or CLI home.
+
+Alternatively, set `SPACEHUB_RECOVERY_URL` and `SPACEHUB_RECOVERY_TOKEN` to
+connect the main web service to a separate recovery service. The URL must
+use HTTPS or loopback HTTP and be reachable from the web process; the
+token is the private key from that service's `--token-file`. A remote HTTPS
+proxy must set the upstream Host to `127.0.0.1:4092` (or the configured
+loopback port) and omit the browser's Origin header on the bearer-authenticated
+upstream API request.
+The main web service still checks global operator access before forwarding
+the fixed recovery routes. It sends the recovery credential, without
+forwarding browser cookies or builder credentials. Choose either a local
+vault or this remote connection. Keep the standalone recovery UI available
+as well: the main hub's UI and sign-in depend on the primary database.
+
+
 ## Local development
 
 ```sh

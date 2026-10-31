@@ -21,6 +21,7 @@ import { git } from './git';
 import { cloneProject, findManifest, SpaceSync, writeManifest } from './spacesync';
 import { DEFAULT_HUB_HOST, githubTokenTarget, hubUrl, parseHubUrl, REMOTE } from './url';
 import { deviceSignIn } from './devicelogin';
+import { instanceSubhubCommand } from './instancesubhub';
 
 quietSdkLogs();
 
@@ -55,6 +56,11 @@ SETUP
   doctor          Check this machine: where the CLI is installed and whether your shell
                     finds it (with the PATH line to add if not), whether the install
                     survives a restart, the CLI vs the hub, and who you are signed in as
+
+SUB-HUBS
+  subhub run --storage <folder>             Connect and automatically retain full backups
+  subhub backup|snapshots|verify|restore|serve  Entire Spacehub instance recovery
+                                             See spacehub subhub help
 
 SPACES
   space create <org> [-d <text>]           Create an org (you are its owner)
@@ -1346,6 +1352,7 @@ async function main() {
   if (!group || group === 'help' || group === '--help' || group === '-h') return out(HELP);
   if (group === '--version' || group === 'version') return out(`spacehub ${VERSION} (protocol ${PROTOCOL})`);
   if (group === 'doctor') return doctor();
+  if (group === 'subhub' || group === 'sub-hub') return instanceSubhubCommand(sub, args);
 
   if (group === 'auth') {
     switch (sub) {
@@ -1417,6 +1424,9 @@ async function main() {
 main()
   .then(() => {
     session?.conn.disconnect();
+    // Fetch-backed Sub-hubs close their own streams and timers. Let Node
+    // drain network cleanup rather than interrupting native callbacks.
+    if (process.argv[2] === 'subhub' || process.argv[2] === 'sub-hub') { process.exitCode = 0; return; }
     process.exit(0);
   })
   .catch(async err => {
@@ -1424,5 +1434,6 @@ main()
     if (message) note(`spacehub: ${message}`);
     for (const line of await refusalHelp(message)) note(`  ${line}`);
     session?.conn.disconnect();
+    if (process.argv[2] === 'subhub' || process.argv[2] === 'sub-hub') { process.exitCode = err instanceof Exit ? err.status : 1; return; }
     process.exit(err instanceof Exit ? err.status : 1);
   });

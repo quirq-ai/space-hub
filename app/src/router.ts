@@ -7,7 +7,7 @@ import type { Place } from "@/api";
  * server and its proxy only ever see those three paths.
  */
 export type Route =
-  | { page: "home"; tab: "home" | "agents" | "builders" }
+  | { page: "home"; tab: "home" | "agents" | "builders" | "settings" }
   | { page: "space"; place: Place; tab: "projects" | "agents" | "activity" | "people" }
   // as=folder shows a folder as files even when it is a channel or a list of channels.
   | { page: "project"; place: Place; tab: "files"; path: string; as: string }
@@ -23,6 +23,7 @@ export function parseRoute(pathname: string, hash: string): Route {
   const place = { space, project };
   const [tab = "", qs = ""] = hash.replace(/^#\/?/, "").split("?");
   const params = new URLSearchParams(qs);
+  if (!project && (tab === "settings" || tab === "subhubs")) return { page: "home", tab: "settings" };
   if (!space) return { page: "home", tab: tab === "agents" || tab === "builders" ? tab : "home" };
   if (!project) return { page: "space", place, tab: tab === "activity" || tab === "people" || tab === "agents" ? tab : "projects" };
   switch (tab) {
@@ -55,6 +56,9 @@ export function navigate(url: string) {
 export function useRoute(): Route {
   const read = () => parseRoute(location.pathname, location.hash);
   const [route, setRoute] = useState(read);
+  useEffect(() => {
+    if (route.page === "home" && route.tab === "settings" && (location.pathname !== "/" || location.hash !== "#/settings")) history.replaceState(null, "", "/#/settings");
+  }, [route]);
   useEffect(() => {
     const update = () => setRoute(read());
     addEventListener("popstate", update);

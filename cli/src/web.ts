@@ -26,8 +26,9 @@
 // the user's identity token in an HttpOnly cookie, so every action runs as
 // that user and the module's own ownership checks apply.
 import http from 'node:http';
+import path from 'node:path';
 import { connectTo, errorMessage, findProject, findUser, quietSdkLogs, snapshot, tables, type Conn } from './conn';
-import { githubLogin, normalizeServer } from './config';
+import { configFile, githubLogin, normalizeServer } from './config';
 import { esc, navFor, PAGE_CSP, shell, sideFor } from '../../module/src/style';
 import { signInButtons, signInWays, step, steps, type Hub } from '../../module/src/howto';
 import { Fail, GithubSync, githubApi, githubBuilder as builderOf, githubInfo as infoOf, mirrorProject } from './github';
@@ -39,6 +40,9 @@ import * as githubWeb from './githubsignin';
 import { appDir, handleApp } from './app';
 import { Reply, select } from './admin';
 import { agentHubConfig, handleAgentHub } from './agenthub';
+import { InstanceVault } from './instancevault';
+import { handleInstanceRecovery, recoveryRemote } from './instancerecovery';
+import { InstanceConnections } from './instanceconnections';
 
 quietSdkLogs();
 
@@ -63,6 +67,15 @@ const SIGNIN = signInConfig(DB, INTERNAL_HTTP, GITHUB);
 // Spaces linked to GitHub sync as the hub admin, whose token the entrypoint
 // hands over.
 const ADMIN_TOKEN = process.env.SPACEHUB_ADMIN_TOKEN ?? '';
+const RECOVERY_DIR = process.env.SPACEHUB_RECOVERY_DIR ?? '';
+const RECOVERY_REMOTE = recoveryRemote(process.env.SPACEHUB_RECOVERY_URL, process.env.SPACEHUB_RECOVERY_TOKEN);
+const RECOVERY_VAULT = RECOVERY_DIR ? new InstanceVault(RECOVERY_DIR) : null;
+RECOVERY_VAULT?.initialize();
+const RECOVERY_CONNECTIONS = new InstanceConnections(process.env.SPACEHUB_RECOVERY_STATE_DIR
+  || (process.env.SPACETIME_ROOT ? path.join(process.env.SPACETIME_ROOT, '.spacehub', 'recovery-connections') : path.join(path.dirname(configFile()), 'recovery-connections')));
+RECOVERY_CONNECTIONS.initialize();
+// Explicit deployment-level delegation; org membership never grants it.
+const RECOVERY_OPERATORS = new Set((process.env.SPACEHUB_RECOVERY_OPERATORS ?? '').split(',').map(name => name.trim()).filter(Boolean));
 const SYNC = ADMIN_TOKEN
   ? new GithubSync({
       server: SERVER,
@@ -210,6 +223,23 @@ async function spacesOf(session: { token: string; username: string }): Promise<s
     )
   ).catch(() => [] as string[]);
   return [session.username, ...others.sort()];
+}
+
+async function recoveryOperator(req: http.IncomingMessage): Promise<boolean> {
+  const bearer = /^Bearer (\S+)$/.exec(req.headers.authorization ?? '')?.[1];
+  if (req.headers.origin && !sameOrigin(req)) return false;
+  if (!bearer && req.method !== 'GET' && req.method !== 'HEAD' && !sameOrigin(req)) return false;
+  const token = bearer ?? cookieValue(req, 'spacehub_session');
+  if (!token) return false;
+  try {
+    return await withConn(token, async (conn, identity) => {
+      const user = await findUser(conn, identity);
+      if (user && RECOVERY_OPERATORS.has(user.username)) return true;
+      if (!ADMIN_TOKEN) return false;
+      const rows = await select({ adminToken: ADMIN_TOKEN, http: INTERNAL_HTTP, db: DB }, "SELECT value FROM hub_state WHERE key = 'admin'");
+      return rows[0]?.value === identity.toHexString();
+    });
+  } catch { return false; }
 }
 
 // ---------------------------------------------------------------- GitHub
@@ -435,6 +465,13 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   if (await handleXo(XO, req, res)) return;
   // Called by the CLI with a GitHub token, not from the site's forms.
   if (await handleSignIn(SIGNIN, req, res)) return;
+  if (await handleInstanceRecovery({ vault: RECOVERY_VAULT, connections: RECOVERY_CONNECTIONS, authorize: recoveryOperator,
+    source: process.env.SPACEHUB_PUBLIC_URL ?? DB,
+    storage: RECOVERY_DIR,
+    containers: (process.env.SPACEHUB_RECOVERY_CONTAINERS ?? '').split(',').map(name => name.trim()).filter(Boolean),
+    restoreRoot: process.env.SPACEHUB_RESTORE_ROOT ?? '',
+    remote: RECOVERY_REMOTE,
+  }, req, res, url)) return;
   if (LIVE.handle(req, res, url)) return;
   if (req.method === 'POST' && !sameOrigin(req)) return send(res, 403, page('Forbidden', null, '<h1>Forbidden</h1><p class="desc">This form must be sent from this site.</p>'));
   if (await handleAgentHub(AGENTHUB, { sessionOf, spacesOf, appendChat, sameOrigin, ...(XO ? { xoLinked } : {}) }, req, res, url)) return;

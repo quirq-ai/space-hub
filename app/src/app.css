@@ -669,3 +669,115 @@ a.label:hover { text-decoration: none; filter: brightness(.96); }
 .label.goal-label { gap: 5px; }
 .label.goal-label .meter { background: var(--line-strong); }
 @media (max-width: 640px) { .goal-panel { padding: 14px; } .goal-text { font-size: 17px; } .meter.large { width: 40%; } }
+
+/* Full-instance backup and recovery controls inside Settings. */
+.subhubs { min-width: 0; padding: 4px 0 24px; }
+.subhub-heading, .subhub-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.subhub-actions { justify-content: flex-start; }
+.subhub-heading h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 20px; letter-spacing: -.025em; }
+.subhub-heading p, .subhub-section-heading p { margin: 5px 0 0; font-size: 13px; line-height: 1.5; }
+.subhub-sections { display: flex; gap: 4px; margin: 20px 0; padding: 4px; width: fit-content; max-width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: 9px; background: var(--fill); }
+.subhub-sections button { display: inline-flex; align-items: center; gap: 7px; flex: none; padding: 8px 13px; border: 0; border-radius: 6px; color: var(--text-2); background: transparent; font: 500 13px var(--font); cursor: pointer; }
+.subhub-sections button:hover { color: var(--text); background: var(--panel); }
+.subhub-sections button.on { color: var(--accent-text); background: var(--panel); box-shadow: 0 1px 3px #0000000d; }
+.subhub-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
+.subhub-stat { padding: 18px 20px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg); }
+.subhub-stat > span { display: flex; gap: 8px; align-items: center; color: var(--text-2); font-size: 12px; }
+.subhub-stat > span svg { color: var(--text-3); }
+.subhub-stat strong { display: block; margin-top: 12px; font-size: 28px; font-weight: 600; line-height: 1.15; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+.subhub-section-heading { margin-bottom: 18px; }
+.subhub-section-heading h3, .subhub-form h3 { margin: 0; font-size: 15px; }
+.subhub-note { color: var(--text-3); font-size: 12px; line-height: 1.6; margin: 14px 0; }
+.subhub-note code { font-size: 11px; overflow-wrap: anywhere; }
+.subhub-form { display: grid; gap: 14px; }
+.subhub-form label { display: grid; gap: 7px; font-size: 12px; font-weight: 500; color: var(--text-2); }
+.subhub-form label .quiet { font-weight: 400; font-size: 11px; line-height: 1.5; }
+.subhubs input, .subhubs select, .subhubs textarea { min-width: 0; max-width: 100%; padding: 9px 11px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--bg); color: var(--text); font: 13px var(--font); }
+.subhubs textarea { resize: vertical; line-height: 1.5; }
+.subhubs input:focus-visible, .subhubs select:focus-visible, .subhubs textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.subhubs :disabled { opacity: .55; cursor: not-allowed; }
+.subhub-form > .button { justify-self: start; }
+@media (max-width: 640px) {
+  .subhub-stats { grid-template-columns: 1fr; gap: 8px; }
+  .subhub-stat { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; }
+  .subhub-stat strong { margin: 0; font-size: 24px; }
+  .subhub-sections { width: 100%; }
+  .subhub-sections button { flex: 1; justify-content: center; padding: 8px; gap: 5px; font-size: 12px; }
+  .subhub-sections button svg { display: none; }
+}
+
+/* Full-instance recovery details. */
+.page.settings-page { width: 100%; min-width: 0; padding: 22px 36px 32px; }
+.instance-recovery .page-header, .instance-recovery .page-title-row, .instance-stats, .instance-stats .subhub-stat, .instance-vault, .instance-backup, .instance-restore { min-width: 0; max-width: 100%; }
+.instance-recovery .page-title { overflow-wrap: anywhere; }
+.instance-mark { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 48px; height: 48px; border-radius: 12px; color: var(--accent-text); background: var(--accent-soft); }
+.instance-stats .subhub-stat .instance-stat-text { font-size: 19px; letter-spacing: -.025em; line-height: 1.3; }
+.instance-vault, .instance-backup, .instance-restore { padding: 22px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg); }
+.instance-vault dl, .instance-backup-details dl { display: grid; gap: 12px; margin: 18px 0; font-size: 13px; }
+.instance-vault dl > div, .instance-backup-details dl > div { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 14px; }
+.instance-vault dt, .instance-backup-details dt { color: var(--text-3); }
+.instance-vault dd, .instance-backup-details dd { margin: 0; color: var(--text-2); overflow-wrap: anywhere; }
+.instance-vault dd code, .instance-backup-details dd code { font-size: 11px; }
+.instance-vault .subhub-actions { margin-top: 20px; }
+.instance-coverage { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.instance-coverage > span { display: inline-flex; align-items: center; gap: 6px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--fill); color: var(--text-2); font-size: 11px; }
+.instance-coverage.included > span { color: var(--green); background: var(--green-soft); border-color: transparent; }
+.instance-permission { display: flex; align-items: center; gap: 8px; margin: 16px 0; padding: 12px 14px; background: var(--fill); border-radius: 7px; color: var(--text-2); font-size: 12px; line-height: 1.5; }
+.instance-backups { display: grid; gap: 14px; }
+.instance-backup h3 { margin: 0; font-size: 15px; }
+.instance-snapshot-id { display: block; margin: 12px 0 16px; font-size: 11px; color: var(--text-3); overflow-wrap: anywhere; }
+.instance-integrity { display: flex; align-items: center; gap: 6px; margin: 16px 0; color: var(--text-2); font-size: 12px; }
+.instance-backup-details { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); font-size: 12px; }
+.instance-backup-details summary { color: var(--text-3); cursor: pointer; }
+.instance-restore { max-width: 720px; }
+.instance-restore-note { display: flex; align-items: flex-start; gap: 10px; padding: 13px 14px; border: 1px solid var(--line); border-radius: 7px; background: var(--fill); color: var(--text-2); font-size: 12px; line-height: 1.6; }
+.instance-restore-note svg { flex: none; margin-top: 2px; }
+.instance-restore-note p { margin: 0; }
+.instance-restored { display: flex; align-items: flex-start; gap: 10px; padding: 16px; border-radius: 8px; color: var(--green); background: var(--green-soft); }
+.instance-restored svg { flex: none; }
+.instance-restored h3 { font-size: 14px; margin: 0; }
+.instance-restored p { margin: 6px 0; font-size: 12px; }
+.instance-restored code { font-size: 11px; overflow-wrap: anywhere; }
+.instance-connections { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 14px; }
+.instance-connection { min-width: 0; padding: 18px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--panel); }
+.instance-connection-name { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.instance-connection-name svg { flex: none; color: var(--accent-text); }
+.instance-connection-name h3 { margin: 0; font-size: 15px; overflow-wrap: anywhere; }
+.instance-connection dl { display: grid; gap: 12px; margin: 18px 0 0; font-size: 12px; }
+.instance-connection dl > div { display: grid; grid-template-columns: minmax(100px, .8fr) minmax(0, 1fr); gap: 10px; }
+.instance-connection dt { color: var(--text-3); }
+.instance-connection dd { margin: 0; color: var(--text-2); overflow-wrap: anywhere; }
+.instance-backup-fact { display: block; margin: 4px 0; color: var(--text-3); font-size: 11px; overflow-wrap: anywhere; }
+.instance-connection-error { margin: 14px 0 0; padding: 10px 12px; border-radius: 6px; color: var(--red); background: var(--red-soft); font-size: 12px; line-height: 1.5; }
+.instance-waiting { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 18px; padding: 14px 16px; border-radius: 8px; color: var(--amber); background: var(--amber-soft); font-size: 12px; line-height: 1.6; }
+.instance-waiting svg { flex: none; margin-top: 2px; }
+.instance-waiting p { margin: 3px 0 0; }
+.instance-setup { margin-top: 22px; padding: 20px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg); }
+.instance-setup h3 { margin: 0; font-size: 15px; }
+.instance-setup > p { margin: 7px 0 16px; font-size: 13px; line-height: 1.6; }
+.instance-setup-fields { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 12px; margin-bottom: 14px; }
+.instance-setup-fields label { display: grid; gap: 6px; min-width: 0; font-size: 12px; color: var(--text-2); }
+.instance-local-commands { margin-top: 16px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 8px; font-size: 12px; }
+.instance-local-commands > summary { color: var(--text-2); cursor: pointer; }
+.instance-remote-catalog { margin-top: 28px; }
+.instance-remote-backup { margin-top: 12px; }
+.instance-remote-backup h3 { display: flex; align-items: center; gap: 7px; overflow-wrap: anywhere; }
+.instance-remote-backup ul { list-style: none; margin: 14px 0 0; padding: 0; }
+.instance-remote-backup li { padding: 14px 0; border-top: 1px solid var(--line); font-size: 12px; }
+.instance-remote-backup li code { font-size: 11px; overflow-wrap: anywhere; }
+.instance-remote-backup details { margin-top: 10px; }
+.instance-remote-backup summary { color: var(--accent-text); cursor: pointer; }
+@media (max-width: 640px) {
+  .page.settings-page { padding: 16px 16px 20px; }
+  .instance-recovery .page-title-row { flex-wrap: wrap; }
+  .instance-recovery .page-actions { flex-basis: 100%; }
+  .instance-recovery .subhub-sections { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); min-width: 0; overflow: visible; }
+  .instance-recovery .subhub-sections button { min-width: 0; }
+  .instance-stats .subhub-stat { gap: 12px; }
+  .instance-stats .subhub-stat > span { flex: 1 1 0; min-width: 0; }
+  .instance-stats .subhub-stat .instance-stat-text { min-width: 0; max-width: 55%; text-align: right; overflow-wrap: anywhere; }
+  .instance-vault, .instance-backup, .instance-restore { padding: 16px; }
+  .instance-vault dl > div, .instance-backup-details dl > div { grid-template-columns: 1fr; gap: 4px; }
+  .instance-setup { padding: 16px; }
+  .instance-setup-fields { grid-template-columns: minmax(0, 1fr); }
+}
