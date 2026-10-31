@@ -15,6 +15,8 @@ DB="${SPACEHUB_DB:-spacehub}"
 INTERNAL="127.0.0.1:${SPACETIME_INTERNAL_PORT:-3001}"
 export PORT="${PORT:-3000}"
 export SPACEHUB_RECOVERY_STATE_DIR="${SPACEHUB_RECOVERY_STATE_DIR:-$ROOT/.spacehub/recovery-connections}"
+# The hub backs up this folder on a schedule (cli/src/hubbackup.ts).
+export SPACEHUB_DATA_ROOT="$ROOT"
 
 # Platform volumes usually arrive owned by root. Started as root, take the
 # data directory for the spacetime user, then drop root for everything else.

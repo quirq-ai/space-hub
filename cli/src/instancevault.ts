@@ -21,12 +21,26 @@ export class InstanceVaultError extends Error {
 }
 function fail(status: number, message: string): never { throw new InstanceVaultError(status, message); }
 export interface Coverage { data: boolean; runtime: boolean; configuration: boolean }
+// How a backup was made: the whole Docker deployment captured while stopped
+// (instancecapture.ts), or the hub's data folder copied while it runs
+// (hubbackup.ts): its data only, the image and settings are the deployment's.
+export type Consistency = 'stopped-containers' | 'live-copy';
+export const COVERAGE: Record<Consistency, Coverage> = {
+  'stopped-containers': { data: true, runtime: true, configuration: true },
+  'live-copy': { data: true, runtime: false, configuration: false },
+};
 export interface CaptureInfo {
-  source: string; services: string[]; consistency: 'stopped-containers'; createdAt?: number; coverage: Coverage;
+  source: string; services: string[]; consistency: Consistency; createdAt?: number; coverage: Coverage;
 }
 export interface Snapshot {
   id: string; createdAt: number; source: string; services: string[]; scope: 'instance';
-  consistency: 'stopped-containers'; coverage: Coverage; files: number; bytes: number; sha256: string;
+  consistency: Consistency; coverage: Coverage; files: number; bytes: number; sha256: string;
+}
+/** The kind of a backup and the coverage that goes with it, or null when they do not match. */
+export function backupKind(consistency: unknown, coverage: unknown): Consistency | null {
+  if (consistency !== 'stopped-containers' && consistency !== 'live-copy') return null;
+  const want = COVERAGE[consistency];
+  return object(coverage) && coverage.data === want.data && coverage.runtime === want.runtime && coverage.configuration === want.configuration ? consistency : null;
 }
 export interface ManifestFile { path: string; size: number; sha256: string; mode: number }
 export interface TransferManifest {
@@ -177,7 +191,8 @@ async function copyAndHash(source: string, destination?: string, expected?: Inve
   } finally { try { await output?.close(); } finally { await input.close(); } }
 }
 function metadata(info: CaptureInfo, id: string): Manifest['info'] {
-  if (!object(info) || info.consistency !== 'stopped-containers' || !object(info.coverage) || info.coverage.data !== true || info.coverage.runtime !== true || info.coverage.configuration !== true) fail(400, 'A complete instance needs stopped-container data, runtime and configuration coverage');
+  const kind = object(info) ? backupKind(info.consistency, info.coverage) : null;
+  if (!kind) fail(400, 'A backup is a stopped deployment with data, runtime and configuration, or a live copy of the hub data');
   if (typeof info.source !== 'string' || !info.source.trim() || info.source.length > 1024 || /[\x00-\x1f\x7f]/.test(info.source)) fail(400, 'Invalid instance source label');
   if (!Array.isArray(info.services) || !info.services.length || info.services.length > 256 || info.services.some(service => typeof service !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(service))) fail(400, 'Invalid instance service list');
   const createdAt = info.createdAt ?? Date.now();
@@ -187,12 +202,16 @@ function metadata(info: CaptureInfo, id: string): Manifest['info'] {
     .replace(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, '[redacted]')
     .replace(/Bearer\s+\S+/gi, 'Bearer [redacted]')
     .replace(/\b(token|secret|password|api[_-]?key)=\S+/gi, '$1=[redacted]');
-  return { id, createdAt, source, services: [...new Set(info.services)].sort(compare), scope: 'instance', consistency: 'stopped-containers', coverage: { data: true, runtime: true, configuration: true } };
+  return { id, createdAt, source, services: [...new Set(info.services)].sort(compare), scope: 'instance', consistency: kind, coverage: { ...COVERAGE[kind] } };
 }
 function canonical(manifest: Manifest) {
   return JSON.stringify({ version: 1, info: manifest.info, rootMode: manifest.rootMode, directories: manifest.directories.map(({ path, mode }) => ({ path, mode })), files: manifest.files.map(({ path, size, sha256, mode }) => ({ path, size, sha256, mode })) });
 }
-function completeBundle(files: { path: string }[]) {
+function completeBundle(files: { path: string }[], kind: Consistency) {
+  if (kind === 'live-copy') {
+    if (!files.some(file => file.path === 'hub.json') || !files.some(file => file.path.startsWith('data/'))) fail(400, 'A live copy of the hub needs hub.json and the data folder');
+    return;
+  }
   if (!files.some(file => file.path === 'deployment.json') || !files.some(file => file.path.startsWith('images/') && file.path.endsWith('.tar')) || !files.some(file => file.path.startsWith('containers/') && file.path.endsWith('.tar')) || !files.some(file => file.path.startsWith('volumes/'))) fail(400, 'Prepared instance bundle needs deployment.json, runtime images, container filesystem archives and persistent volume bytes');
 }
 function snapshotOf(manifest: Manifest): Snapshot {
@@ -338,7 +357,7 @@ export class InstanceVault {
     let staged = false;
     try {
       const tree = inventory(source);
-      completeBundle(tree.files);
+      completeBundle(tree.files, details.consistency);
       const used = this.measuredBytes();
       if (sum(used, tree.bytes) > this.maxBytes) fail(413, 'Instance vault quota exceeded');
       fs.mkdirSync(stage, { mode: 0o700 }); staged = true;
@@ -369,6 +388,21 @@ export class InstanceVault {
         if (staged && present(stage)) { noLinks(stage); if (!inside(path.join(this.storageDir, 'staging'), stage)) fail(400, 'Invalid staging cleanup path'); fs.rmSync(stage, { recursive: true, force: true }); }
       } finally { release(); }
     }
+  }
+  /** Delete a backup for good (the hub's own retention, a sub-hub's --keep). */
+  async remove(id: string): Promise<void> {
+    const run = this.tail.then(() => {
+      const { root } = this.load(id);
+      const release = this.lock();
+      try {
+        noLinks(root);
+        if (!inside(path.join(this.storageDir, 'snapshots'), root)) fail(400, 'Invalid instance snapshot path');
+        fs.rmSync(root, { recursive: true, force: true });
+        syncDirectory(path.join(this.storageDir, 'snapshots'));
+      } finally { release(); }
+    });
+    this.tail = run.catch(() => undefined);
+    return run;
   }
   async verify(id: string) {
     const { root, manifest, snapshot } = this.load(id);
@@ -409,7 +443,7 @@ export class InstanceVault {
     if (!object(transfer) || transfer.version !== 1 || !object(transfer.snapshot) || typeof transfer.snapshot.id !== 'string' || !ID.test(transfer.snapshot.id)) fail(400, 'Invalid instance transfer manifest');
     const id = transfer.snapshot.id;
     const manifest = validateManifest({ version: 1, info: transfer.snapshot, rootMode: transfer.rootMode, directories: transfer.directories, files: transfer.files }, id);
-    completeBundle(manifest.files);
+    completeBundle(manifest.files, manifest.info.consistency);
     if (Buffer.byteLength(canonical(manifest)) > METADATA_LIMIT) fail(413, 'Instance manifest is too large');
     const snapshot = snapshotOf(manifest);
     if (snapshot.sha256 !== transfer.snapshot.sha256 || snapshot.files !== transfer.snapshot.files || snapshot.bytes !== transfer.snapshot.bytes) fail(409, 'Instance transfer manifest failed integrity verification');

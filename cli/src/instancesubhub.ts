@@ -11,7 +11,7 @@ import { loadConfig } from './config';
 import { runInstanceSubhub } from './instanceruntime.ts';
 import { InstanceConnections } from './instanceconnections.ts';
 
-const HELP = `spacehub subhub run --storage <folder> [--name <name>] [--interval <seconds>]
+const HELP = `spacehub subhub run --storage <folder> [--name <name>] [--interval <seconds>] [--keep <backups>]
 spacehub subhub backup --storage <folder>
 spacehub subhub snapshots --storage <vault>
 spacehub subhub verify <snapshot> --storage <vault>
@@ -133,13 +133,14 @@ export async function instanceSubhubCommand(command: string | undefined, args: s
   if (command === 'run' || command === 'backup') {
     const name = flag(args, '--name') ?? os.hostname();
     const intervalSeconds = Number(flag(args, '--interval') ?? 60);
+    const keep = Number(flag(args, '--keep') ?? 24);
     const once = command === 'backup' || yes(args, '--once'); remaining(args);
     const config = loadConfig();
     const controller = new AbortController();
     const stop = () => controller.abort();
     process.once('SIGINT', stop); process.once('SIGTERM', stop);
     try {
-      await runInstanceSubhub({ storage, hub: config.server.replace(/^ws/, 'http'), operatorToken: config.token, name, intervalSeconds, once, signal: controller.signal,
+      await runInstanceSubhub({ storage, hub: config.server.replace(/^ws/, 'http'), operatorToken: config.token, name, intervalSeconds, keep, once, signal: controller.signal,
         onStatus: status => process.stderr.write(`Sub-hub ${status.state}; ${status.snapshots} retained full-instance backups${status.error ? '. ' + status.error : ''}\n`),
       });
     } finally { process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); }

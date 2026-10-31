@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { canonicalPath, type Snapshot } from './instancevault.ts';
+import { backupKind, canonicalPath, COVERAGE, type Snapshot } from './instancevault.ts';
 
 export type ConnectionState = 'waiting' | 'syncing' | 'up-to-date' | 'error';
 export interface ConnectionReport { state: ConnectionState; snapshots: Snapshot[]; error?: string }
@@ -53,8 +53,9 @@ function label(value: unknown, max: number): string {
   return value.replace(/[<>]/g, '').replace(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, '[redacted]') || '[redacted]';
 }
 function snapshot(value: unknown): Snapshot {
-  if (!object(value) || typeof value.id !== 'string' || !ID.test(value.id) || !integer(value.createdAt) || value.scope !== 'instance' || value.consistency !== 'stopped-containers' || !object(value.coverage) || value.coverage.data !== true || value.coverage.runtime !== true || value.coverage.configuration !== true || !integer(value.files) || !integer(value.bytes) || typeof value.sha256 !== 'string' || !HASH.test(value.sha256) || !Array.isArray(value.services) || !value.services.length || value.services.length > 256) fail(400, 'Report complete full-instance snapshots only');
-  return { id: value.id, createdAt: value.createdAt, source: label(value.source, 1024), services: value.services.map(item => label(item, 128)), scope: 'instance', consistency: 'stopped-containers', coverage: { data: true, runtime: true, configuration: true }, files: value.files, bytes: value.bytes, sha256: value.sha256 };
+  const kind = object(value) ? backupKind(value.consistency, value.coverage) : null;
+  if (!object(value) || !kind || typeof value.id !== 'string' || !ID.test(value.id) || !integer(value.createdAt) || value.scope !== 'instance' || !integer(value.files) || !integer(value.bytes) || typeof value.sha256 !== 'string' || !HASH.test(value.sha256) || !Array.isArray(value.services) || !value.services.length || value.services.length > 256) fail(400, 'Report complete full-instance snapshots only');
+  return { id: value.id, createdAt: value.createdAt, source: label(value.source, 1024), services: value.services.map(item => label(item, 128)), scope: 'instance', consistency: kind, coverage: { ...COVERAGE[kind] }, files: value.files, bytes: value.bytes, sha256: value.sha256 };
 }
 function report(value: unknown): ConnectionReport {
   if (!object(value) || !['waiting', 'syncing', 'up-to-date', 'error'].includes(String(value.state)) || !Array.isArray(value.snapshots) || value.snapshots.length > 256 || (value.error !== undefined && (typeof value.error !== 'string' || value.error.length > 1000))) fail(400, 'Invalid full-instance machine report');

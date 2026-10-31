@@ -5,7 +5,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
-import { canonicalPath, InstanceVault, MAX_INSTANCE_FILES, type Snapshot, type TransferManifest } from './instancevault.ts';
+import { backupKind, canonicalPath, COVERAGE, InstanceVault, MAX_INSTANCE_FILES, type Snapshot, type TransferManifest } from './instancevault.ts';
 
 const PREFIX = '/-/api/instance-recovery';
 const MARKER = '.spacehub-instance-runtime.json';
@@ -18,6 +18,8 @@ export type InstanceRuntimeState = 'waiting' | 'syncing' | 'up-to-date' | 'error
 export interface InstanceRuntimeStatus { state: InstanceRuntimeState; snapshots: number; error?: string }
 export interface InstanceRuntimeOptions {
   storage: string; hub: string; operatorToken?: string; name?: string; intervalSeconds?: number;
+  /** Backups kept here, newest first (default 24): the hub makes new ones, older ones go. */
+  keep?: number;
   once?: boolean; signal?: AbortSignal; onStatus?(status: InstanceRuntimeStatus): void;
 }
 export interface InstanceRuntimeDeps { fetch?: typeof fetch; heartbeatIntervalMs?: number }
@@ -61,8 +63,9 @@ function bundlePath(value: unknown): string {
   return value;
 }
 function snapshot(value: unknown): Snapshot {
-  if (!isObject(value) || !ID.test(String(value.id)) || !integer(value.createdAt) || value.scope !== 'instance' || value.consistency !== 'stopped-containers' || !isObject(value.coverage) || value.coverage.data !== true || value.coverage.runtime !== true || value.coverage.configuration !== true || typeof value.source !== 'string' || !value.source.trim() || value.source.length > 1024 || /[\x00-\x1f\x7f]/.test(value.source) || !Array.isArray(value.services) || !value.services.length || value.services.length > 256 || value.services.some(item => typeof item !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(item)) || !integer(value.files) || value.files > MAX_INSTANCE_FILES || !integer(value.bytes) || !TOKEN.test(String(value.sha256))) refuse('The source returned invalid instance snapshot metadata');
-  return { id: value.id as string, createdAt: value.createdAt, source: value.source, services: [...value.services] as string[], scope: 'instance', consistency: 'stopped-containers', coverage: { data: true, runtime: true, configuration: true }, files: value.files, bytes: value.bytes, sha256: value.sha256 as string };
+  const kind = isObject(value) ? backupKind(value.consistency, value.coverage) : null;
+  if (!isObject(value) || !kind || !ID.test(String(value.id)) || !integer(value.createdAt) || value.scope !== 'instance' || typeof value.source !== 'string' || !value.source.trim() || value.source.length > 1024 || /[\x00-\x1f\x7f]/.test(value.source) || !Array.isArray(value.services) || !value.services.length || value.services.length > 256 || value.services.some(item => typeof item !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(item)) || !integer(value.files) || value.files > MAX_INSTANCE_FILES || !integer(value.bytes) || !TOKEN.test(String(value.sha256))) refuse('The source returned invalid instance snapshot metadata');
+  return { id: value.id as string, createdAt: value.createdAt, source: value.source, services: [...value.services] as string[], scope: 'instance', consistency: kind, coverage: { ...COVERAGE[kind] }, files: value.files, bytes: value.bytes, sha256: value.sha256 as string };
 }
 function transferManifest(value: unknown, expected: Snapshot, quota: number): TransferManifest {
   if (!isObject(value) || value.version !== 1 || !permissions(value.rootMode) || !Array.isArray(value.directories) || value.directories.length > MAX_INSTANCE_FILES || !Array.isArray(value.files) || value.files.length > MAX_INSTANCE_FILES) refuse('The source returned an invalid instance manifest');
@@ -181,6 +184,8 @@ export async function runInstanceSubhub(options: InstanceRuntimeOptions, deps: I
   const storage = canonicalPath(options.storage);
   const interval = options.intervalSeconds ?? 60;
   if (!Number.isSafeInteger(interval) || interval < 1 || interval > 86400) refuse('Sub-hub interval must be between 1 and 86400 seconds');
+  const keep = options.keep ?? 24;
+  if (!Number.isSafeInteger(keep) || keep < 1 || keep > 10_000) refuse('Sub-hub --keep must be between 1 and 10000 backups');
   const heartbeatInterval = deps.heartbeatIntervalMs ?? 10_000;
   if (!Number.isSafeInteger(heartbeatInterval) || heartbeatInterval < 1 || heartbeatInterval > 15_000) refuse('Invalid Sub-hub heartbeat interval');
   const vault = new InstanceVault(storage);
@@ -296,7 +301,8 @@ export async function runInstanceSubhub(options: InstanceRuntimeOptions, deps: I
     const remote = index.snapshots.map(snapshot).sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
     if (new Set(remote.map(item => item.id)).size !== remote.length) refuse('The hub returned duplicate instance snapshots');
     if (!remote.length) { announce('waiting'); return; }
-    for (const entry of remote) {
+    // Only the newest the --keep window holds: an older one would go again at once.
+    for (const entry of remote.slice(0, keep)) {
       if (signal.aborted) return;
       const known = local.find(item => item.id === entry.id);
       if (known) { if (JSON.stringify(known) !== JSON.stringify(entry)) refuse('A retained instance snapshot conflicts with the hub source'); continue; }
@@ -319,21 +325,26 @@ export async function runInstanceSubhub(options: InstanceRuntimeOptions, deps: I
         fs.rmSync(stage, { recursive: true, force: true });
       }
     }
+    const old = local.slice().sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id)).slice(keep);
+    for (const entry of old) await vault.remove(entry.id);
+    if (old.length) await refreshLocal();
     announce('up-to-date');
   };
   try {
     announce('waiting');
     while (!signal.aborted) {
-      let failed = false;
+      let failed = '';
       try { await cycle(); }
       catch (error) {
         if (error instanceof RuntimeAccessError) { announce('error', error.message); throw error; }
         if (accessFailure) throw accessFailure;
         if (signal.aborted) break;
-        failed = true; announce('error', 'The full-instance backup could not be synchronized. Check the hub connection, operator access and available private storage.');
+        // Say why: these messages are the runtime's and the vault's own, never a credential.
+        failed = error instanceof Error ? error.message.slice(0, 300) : 'unknown error';
+        announce('error', `The full-instance backup could not be synchronized: ${failed}`);
       }
       await heartbeatPending; await heartbeat();
-      if (options.once) { if (failed) refuse('The full-instance backup could not be synchronized'); break; }
+      if (options.once) { if (failed) refuse(`The full-instance backup could not be synchronized: ${failed}`); break; }
       await wait(interval * 1000, signal);
     }
     if (accessFailure) throw accessFailure;
