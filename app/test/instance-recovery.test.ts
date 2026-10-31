@@ -10,7 +10,9 @@ test("global Settings includes legacy instance recovery routes while retaining s
   assert.deepEqual(parseRoute("/", "#/subhubs"), { page: "home", tab: "settings" });
   assert.deepEqual(parseRoute("/quirq", "#/subhubs"), { page: "home", tab: "settings" });
   assert.deepEqual(parseRoute("/quirq", "#/projects"), { page: "space", place: { space: "quirq", project: "" }, tab: "projects" });
-  assert.deepEqual(parseRoute("/", ""), { page: "home" });
+  assert.deepEqual(parseRoute("/", ""), { page: "home", tab: "home" });
+  assert.deepEqual(parseRoute("/", "#/agents"), { page: "home", tab: "agents" });
+  assert.deepEqual(parseRoute("/", "#/builders"), { page: "home", tab: "builders" });
 });
 
 test("CLI connection starts automatic backups using its configured hub", () => {

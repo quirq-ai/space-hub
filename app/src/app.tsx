@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { BookOpen, Hash, Folder, FolderGit2, History, Home, Settings, Users, User } from "lucide-react";
+import { BookOpen, BrainCircuit, Hash, Folder, FolderGit2, History, Home, Settings, Users, User } from "lucide-react";
 import { placeUrl, viewUrl, type HubMeta, type Place, type ProjectMeta, type SpaceMeta, type View } from "@/api";
 import { useLive } from "@/hooks/use-live";
 import { channelSeenKey, ChannelsContext, useChannels } from "@/hooks/use-channels";
@@ -32,6 +32,7 @@ export function App() {
   const recovery = recoveryOnly || (route.page === "home" && route.tab === "settings");
   const place = recovery || route.page === "home" ? HUB : route.place;
   const filesPath = route.page === "project" && route.tab === "files" ? route.path : "";
+  const homeTab = route.page === "home" ? route.tab : "";
   const live = useLive<View>(recovery ? undefined : viewUrl(place, filesPath));
   // A project's space, for the sidebar's list of its sibling projects.
   const space = useLive<View<SpaceMeta>>(!recovery && route.page === "project" ? viewUrl({ space: place.space, project: "" }) : undefined, 30_000);
@@ -99,8 +100,8 @@ export function App() {
     setSeen(readSeen());
   }, [route.page, placeKey, place.space, own, recoveryOnly]);
   useEffect(() => {
-    document.title = recovery ? "Settings · spacehub" : route.page === "home" ? "spacehub" : `${route.page === "project" ? placeKey : place.space} · spacehub`;
-  }, [route.page, placeKey, place.space, recovery]);
+    document.title = recovery ? "Settings · spacehub" : homeTab === "agents" ? "Agents · spacehub" : homeTab === "builders" ? "Builders · spacehub" : homeTab ? "spacehub" : `${route.page === "project" ? placeKey : place.space} · spacehub`;
+  }, [homeTab, route.page, placeKey, place.space, recovery]);
 
   const signIn = `/-/login?next=${encodeURIComponent(location.pathname + location.hash)}`;
   const state = recovery ? recoveryState : live.error && view ? "offline" : !view ? "loading" : "live";
@@ -112,7 +113,7 @@ export function App() {
     options: me.spaces.map(s => ({ name: s.space, kind: s.kind, href: placeUrl({ space: s.space, project: "" }) })),
   };
   const primary = [
-    ...(!recoveryOnly ? [{ key: "home", label: "Home", href: "/", icon: <Home size={16} />, active: route.page === "home" && !recovery }] : []),
+    ...(!recoveryOnly ? [{ key: "home", label: "Home", href: "/", icon: <Home size={16} />, active: homeTab === "home" }] : []),
     ...(me.name && !recoveryOnly ? [{ key: "me", label: "Your profile", href: placeUrl({ space: me.name, project: "" }), icon: <User size={16} />, active: route.page === "space" && place.space === me.name }] : []),
   ];
   const sideSections: SideSection[] = [];
@@ -143,7 +144,7 @@ export function App() {
   const footer = [
     { key: "guide", label: "Guide", href: "/-/guide", icon: <BookOpen size={16} /> },
     { key: "settings", label: "Settings", href: "/#/settings", icon: <Settings size={16} />, active: recovery },
-    { key: "builders", label: "Builders", href: "/-/builders", icon: <Users size={16} /> },
+    { key: "builders", label: "Builders", href: "/#" + hashOf("builders"), icon: <Users size={16} />, active: homeTab === "builders" },
   ];
 
   // Navigation has one job per piece: the breadcrumb goes up, the dock goes
@@ -161,10 +162,13 @@ export function App() {
   } else if (!recovery && route.page === "space" && meta?.level === "space") {
     places = [...(view?.snapshot.directory.entries ?? [])].sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt)).slice(0, 8)
       .map(entry => ({ key: entry.name, label: entry.name, href: placeUrl({ space: place.space, project: entry.name }), icon: <FolderGit2 size={22} strokeWidth={1.7} />, fresh: !!seen[`${place.space}/${entry.name}`] && entry.modifiedAt > seen[`${place.space}/${entry.name}`] }));
-  } else if (route.page === "home" && !recovery && meta?.level === "hub") {
-    const mine = new Set(me.spaces.map(s => s.space));
-    places = [...(view?.snapshot.directory.entries ?? [])].sort((a, b) => Number(mine.has(b.name)) - Number(mine.has(a.name)) || b.modifiedAt.localeCompare(a.modifiedAt)).slice(0, 8)
-      .map(entry => ({ key: entry.name, label: entry.name, href: placeUrl({ space: entry.name, project: "" }), icon: <Avatar name={entry.name} size={30} kind={entry.detail?.startsWith("org") ? "org" : entry.detail?.startsWith("agent") ? "agent" : "personal"} />, fresh: !!seen[entry.name] && entry.modifiedAt > seen[entry.name] }));
+  } else if (route.page === "home" && !recovery) {
+    // The hub's front page in three parts; the page shows one at a time.
+    places = [
+      { key: "home", label: "Home", href: "/", icon: <Home size={22} strokeWidth={1.7} />, active: route.tab === "home" },
+      { key: "agents", label: "Agents", href: "/#" + hashOf("agents"), icon: <BrainCircuit size={22} strokeWidth={1.7} />, active: route.tab === "agents" },
+      { key: "builders", label: "Builders", href: "/#" + hashOf("builders"), icon: <Users size={22} strokeWidth={1.7} />, active: route.tab === "builders" },
+    ];
   }
 
   const activity = route.page === "home" && !recovery && activityOpen;
@@ -175,7 +179,7 @@ export function App() {
     <Sidebar switcher={switcher} primary={primary} sections={sideSections} footer={footer} open={sidebarOpen} onClose={() => setSidebarOpen(false)} rail={rail} onRail={toggleRail} onSearch={() => setSearching(true)} recoveryOnly={recoveryOnly} />
     <main className="main" id="main">
       <div className="main-scroll">
-        {route.page === "home" && !recovery && <HomePage view={view as View<HubMeta> | undefined} me={me.name} mySpaces={me.spaces.map(s => s.space)} seen={seen} activityOpen={activityOpen} onActivity={toggleActivity} />}
+        {route.page === "home" && route.tab !== "settings" && !recovery && <HomePage tab={route.tab} view={view as View<HubMeta> | undefined} me={me.name} mySpaces={me.spaces.map(s => s.space)} seen={seen} activityOpen={activityOpen} onActivity={toggleActivity} />}
         {recovery && <SettingsPage onConnectionState={setRecoveryState} />}
         {!recovery && route.page === "space" && <SpacePage name={place.space} tab={route.tab} view={view as View<SpaceMeta> | undefined} error={live.error} me={me.name} seen={seen} />}
         {!recovery && route.page === "project" && <ChannelsContext.Provider value={channels}><ProjectPage route={route} view={view as View<ProjectMeta> | undefined} error={live.error} me={me.name} signIn={signIn} refresh={live.refresh} /></ChannelsContext.Provider>}
