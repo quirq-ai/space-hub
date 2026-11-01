@@ -51,7 +51,7 @@ test('an operator reads a running sub-hub\'s storage, one backup\'s files, and v
   const root = path.join(tmp, 'data');
   fs.mkdirSync(path.join(root, 'data/replicas/1/clog'), { recursive: true });
   fs.writeFileSync(path.join(root, 'data/replicas/1/clog/0.stdb.log'), 'commit log');
-  const cfg = hubBackupConfig({ SPACEHUB_DATA_ROOT: root }, 'hub.example')!;
+  const cfg = hubBackupConfig({ SPACEHUB_DATA_ROOT: root, SPACEHUB_BACKUP_MINUTES: '60' }, 'hub.example')!;
   await backupHub(cfg, 1_000);
   const connections = new InstanceConnections(path.join(tmp, 'connections'));
   connections.initialize();

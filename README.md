@@ -713,7 +713,10 @@ spacehub subhub run --storage /srv/spacehub-backups --name office-backup
 ```
 
 The CLI enrolls a private machine identity, stays connected and automatically
-copies complete source backups into an immutable local vault. Settings shows
+copies complete source backups into an immutable local vault. A hub keeps no
+backups of its own by default; then the Sub-hub makes them, copying the hub's
+data every `--every` minutes (see [Backups of the hub, kept off
+it](#backups-of-the-hub-kept-off-it)). Settings shows
 the connection, heartbeat, automatic backup state and retained generations.
 It does not ask for deployment containers or start services through a form.
 The receiving machine needs the CLI and writable disk; it does not need Docker.
@@ -768,25 +771,31 @@ GET  /-/api/instance-recovery/subhubs/<name>/snapshots/<id>           # one back
 POST /-/api/instance-recovery/subhubs/<name>/snapshots/<id>/verify    # check every file there
 ```
 
-### The hub's own backups
+### Backups of the hub, kept off it
 
-With no other backup source configured (no `SPACEHUB_RECOVERY_DIR` or
-`SPACEHUB_RECOVERY_URL`), the server image backs itself up, with no
-downtime: every `SPACEHUB_BACKUP_MINUTES` (default 60; `0` turns it off)
-the web service copies the hub's data folder (`/data`) while SpacetimeDB
-runs, keeps the newest `SPACEHUB_BACKUP_KEEP` (default 3) in a vault at
-`SPACEHUB_BACKUP_DIR` (default `/data/.spacehub/backups`), and serves them
-to connected Sub-hubs, which copy them off the machine.
+The hub keeps no backups on its own disk; its connected Sub-hubs make them.
+When the hub has no backups of its own to hand out, each Sub-hub copies the
+hub's data folder (`/data`) through the hub, live, every `--every` minutes
+(default 60), with no downtime, and keeps the copies in its storage folder.
+The hub only reads its files for them, so it needs no disk for backups.
 
 SpacetimeDB keeps each database as an append-only commit log beside its
 snapshots, so a copy taken while it writes is like the state after a crash:
 it starts from the last whole transaction. The commit logs are copied last,
 so they reach at least as far as the snapshots copied before them. Each
 backup holds `hub.json` and `data/`, the data folder without logs (the
-server's and each database's module logs), caches and the backups
-themselves: databases, every space and project, accounts, tokens and the
-server's signing keys. The image and its settings are not in
-it (Settings shows these backups as "Hub data, copied live").
+server's and each database's module logs), caches and Sub-hub state:
+databases, every space and project, accounts, tokens and the server's
+signing keys. The image and its settings are not in it (Settings shows
+these backups as "Hub data, copied live").
+
+Only the first copy moves everything. After that, a file unchanged since the
+Sub-hub's last copy (same size and mode, last changed before that copy
+began, by the hub's clock) is taken from that copy and shared with it on the
+Sub-hub's disk as a hard link, so an hourly copy downloads only what
+changed: the newest commit log segment, new snapshot files and small files.
+A file SpacetimeDB keeps under several names (snapshot objects) is
+downloaded and stored once.
 
 To recover, restore the backup to a new folder and start the same server
 image with its `data/` as `/data`:
@@ -799,21 +808,56 @@ docker run -d -p 3000:3000 -v /srv/recovered/data:/data <the same spacehub image
 Builders sign in with their old tokens: the signing keys come back with the
 data.
 
-Backups are incremental on disk. A file unchanged since the last backup
-(same size and mode, last changed before that backup began) is shared with
-it as a hard link, so a backup copies only what changed, and keeping 3
-costs about one copy of the data plus the changes. The first backup copies
-everything, so it needs the data folder's size free next to the vault, and
-every backup leaves 1 GB free for the hub; without the room, the hub skips
-that backup and says how much it needs. Sub-hubs work the same way: they
-download only files they do not hold yet and share the rest between their
-backups.
+Sub-hubs read the data folder through these routes, which also work with an
+operator's token:
+
+```sh
+GET /-/api/instance-recovery/source/live?part=body           # the data folder, without the commit logs' files
+GET /-/api/instance-recovery/source/live?part=logs           # the commit logs' files
+GET /-/api/instance-recovery/source/live/file?path=<path>    # one file, as it is now
+```
+
+### A backup container
+
+The server image also runs as a hub's backup: start it a second time, with
+its own persistent volume at `/data`, and these settings:
+
+| Setting | |
+| --- | --- |
+| `SPACEHUB_BACKUP_OF` | The hub it backs up, such as `https://hub.example`. Setting it starts the backup container instead of a hub. |
+| `SPACEHUB_TOKEN` | A recovery operator's token (`spacehub auth token`), to connect the first time. |
+| `SPACEHUB_BACKUP_NAME` | Its name in the hub's Settings and at `/subhub/<name>` (default `backup`). |
+| `SPACEHUB_BACKUP_MINUTES` | How often it copies the hub (default 60). |
+| `SPACEHUB_BACKUP_KEEP` | How many backups it keeps (default 24). |
+
+It runs no hub of its own and no SpacetimeDB: it is a Sub-hub
+(`spacehub subhub run`) that keeps its backups in `/data/backups` and its
+connection in `/data/backups.runtime`. Its port answers `/healthz`, and it
+stops (to be restarted by the platform) if the Sub-hub stops. Its volume
+needs room for the hub's data once plus what changes while it keeps
+backups. To restore, run inside it:
+
+```sh
+spacehub subhub restore <snapshot-id> /data/restored --storage /data/backups
+```
+
+### Backups on the hub's own disk (optional)
+
+With `SPACEHUB_BACKUP_MINUTES` set (and no `SPACEHUB_RECOVERY_DIR` or
+`SPACEHUB_RECOVERY_URL`), the hub also copies itself into a vault on its own
+disk: the newest `SPACEHUB_BACKUP_KEEP` (default 3) in `SPACEHUB_BACKUP_DIR`
+(default `/data/.spacehub/backups`). Sub-hubs then copy those instead of
+making their own. A file unchanged since the last backup is shared with it
+as a hard link, but the first backup copies everything, so the hub's disk
+needs room for its data again, and every backup leaves 1 GB free for the
+hub; without the room, the hub skips that backup and says how much it
+needs.
 
 Settings shows how the last backup went (when, its size and how much of it
-was new, or why it failed),
-when the next one is due, and a **Back up now** button for recovery
-operators. The last result is kept in `last-backup.json` next to the vault,
-so it survives a restart. As an API, with an operator's token:
+was new, or why it failed), when the next one is due, and a **Back up now**
+button for recovery operators. The last result is kept in
+`last-backup.json` next to the vault, so it survives a restart. As an API,
+with an operator's token:
 
 ```sh
 curl -H "Authorization: Bearer $(spacehub auth token)" https://hub.example/-/api/instance-recovery/status     # hubBackup: the schedule and last result

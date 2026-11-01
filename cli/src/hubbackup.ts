@@ -1,14 +1,16 @@
-// The hub backs itself up, with no downtime: on a schedule the web service
-// copies the hub's data folder (SPACEHUB_DATA_ROOT, /data in the server
-// image) while SpacetimeDB runs, and keeps the newest copies in a vault that
-// connected sub-hubs copy off the machine (instanceruntime.ts).
+// Optionally, the hub also keeps backups of itself on its own disk, with no
+// downtime: on a schedule the web service copies the hub's data folder
+// (SPACEHUB_DATA_ROOT, /data in the server image) while SpacetimeDB runs, and
+// keeps the newest copies in a vault that connected sub-hubs copy too
+// (instanceruntime.ts). Off by default: backups are kept off the hub, by
+// sub-hubs that copy its data folder live (hubdata.ts).
 //
 // SpacetimeDB keeps each database as an append-only commit log beside its
 // snapshots, so a copy taken while it writes is like the state after a
 // crash: it starts from the last whole transaction. The commit logs are
 // copied last, so they reach at least as far as the snapshots before them.
 //
-//   SPACEHUB_BACKUP_MINUTES  how often, in minutes (default 60; 0: never)
+//   SPACEHUB_BACKUP_MINUTES  how often, in minutes (default 0: never)
 //   SPACEHUB_BACKUP_KEEP     how many backups the hub keeps (default 3)
 //   SPACEHUB_BACKUP_DIR      the vault (default <data root>/.spacehub/backups)
 //
@@ -25,6 +27,7 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { COMMIT_LOG, MODULE_LOGS, SKIP } from './hubdata.ts';
 import { canonicalPath, InstanceVault, MAX_INSTANCE_FILES, type ManifestFile, type ReusedFile, type Snapshot } from './instancevault.ts';
 
 export interface HubBackupConfig {
@@ -35,22 +38,16 @@ export interface HubBackupConfig {
   source: string; // the hub, as backups name it
 }
 
-// Not part of a backup: the vault and sub-hub state, logs and caches, the
-// running server's pid file, and a volume's own lost+found. A database's
-// module logs (what `spacetime logs` shows) are left out too; their folders
-// are kept, empty.
-const SKIP = new Set(['.spacehub', 'data/logs', 'data/cache', 'data/spacetime.pid', 'lost+found']);
-const COMMIT_LOG = /^data\/replicas\/[^/]+\/clog$/;
-const MODULE_LOGS = /^data\/replicas\/[^/]+\/module_logs$/;
+// What a backup leaves out is hubdata.ts's SKIP and MODULE_LOGS.
 // What a backup leaves free on the hub's disk, for the hub itself.
 const SPARE = 1024 ** 3;
 // How long before the last backup began a file must have last changed for
 // that backup's copy of it to be used again (coarse file times).
-const SETTLED_MS = 2_000;
+export const SETTLED_MS = 2_000;
 
 export function hubBackupConfig(env: NodeJS.ProcessEnv = process.env, source = 'spacehub'): HubBackupConfig | null {
   const root = (env.SPACEHUB_DATA_ROOT ?? '').trim();
-  const minutes = Number(env.SPACEHUB_BACKUP_MINUTES ?? 60);
+  const minutes = Number(env.SPACEHUB_BACKUP_MINUTES ?? 0);
   if (!root || minutes === 0) return null;
   if (!Number.isFinite(minutes) || minutes < 5 || minutes > 7 * 24 * 60) throw new Error('SPACEHUB_BACKUP_MINUTES must be 0 (off) or 5 to 10080');
   const keep = Number(env.SPACEHUB_BACKUP_KEEP ?? 3);

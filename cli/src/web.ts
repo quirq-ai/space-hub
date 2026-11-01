@@ -71,8 +71,9 @@ const SIGNIN = signInConfig(DB, INTERNAL_HTTP, GITHUB);
 const ADMIN_TOKEN = process.env.SPACEHUB_ADMIN_TOKEN ?? '';
 const RECOVERY_DIR = process.env.SPACEHUB_RECOVERY_DIR ?? '';
 const RECOVERY_REMOTE = recoveryRemote(process.env.SPACEHUB_RECOVERY_URL, process.env.SPACEHUB_RECOVERY_TOKEN);
-// Without another backup source, the hub backs itself up (hubbackup.ts) and
-// serves those backups to sub-hubs.
+// Backups are kept off the hub: sub-hubs copy its data folder live
+// (hubdata.ts). With SPACEHUB_BACKUP_MINUTES, and no other backup source, the
+// hub also keeps backups of itself on its own disk (hubbackup.ts).
 const HUB_BACKUP = RECOVERY_DIR || RECOVERY_REMOTE ? null : hubBackupConfig(process.env, process.env.SPACEHUB_PUBLIC_URL ?? DB);
 const RECOVERY_VAULT = RECOVERY_DIR ? new InstanceVault(RECOVERY_DIR) : HUB_BACKUP?.vault ?? null;
 RECOVERY_VAULT?.initialize();
@@ -479,6 +480,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     containers: (process.env.SPACEHUB_RECOVERY_CONTAINERS ?? '').split(',').map(name => name.trim()).filter(Boolean),
     restoreRoot: process.env.SPACEHUB_RESTORE_ROOT ?? '',
     remote: RECOVERY_REMOTE,
+    dataRoot: process.env.SPACEHUB_DATA_ROOT?.trim() || undefined,
     relay: RECOVERY_RELAY,
     hubBackups: HUB_BACKUPS,
   }, req, res, url)) return;
