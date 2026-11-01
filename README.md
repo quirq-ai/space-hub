@@ -782,9 +782,10 @@ SpacetimeDB keeps each database as an append-only commit log beside its
 snapshots, so a copy taken while it writes is like the state after a crash:
 it starts from the last whole transaction. The commit logs are copied last,
 so they reach at least as far as the snapshots copied before them. Each
-backup holds `hub.json` and `data/`, the data folder without logs, caches
-and the backups themselves: databases, every space and project, accounts,
-tokens and the server's signing keys. The image and its settings are not in
+backup holds `hub.json` and `data/`, the data folder without logs (the
+server's and each database's module logs), caches and the backups
+themselves: databases, every space and project, accounts, tokens and the
+server's signing keys. The image and its settings are not in
 it (Settings shows these backups as "Hub data, copied live").
 
 To recover, restore the backup to a new folder and start the same server
@@ -796,10 +797,20 @@ docker run -d -p 3000:3000 -v /srv/recovered/data:/data <the same spacehub image
 ```
 
 Builders sign in with their old tokens: the signing keys come back with the
-data. A backup needs about twice the data folder's size free next to the
-vault; without it, the hub skips that backup.
+data.
 
-Settings shows how the last backup went (when, its size, or why it failed),
+Backups are incremental on disk. A file unchanged since the last backup
+(same size and mode, last changed before that backup began) is shared with
+it as a hard link, so a backup copies only what changed, and keeping 3
+costs about one copy of the data plus the changes. The first backup copies
+everything, so it needs the data folder's size free next to the vault, and
+every backup leaves 1 GB free for the hub; without the room, the hub skips
+that backup and says how much it needs. Sub-hubs work the same way: they
+download only files they do not hold yet and share the rest between their
+backups.
+
+Settings shows how the last backup went (when, its size and how much of it
+was new, or why it failed),
 when the next one is due, and a **Back up now** button for recovery
 operators. The last result is kept in `last-backup.json` next to the vault,
 so it survives a restart. As an API, with an operator's token:

@@ -314,8 +314,11 @@ export async function runInstanceSubhub(options: InstanceRuntimeOptions, deps: I
       fs.mkdirSync(stage, { mode: 0o700 });
       try {
         for (const dir of manifest.directories.slice().sort((a, b) => a.path.length - b.path.length)) fs.mkdirSync(path.join(stage, ...dir.path.split('/')), { mode: 0o700 });
-        for (const file of manifest.files) await download(entry.id, file, path.join(stage, ...file.path.split('/')));
-        await vault.importSnapshot(stage, manifest);
+        // Only files this machine does not hold yet: the rest are shared from
+        // its earlier backups, so an hourly backup moves only what changed.
+        const stored = vault.storedHashes();
+        for (const file of manifest.files) if (!stored.has(file.sha256)) await download(entry.id, file, path.join(stage, ...file.path.split('/')));
+        await vault.importSnapshot(stage, manifest, { adopt: true, reuse: true });
         verified.add(entry.id + ':' + entry.sha256);
         await refreshLocal();
         announce('syncing');

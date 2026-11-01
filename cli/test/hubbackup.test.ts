@@ -111,6 +111,77 @@ test('a sub-hub copies the hub\'s live backups and keeps only its --keep newest'
   assert.equal(connections.list()[0].name, 'laptop');
 });
 
+test('a backup copies only what changed since the last one and shares the rest; a sub-hub downloads only that', async t => {
+  const { tmp, root } = dataRoot(t);
+  // SpacetimeDB links one snapshot object into each snapshot that holds it.
+  const object = (n: number) => path.join(root, `data/replicas/1/snapshots/0000000000000000000${n}.snapshot_dir/objects/ab/cdef`);
+  put(root, 'data/replicas/1/snapshots/00000000000000000001.snapshot_dir/objects/ab/cdef', 'object');
+  fs.mkdirSync(path.dirname(object(2)), { recursive: true });
+  fs.linkSync(object(1), object(2));
+  put(root, 'data/replicas/1/module_logs/2026-11-01.log', 'module log');
+  const key = path.join(root, 'config/id_ecdsa'), clog = path.join(root, 'data/replicas/1/clog/00000000000000000000.stdb.log');
+  fs.chmodSync(key, 0o640);
+  // Everything last changed a minute ago.
+  const past = new Date(Date.now() - 60_000);
+  const touch = (dir: string) => { for (const e of fs.readdirSync(dir, { withFileTypes: true })) { const at = path.join(dir, e.name); if (e.isDirectory()) touch(at); else fs.utimesSync(at, past, past); } };
+  touch(root);
+  const cfg = hubBackupConfig({ SPACEHUB_DATA_ROOT: root, SPACEHUB_BACKUP_KEEP: '1' }, 'hub.example')!;
+  const connections = new InstanceConnections(path.join(tmp, 'connections'));
+  connections.initialize();
+  const server = http.createServer((req, res) => {
+    void handleInstanceRecovery({
+      vault: cfg.vault, connections, source: 'hub.example', storage: cfg.vault.storageDir, containers: [], restoreRoot: '',
+      authorize: async r => r.headers.authorization === `Bearer ${OPERATOR}`,
+    }, req, res, new URL(req.url!, 'http://local'));
+  });
+  await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const hub = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const storage = path.join(tmp, 'subhub');
+  const downloaded: string[] = [];
+  const counting: typeof fetch = (input, init) => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith('/file')) downloaded.push(url.searchParams.get('path')!);
+    return fetch(input, init);
+  };
+  const sync = () => runInstanceSubhub({ storage, hub, operatorToken: OPERATOR, name: 'laptop', once: true, keep: 2 }, { heartbeatIntervalMs: 50, fetch: counting });
+  const payload = (vault: InstanceVault, id: string, name: string) => path.join(vault.storageDir, 'snapshots', id, 'payload', ...name.split('/'));
+  const ino = (vault: InstanceVault, id: string, name: string) => fs.statSync(payload(vault, id, name)).ino;
+  const OBJECT_1 = 'data/data/replicas/1/snapshots/00000000000000000001.snapshot_dir/objects/ab/cdef';
+  const OBJECT_2 = OBJECT_1.replace('0001.snapshot_dir', '0002.snapshot_dir');
+  const size = (...texts: string[]) => texts.reduce((n, text) => n + Buffer.byteLength(text), 0);
+
+  const first = await backupHub(cfg, Date.now());
+  assert.equal(first.copied, size('server signing key', 'spacetimedb_token = "owner"', 'control', 'snapshot', 'commit log', 'object'), 'the first copies all the data once');
+  const paths = cfg.vault.describe(first.id).files.map(f => f.path);
+  assert.ok(paths.includes(OBJECT_2) && !paths.some(p => p.includes('module_logs/')), 'both names of the object, no module logs');
+  assert.equal(ino(cfg.vault, first.id, OBJECT_1), ino(cfg.vault, first.id, OBJECT_2), 'one object, linked as in the data');
+  await sync();
+
+  // A commit is added and the key's mode changes: only those two are copied.
+  fs.appendFileSync(clog, ', and another commit');
+  fs.chmodSync(key, 0o600);
+  const second = await backupHub(cfg, Date.now());
+  assert.equal(second.copied, size('commit log, and another commit', 'server signing key'));
+  assert.deepEqual(cfg.vault.list().map(s => s.id), [second.id], 'keep 1: the first is gone, its shared files stay');
+  await cfg.vault.verify(second.id);
+  const restored = path.join(tmp, 'restored');
+  await cfg.vault.restore(second.id, restored);
+  assert.equal(fs.readFileSync(path.join(restored, 'data/data/replicas/1/clog/00000000000000000000.stdb.log'), 'utf8'), 'commit log, and another commit');
+  assert.equal(fs.readFileSync(path.join(restored, 'data/config/cli.toml'), 'utf8'), 'spacetimedb_token = "owner"');
+  assert.equal(fs.statSync(path.join(restored, 'data/config/id_ecdsa')).mode & 0o777, 0o600);
+  assert.equal(fs.readFileSync(path.join(restored, OBJECT_2), 'utf8'), 'object');
+  assert.deepEqual(fs.readdirSync(path.join(restored, 'data/data/replicas/1/module_logs')), []);
+
+  downloaded.length = 0;
+  await sync();
+  assert.deepEqual(downloaded.sort(), ['data/data/replicas/1/clog/00000000000000000000.stdb.log', 'hub.json'], 'the sub-hub holds the rest already');
+  const local = new InstanceVault(storage);
+  assert.deepEqual(local.list().map(s => s.id), [second.id, first.id]);
+  await local.verify(second.id);
+  assert.equal(ino(local, second.id, 'data/config/cli.toml'), ino(local, first.id, 'data/config/cli.toml'), 'shared on the sub-hub too');
+});
+
 test('the last attempt is kept with its reason, across a restart; operators see it and start one at once', async t => {
   const { tmp, root } = dataRoot(t);
   // A volume's lost+found is left out, even when the hub cannot read it.

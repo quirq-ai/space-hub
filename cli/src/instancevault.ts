@@ -43,6 +43,21 @@ export function backupKind(consistency: unknown, coverage: unknown): Consistency
   return object(coverage) && coverage.data === want.data && coverage.runtime === want.runtime && coverage.configuration === want.configuration ? consistency : null;
 }
 export interface ManifestFile { path: string; size: number; sha256: string; mode: number }
+// A file a new backup keeps exactly as an earlier backup of this vault holds
+// it: `from` in backup `snapshot`, kept at `path` with `mode`.
+export interface ReusedFile { path: string; snapshot: string; from: string; mode: number }
+export interface CaptureOptions {
+  // The source is the caller's own folder on the vault's disk, removed after
+  // the capture: its files are linked into the backup instead of copied again.
+  adopt?: boolean;
+  reuse?: ReusedFile[];
+}
+export interface ImportOptions {
+  adopt?: boolean;
+  // Files left out of the source are linked from earlier backups holding the
+  // same bytes (storedHashes), so a sub-hub downloads only what is new.
+  reuse?: boolean;
+}
 export interface TransferManifest {
   version: 1; snapshot: Snapshot; rootMode: number;
   directories: { path: string; mode: number }[]; files: ManifestFile[];
@@ -190,6 +205,21 @@ async function copyAndHash(source: string, destination?: string, expected?: Inve
     return { size, sha256: digest };
   } finally { try { await output?.close(); } finally { await input.close(); } }
 }
+// Vault files are never changed in place (restores copy them out), so backups
+// can share one: a hard link, or a copy where the disk has none.
+async function share(from: string, to: string, size: number, sha256: string) {
+  try { fs.linkSync(from, to); }
+  catch (error) {
+    if (!['EXDEV', 'EPERM', 'EMLINK', 'ENOTSUP', 'EOPNOTSUPP'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+    const saved = await copyAndHash(from, to, undefined, sha256, size);
+    if (saved.size !== size) fail(409, 'Instance file size changed while being shared');
+  }
+}
+// The same file as inventoried, except for ctime: linking it changes that.
+function unchanged(stat: fs.Stats, file: InventoryFile) {
+  return stat.isFile() && stat.size === file.size && stat.dev === file.dev && stat.ino === file.ino && stat.mtimeMs === file.mtimeMs && (stat.mode & 0o7777) === file.mode;
+}
+const withoutCtime = (tree: Inventory) => JSON.stringify({ ...tree, files: tree.files.map(({ ctimeMs: _, ...file }) => file) });
 function metadata(info: CaptureInfo, id: string): Manifest['info'] {
   const kind = object(info) ? backupKind(info.consistency, info.coverage) : null;
   if (!kind) fail(400, 'A backup is a stopped deployment with data, runtime and configuration, or a live copy of the hub data');
@@ -307,14 +337,20 @@ export class InstanceVault {
       fs.unlinkSync(filename); syncDirectory(this.storageDir);
     };
   }
+  // The disk the vault takes: a file backups share is counted once.
   private measuredBytes() {
     let total = 0;
+    const seen = new Set<string>();
     const pending = [this.storageDir];
     while (pending.length) {
       const entry = pending.pop()!;
       noLinks(entry);
       const stat = fs.lstatSync(entry);
-      if (stat.isFile()) total = sum(total, stat.size);
+      if (stat.isFile()) {
+        const key = `${stat.dev}:${stat.ino}`;
+        if (stat.nlink < 2 || !seen.has(key)) total = sum(total, stat.size);
+        if (stat.nlink > 1) seen.add(key);
+      }
       else if (stat.isDirectory()) for (const name of fs.readdirSync(entry)) pending.push(path.join(entry, name));
       else fail(400, 'Instance vault contains an unsupported filesystem entry');
     }
@@ -341,12 +377,47 @@ export class InstanceVault {
       return this.load(id).snapshot;
     }).sort((a, b) => b.createdAt - a.createdAt || compare(a.id, b.id));
   }
-  async capture(sourceDir: string, info: CaptureInfo): Promise<Snapshot> {
-    const run = this.tail.then(() => this.captureOne(sourceDir, info));
+  /** Every file content this vault holds, by SHA-256: what a sub-hub need not download again. */
+  storedHashes(): Set<string> {
+    return new Set(this.stored().keys());
+  }
+  private stored() {
+    const found = new Map<string, { filename: string; size: number }>();
+    for (const id of fs.readdirSync(path.join(this.storageDir, 'snapshots'))) {
+      const { root, manifest } = this.load(id);
+      for (const file of manifest.files) if (!found.has(file.sha256)) found.set(file.sha256, { filename: joined(root, `payload/${file.path}`), size: file.size });
+    }
+    return found;
+  }
+  // Where each reused file is in its earlier backup, checked against the source.
+  private reusable(entries: ReusedFile[], tree: Inventory) {
+    const paths = new Set(tree.files.map(file => file.path)), directories = new Set(tree.directories.map(dir => dir.path));
+    const manifests = new Map<string, { root: string; files: Map<string, ManifestFile> }>();
+    return entries.map(entry => {
+      if (!object(entry) || !mode(entry.mode)) fail(400, 'Invalid reused instance file');
+      const name = relativePath(entry.path);
+      if (paths.has(name)) fail(400, 'A reused instance file is also in the source');
+      paths.add(name);
+      const parent = name.includes('/') ? name.slice(0, name.lastIndexOf('/')) : '';
+      if (parent && !directories.has(parent)) fail(400, 'A reused instance file needs its directory in the source');
+      let earlier = manifests.get(entry.snapshot);
+      if (!earlier) {
+        const { root, manifest } = this.load(entry.snapshot);
+        earlier = { root, files: new Map(manifest.files.map(file => [file.path, file])) };
+        manifests.set(entry.snapshot, earlier);
+      }
+      const file = earlier.files.get(relativePath(entry.from)) ?? fail(404, 'No such file in the earlier instance backup');
+      const filename = joined(earlier.root, `payload/${file.path}`);
+      if (regular(filename).size !== file.size) fail(409, 'An earlier instance backup file changed');
+      return { path: name, size: file.size, sha256: file.sha256, mode: entry.mode, filename };
+    });
+  }
+  async capture(sourceDir: string, info: CaptureInfo, options: CaptureOptions = {}): Promise<Snapshot> {
+    const run = this.tail.then(() => this.captureOne(sourceDir, info, options));
     this.tail = run.catch(() => undefined);
     return run;
   }
-  private async captureOne(sourceDir: string, info: CaptureInfo): Promise<Snapshot> {
+  private async captureOne(sourceDir: string, info: CaptureInfo, options: CaptureOptions): Promise<Snapshot> {
     this.ready();
     if (!path.isAbsolute(sourceDir)) fail(400, 'Instance source must be an absolute prepared bundle');
     const source = canonicalPath(sourceDir);
@@ -357,20 +428,37 @@ export class InstanceVault {
     let staged = false;
     try {
       const tree = inventory(source);
-      completeBundle(tree.files, details.consistency);
+      const reused = this.reusable(options.reuse ?? [], tree);
+      completeBundle([...tree.files, ...reused], details.consistency);
       const used = this.measuredBytes();
       if (sum(used, tree.bytes) > this.maxBytes) fail(413, 'Instance vault quota exceeded');
       fs.mkdirSync(stage, { mode: 0o700 }); staged = true;
       const payload = path.join(stage, 'payload'); fs.mkdirSync(payload, { mode: 0o700 });
       for (const dir of tree.directories) fs.mkdirSync(joined(payload, dir.path), { mode: 0o700 });
       const files: ManifestFile[] = [];
+      const hashed = new Map<string, { size: number; sha256: string }>();
       let transferred = 0;
       for (const file of tree.files) {
-        const saved = await copyAndHash(joined(source, file.path), joined(payload, file.path), file, undefined, this.maxBytes - used - transferred);
+        const from = joined(source, file.path), to = joined(payload, file.path);
+        let saved: { size: number; sha256: string };
+        if (options.adopt) {
+          // Hashed where it is, then linked: names of one file are hashed once.
+          const key = `${file.dev}:${file.ino}`;
+          saved = hashed.get(key) ?? await copyAndHash(from, undefined, undefined, undefined);
+          if (!unchanged(regular(from), file)) fail(409, 'Instance source changed while being captured');
+          hashed.set(key, saved);
+          await share(from, to, saved.size, saved.sha256);
+        } else saved = await copyAndHash(from, to, file, undefined, this.maxBytes - used - transferred);
         transferred = sum(transferred, saved.size);
         files.push({ path: file.path, size: saved.size, sha256: saved.sha256, mode: file.mode });
       }
-      if (JSON.stringify(inventory(source)) !== JSON.stringify(tree)) fail(409, 'Instance source tree changed while being captured');
+      for (const file of reused) {
+        await share(file.filename, joined(payload, file.path), file.size, file.sha256);
+        files.push({ path: file.path, size: file.size, sha256: file.sha256, mode: file.mode });
+      }
+      files.sort((a, b) => compare(a.path, b.path));
+      const after = inventory(source);
+      if (options.adopt ? withoutCtime(after) !== withoutCtime(tree) : JSON.stringify(after) !== JSON.stringify(tree)) fail(409, 'Instance source tree changed while being captured');
       const manifest: Manifest = { version: 1, info: details, rootMode: tree.rootMode, directories: tree.directories, files };
       if (Buffer.byteLength(canonical(manifest)) > METADATA_LIMIT) fail(413, 'Instance manifest is too large');
       const snapshot = snapshotOf(manifest);
@@ -447,12 +535,12 @@ export class InstanceVault {
     }
     return { snapshot: clone(snapshot), files: manifest.files.slice(0, limit).map(file => ({ ...file })), total: manifest.files.length, hub };
   }
-  async importSnapshot(sourceDir: string, transfer: TransferManifest): Promise<Snapshot> {
-    const run = this.tail.then(() => this.importOne(sourceDir, transfer));
+  async importSnapshot(sourceDir: string, transfer: TransferManifest, options: ImportOptions = {}): Promise<Snapshot> {
+    const run = this.tail.then(() => this.importOne(sourceDir, transfer, options));
     this.tail = run.catch(() => undefined);
     return run;
   }
-  private async importOne(sourceDir: string, transfer: TransferManifest): Promise<Snapshot> {
+  private async importOne(sourceDir: string, transfer: TransferManifest, options: ImportOptions): Promise<Snapshot> {
     this.ready();
     if (!object(transfer) || transfer.version !== 1 || !object(transfer.snapshot) || typeof transfer.snapshot.id !== 'string' || !ID.test(transfer.snapshot.id)) fail(400, 'Invalid instance transfer manifest');
     const id = transfer.snapshot.id;
@@ -475,21 +563,31 @@ export class InstanceVault {
     let staged = false;
     try {
       const tree = inventory(source);
-      if (tree.files.length !== manifest.files.length || tree.bytes !== snapshot.bytes || JSON.stringify(tree.files.map(file => file.path)) !== JSON.stringify(manifest.files.map(file => file.path)) || JSON.stringify(tree.directories.map(dir => dir.path)) !== JSON.stringify(manifest.directories.map(dir => dir.path))) fail(409, 'Transferred instance files do not match their manifest');
+      const sourceFiles = new Map(tree.files.map(file => [file.path, file]));
+      const wanted = new Map(manifest.files.map(file => [file.path, file]));
+      const stored = options.reuse && tree.files.length < manifest.files.length ? this.stored() : new Map<string, { filename: string; size: number }>();
+      const complete = tree.files.length === manifest.files.length && tree.bytes === snapshot.bytes && JSON.stringify(tree.files.map(file => file.path)) === JSON.stringify(manifest.files.map(file => file.path));
+      const covered = options.reuse && tree.files.every(file => wanted.get(file.path)?.size === file.size) && manifest.files.every(file => sourceFiles.has(file.path) || stored.get(file.sha256)?.size === file.size);
+      if (!(complete || covered) || JSON.stringify(tree.directories.map(dir => dir.path)) !== JSON.stringify(manifest.directories.map(dir => dir.path))) fail(409, 'Transferred instance files do not match their manifest');
       const used = this.measuredBytes();
-      if (sum(used, snapshot.bytes) > this.maxBytes) fail(413, 'Instance vault quota exceeded');
+      if (sum(used, tree.bytes) > this.maxBytes) fail(413, 'Instance vault quota exceeded');
       fs.mkdirSync(stage, { mode: 0o700 }); staged = true;
       const payload = path.join(stage, 'payload'); fs.mkdirSync(payload, { mode: 0o700 });
       for (const dir of manifest.directories) fs.mkdirSync(joined(payload, dir.path), { mode: 0o700 });
       let transferred = 0;
-      const sourceFiles = new Map(tree.files.map(file => [file.path, file]));
       for (const file of manifest.files) {
-        const original = sourceFiles.get(file.path)!;
-        const saved = await copyAndHash(joined(source, file.path), joined(payload, file.path), original, file.sha256, Math.min(file.size, this.maxBytes - used - transferred));
+        const original = sourceFiles.get(file.path), to = joined(payload, file.path);
+        if (!original) { await share(stored.get(file.sha256)!.filename, to, file.size, file.sha256); continue; }
+        const from = joined(source, file.path);
+        const saved = options.adopt
+          ? await copyAndHash(from, undefined, original, file.sha256, file.size)
+          : await copyAndHash(from, to, original, file.sha256, Math.min(file.size, this.maxBytes - used - transferred));
         if (saved.size !== file.size) fail(409, 'Transferred instance file size changed');
+        if (options.adopt) await share(from, to, file.size, file.sha256);
         transferred = sum(transferred, saved.size);
       }
-      if (JSON.stringify(inventory(source)) !== JSON.stringify(tree)) fail(409, 'Instance transfer source changed');
+      const after = inventory(source);
+      if (options.adopt ? withoutCtime(after) !== withoutCtime(tree) : JSON.stringify(after) !== JSON.stringify(tree)) fail(409, 'Instance transfer source changed');
       writePrivate(path.join(stage, 'manifest.json'), manifest); writePrivate(path.join(stage, 'snapshot.json'), snapshot);
       if (this.measuredBytes() > this.maxBytes) fail(413, 'Instance vault quota exceeded');
       for (const dir of manifest.directories.slice().sort((a, b) => b.path.length - a.path.length)) syncDirectory(joined(payload, dir.path));
