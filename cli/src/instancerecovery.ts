@@ -9,6 +9,7 @@ import { pipeline } from 'node:stream/promises';
 import { canonicalPath, InstanceVault } from './instancevault.ts';
 import { InstanceConnections } from './instanceconnections.ts';
 import { RelayError, type RelayOp, type SubhubRelay } from './subhubrelay.ts';
+import type { HubBackups } from './hubbackup.ts';
 
 const PREFIX = '/-/api/instance-recovery';
 export interface InstanceRecoveryDeps {
@@ -22,6 +23,7 @@ export interface InstanceRecoveryDeps {
   connections?: InstanceConnections;
   machineName?: string;
   relay?: SubhubRelay; // live questions to connected machines, for /subhub/<name>
+  hubBackups?: HubBackups | null; // the hub's own schedule (hubbackup.ts): shown in /status, run with POST /hub-backup
 }
 
 // How long an operator waits for a machine: the page's own reads give up
@@ -165,6 +167,12 @@ export async function handleInstanceRecovery(deps: InstanceRecoveryDeps, req: ht
       }
       fail(404, 'No such Sub-hub connection action');
     }
+    if (route === '/hub-backup') {
+      if (req.method !== 'POST') fail(405, 'Start a backup with POST');
+      const backups = deps.hubBackups ?? fail(404, 'This hub does not back itself up');
+      if (!backups.now()) fail(409, 'A backup is already running');
+      json(res, 202, backups.state()); return true;
+    }
     if (deps.remote) {
       const allowed = (req.method === 'GET' && ['/status', '/snapshots'].includes(route)) || (req.method === 'POST' && (route === '/restore' || /^\/snapshots\/[a-f0-9]{32}\/verify$/.test(route)));
       if (!allowed) fail(404, 'No such full-instance recovery action');
@@ -173,6 +181,7 @@ export async function handleInstanceRecovery(deps: InstanceRecoveryDeps, req: ht
     if (route === '/status' && req.method === 'GET') {
       json(res, 200, { scope: 'instance', source: deps.source, machineName: deps.machineName ?? os.hostname(), available: !!deps.vault, sourceAvailable: !!deps.vault, canManage: true,
         cli: { storage: deps.storage, restoreRoot: deps.restoreRoot },
+        ...(deps.hubBackups ? { hubBackup: deps.hubBackups.state() } : {}),
         ...(!deps.vault ? { error: 'Connect a full-instance vault with SPACEHUB_RECOVERY_DIR, or open spacehub subhub serve on the recovery machine' } : {}),
         ...(!deps.vault ? { sourceError: 'No full-instance backup source is configured. Connected Sub-hubs will wait and retry automatically.' } : {}),
       }); return true;

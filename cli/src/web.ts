@@ -76,7 +76,7 @@ const RECOVERY_REMOTE = recoveryRemote(process.env.SPACEHUB_RECOVERY_URL, proces
 const HUB_BACKUP = RECOVERY_DIR || RECOVERY_REMOTE ? null : hubBackupConfig(process.env, process.env.SPACEHUB_PUBLIC_URL ?? DB);
 const RECOVERY_VAULT = RECOVERY_DIR ? new InstanceVault(RECOVERY_DIR) : HUB_BACKUP?.vault ?? null;
 RECOVERY_VAULT?.initialize();
-if (HUB_BACKUP) startHubBackups(HUB_BACKUP);
+const HUB_BACKUPS = HUB_BACKUP ? startHubBackups(HUB_BACKUP) : null;
 const RECOVERY_CONNECTIONS = new InstanceConnections(process.env.SPACEHUB_RECOVERY_STATE_DIR
   || (process.env.SPACETIME_ROOT ? path.join(process.env.SPACETIME_ROOT, '.spacehub', 'recovery-connections') : path.join(path.dirname(configFile()), 'recovery-connections')));
 RECOVERY_CONNECTIONS.initialize();
@@ -480,6 +480,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     restoreRoot: process.env.SPACEHUB_RESTORE_ROOT ?? '',
     remote: RECOVERY_REMOTE,
     relay: RECOVERY_RELAY,
+    hubBackups: HUB_BACKUPS,
   }, req, res, url)) return;
   if (LIVE.handle(req, res, url)) return;
   if (req.method === 'POST' && !sameOrigin(req)) return send(res, 403, page('Forbidden', null, '<h1>Forbidden</h1><p class="desc">This form must be sent from this site.</p>'));

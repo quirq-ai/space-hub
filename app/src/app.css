@@ -748,6 +748,7 @@ a.label:hover { text-decoration: none; filter: brightness(.96); }
 .instance-connection dt { color: var(--text-3); }
 .instance-connection dd { margin: 0; color: var(--text-2); overflow-wrap: anywhere; }
 .instance-backup-fact { display: block; margin: 4px 0; color: var(--text-3); font-size: 11px; overflow-wrap: anywhere; }
+.instance-connection .subhub-actions { margin-top: 16px; }
 .instance-connection-error { margin: 14px 0 0; padding: 10px 12px; border-radius: 6px; color: var(--red); background: var(--red-soft); font-size: 12px; line-height: 1.5; }
 .instance-waiting { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 18px; padding: 14px 16px; border-radius: 8px; color: var(--amber); background: var(--amber-soft); font-size: 12px; line-height: 1.6; }
 .instance-waiting svg { flex: none; margin-top: 2px; }
