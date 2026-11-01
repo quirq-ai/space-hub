@@ -94,6 +94,48 @@ test('verified full-instance transfer retains source identity and private bytes 
   } finally { f.close(); }
 });
 
+test('backups share files: a capture links its own folder and earlier files, an import links what the vault holds', async () => {
+  const f = fixture();
+  try {
+    const ino = (vault: InstanceVault, id: string, name: string) => fs.statSync(path.join(vault.storageDir, 'snapshots', id, 'payload', ...name.split('/'))).ino;
+    const KEY = 'volumes/data/config/id_ecdsa';
+    const key = path.join(f.source, ...KEY.split('/'));
+    const first = await f.vault.capture(f.source, INFO, { adopt: true });
+    assert.equal(ino(f.vault, first.id, KEY), fs.statSync(key).ino, 'the folder\'s own file, linked');
+    // Without the key in its folder, the next backup takes it from the first.
+    fs.rmSync(key);
+    const reuseKey = (snapshot: string, mode = 0o640) => [{ path: KEY, snapshot, from: KEY, mode }];
+    const second = await f.vault.capture(f.source, { ...INFO, createdAt: INFO.createdAt! + 1 }, { reuse: reuseKey(first.id) });
+    assert.equal(ino(f.vault, second.id, KEY), ino(f.vault, first.id, KEY));
+    // A reused file is not also in the folder, exists, and has its directory.
+    await assert.rejects(f.vault.capture(f.source, INFO, { reuse: [{ path: 'deployment.json', snapshot: first.id, from: 'deployment.json', mode: 0o600 }] }), refusal(400));
+    await assert.rejects(f.vault.capture(f.source, INFO, { reuse: [{ path: KEY, snapshot: first.id, from: 'no-such-file', mode: 0o600 }] }), refusal(404));
+    await assert.rejects(f.vault.capture(f.source, INFO, { reuse: [{ path: 'elsewhere/id_ecdsa', snapshot: first.id, from: KEY, mode: 0o600 }] }), refusal(400));
+    await f.vault.remove(first.id);
+    await f.vault.verify(second.id);
+    const restored = path.join(f.root, 'restored'); await f.vault.restore(second.id, restored);
+    assert.equal(fs.readFileSync(path.join(restored, ...KEY.split('/')), 'utf8'), SECRET);
+    assert.equal(fs.statSync(path.join(restored, ...KEY.split('/'))).mode & 0o777, 0o640);
+
+    const replica = new InstanceVault(path.join(f.root, 'replica')); replica.initialize();
+    await replica.importSnapshot(restored, await f.vault.exportManifest(second.id), { adopt: true });
+    fs.writeFileSync(path.join(f.source, 'images/proxy.tar'), 'proxy-runtime, updated');
+    const third = await f.vault.capture(f.source, { ...INFO, createdAt: INFO.createdAt! + 2 }, { reuse: reuseKey(second.id) });
+    const manifest = await f.vault.exportManifest(third.id);
+    // A transfer folder with only the changed file.
+    const changed = path.join(f.root, 'changed'); await f.vault.restore(third.id, changed);
+    for (const file of manifest.files) if (file.path !== 'images/proxy.tar') fs.rmSync(path.join(changed, ...file.path.split('/')));
+    await assert.rejects(replica.importSnapshot(changed, manifest), /do not match/);
+    const empty = new InstanceVault(path.join(f.root, 'empty')); empty.initialize();
+    await assert.rejects(empty.importSnapshot(changed, manifest, { reuse: true }), /do not match/);
+    assert.deepEqual(await replica.importSnapshot(changed, manifest, { adopt: true, reuse: true }), third);
+    await replica.verify(third.id);
+    assert.equal(ino(replica, third.id, 'deployment.json'), ino(replica, second.id, 'deployment.json'));
+    assert.equal(ino(replica, third.id, 'images/proxy.tar'), fs.statSync(path.join(changed, 'images/proxy.tar')).ino);
+    assert.ok(replica.storedHashes().has(manifest.files.find(file => file.path === 'images/proxy.tar')!.sha256));
+  } finally { f.close(); }
+});
+
 test('automatic transfer rejects altered manifests and corrupt files before publication', async () => {
   const f = fixture();
   try {
