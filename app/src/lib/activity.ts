@@ -13,21 +13,17 @@ export function dayOf(iso: string, now = new Date()): string {
   return day.toLocaleDateString("en-US", { weekday: days < 7 ? "long" : undefined, month: "short", day: "numeric", year: day.getFullYear() === now.getFullYear() ? undefined : "numeric" });
 }
 
-export const FILTERS = [{ key: "all", label: "All" }, { key: "pushes", label: "Pushes" }, { key: "agents", label: "Agents" }, { key: "people", label: "People" }] as const;
+export const FILTERS = [{ key: "all", label: "All" }, { key: "humans", label: "Humans" }, { key: "agents", label: "Agents" }] as const;
 export type ActivityFilter = typeof FILTERS[number]["key"];
 
-// Builders who made, connected or removed an agent show under Agents too; "agent_registered" is a builder joining.
-const AGENT_KIND = /^agent_(?!registered)/;
-
 /**
- * Whether an activity row shows under a filter: everything, pushes, what
- * agents did (or what was done to them), or what builders did. `agents`
+ * Whether an activity row shows under a filter: everything, or split by who
+ * did it, a human builder or an agent (their pushes included). `agents`
  * names the agents, since a row only says who.
  */
 export function keepActivity(filter: ActivityFilter, item: ActivityItem, agents: Set<string>): boolean {
-  if (filter === "pushes") return item.kind.startsWith("ref_");
-  if (filter === "agents") return agents.has(item.agent) || AGENT_KIND.test(item.kind);
-  if (filter === "people") return !!item.agent && !agents.has(item.agent);
+  if (filter === "agents") return agents.has(item.agent);
+  if (filter === "humans") return !!item.agent && !agents.has(item.agent);
   return true;
 }
 

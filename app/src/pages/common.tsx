@@ -78,7 +78,7 @@ export function ActivityList({ items, empty = "Nothing has happened here yet.", 
   </section>)}</div>;
 }
 
-const NONE: Record<ActivityFilter, string> = { all: "", pushes: "No pushes here yet.", agents: "No agent has done anything here yet.", people: "No builder has done anything here yet." };
+const NONE: Record<ActivityFilter, string> = { all: "", humans: "No builder has done anything here yet.", agents: "No agent has done anything here yet." };
 
 /** A place's activity with a filter (lib/activity.ts); `agents` names the agents, since an activity row only says who. */
 export function ActivityStream({ items, agents, compact = false, empty }: { items: ActivityItem[]; agents: string[]; compact?: boolean; empty?: string }) {
