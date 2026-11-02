@@ -11,6 +11,8 @@
 //   GET  /-/api/me                         who is signed in
 //   GET  /-/avatar/<name>                  a builder's, org's or agent's picture (avatar.ts)
 //   POST /-/api/chat                       save chat turns as the signed-in builder (append_chat)
+//   POST /-/api/space-picture              an org owner picks the GitHub organization whose picture
+//                                          the org shows, or clears it (set_space_github)
 //
 // The browser never talks to SpacetimeDB: reads come from the module over
 // HTTP, and a chat is saved with the session's own token, so the module's
@@ -22,7 +24,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Conn } from './conn';
 import { findUser } from './conn';
-import { handleAvatar } from './avatar';
+import { forgetAvatar, handleAvatar } from './avatar';
 import { visitorLanding } from './visitor';
 
 export const APP_CSP =
@@ -173,6 +175,34 @@ export async function handleApp(deps: AppDeps, req: http.IncomingMessage, res: h
         return true;
       });
       if (!saved) return json(res, 401, { error: 'Sign in to save chats.' }), true;
+      return json(res, 200, { ok: true }), true;
+    } catch (error) {
+      const message = (error instanceof Error ? error.message : String(error)).replace(/^Error: /, '');
+      return json(res, /permission denied/.test(message) ? 403 : 400, { error: message }), true;
+    }
+  }
+
+  if (route === '/-/api/space-picture') {
+    if (req.method !== 'POST') return json(res, 405, { error: 'Change the picture with POST.' }), true;
+    if (req.headers['content-type']?.split(';')[0] !== 'application/json') return json(res, 415, { error: 'Send JSON.' }), true;
+    const token = /(?:^|;\s*)spacehub_session=([^;]*)/.exec(req.headers.cookie ?? '')?.[1];
+    if (!token) return json(res, 401, { error: 'Sign in to change the picture.' }), true;
+    let input: unknown;
+    try {
+      input = await readJson(req);
+    } catch {
+      return json(res, 400, { error: 'Send a space and a GitHub organization.' }), true;
+    }
+    if (!object(input) || typeof input.space !== 'string' || typeof input.login !== 'string') return json(res, 400, { error: 'Send a space and a GitHub organization.' }), true;
+    const { space, login } = input;
+    try {
+      const saved = await deps.withConn(decodeURIComponent(token), async (conn, identity) => {
+        if (!(await findUser(conn, identity))) return false;
+        await conn.reducers.setSpaceGithub({ space, login });
+        return true;
+      });
+      if (!saved) return json(res, 401, { error: 'Sign in to change the picture.' }), true;
+      forgetAvatar(space);
       return json(res, 200, { ok: true }), true;
     } catch (error) {
       const message = (error instanceof Error ? error.message : String(error)).replace(/^Error: /, '');

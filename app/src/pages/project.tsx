@@ -16,7 +16,8 @@ export function ProjectPage({ route, view, error, me, signIn, refresh }: { route
   const { place } = route;
   const meta = view?.meta;
   const base = placeUrl(place);
-  const tab = route.tab === "commit" ? "commits" : route.tab;
+  // History and single commits open from Code (and Activity); old #branches links land there too.
+  const tab = route.tab === "commit" || route.tab === "commits" || route.tab === "branches" ? "code" : route.tab;
   const people = meta ? new Set([...meta.owners, ...meta.members, ...meta.collaborators, ...meta.agents]).size : undefined;
   const path = route.tab === "files" ? route.path : "";
   if (!meta && error) return <div className="page"><PathBar place={place} path={path} /><PageHeader title={place.project} /><ErrorNote message={error} retry={refresh} /></div>;
@@ -34,8 +35,6 @@ export function ProjectPage({ route, view, error, me, signIn, refresh }: { route
       { key: "files", label: "Files", href: base + "#" + hashOf("files") },
       ...(meta?.deps || route.tab === "deps" ? [{ key: "deps", label: "Dependencies", href: base + "#" + hashOf("deps"), count: meta?.deps || undefined }] : []),
       { key: "code", label: "Code", href: base + "#" + hashOf("code") },
-      { key: "commits", label: "Commits", href: base + "#" + hashOf("commits") },
-      { key: "branches", label: "Branches", href: base + "#" + hashOf("branches") },
       { key: "activity", label: "Activity", href: base + "#" + hashOf("activity") },
       { key: "people", label: "People", href: base + "#" + hashOf("people"), count: people },
     ]} />
@@ -67,7 +66,7 @@ function ProjectStrip({ place, meta }: { place: Place; meta: ProjectMeta }) {
   const here = [...new Set(meta.here.map(who => who.agent))];
   return <div className="meta-strip">
     {meta.goal && <GoalChip place={place} goal={meta.goal} />}
-    <a href={placeUrl(place, hashOf("branches"))} onClick={onLink} title="Default branch"><GitBranch size={14} />{meta.defaultBranch}</a>
+    <a href={placeUrl(place, hashOf("code"))} onClick={onLink} title="Default branch"><GitBranch size={14} />{meta.defaultBranch}</a>
     <span title="Stored on the hub"><HardDrive size={14} />{size(meta.bytes)}</span>
     {meta.deps > 0 && <a href={placeUrl(place, hashOf("deps"))} onClick={onLink} title="Repositories pinned by DEPS"><Boxes size={14} />{meta.deps} pinned {meta.deps === 1 ? "repo" : "repos"}</a>}
     {meta.head ? <a href={placeUrl(place, hashOf("commit", { oid: meta.head.oid }))} onClick={onLink} title={meta.head.subject}><Avatar name={meta.head.author} size={18} /><span>Updated <Ago iso={meta.head.time} /> by {meta.head.author}</span></a> : <span>Nothing pushed yet</span>}

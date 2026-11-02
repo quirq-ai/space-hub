@@ -1,8 +1,8 @@
-// Avatars: GitHub pictures fetched by the hub, initials for everyone else.
+// Avatars: GitHub pictures fetched by the hub, initials (an org, a building) for everyone else.
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { test } from 'node:test';
-import { handleAvatar, initialsSvg } from '../src/avatar.ts';
+import { defaultSvg, forgetAvatar, handleAvatar } from '../src/avatar.ts';
 
 function serve(handler: http.RequestListener): Promise<{ url: string; close: () => void }> {
   return new Promise(resolve => {
@@ -13,13 +13,17 @@ function serve(handler: http.RequestListener): Promise<{ url: string; close: () 
   });
 }
 
-test('initials: two letters, a stable color, round for builders and square-ish for orgs and agents', () => {
-  const svg = initialsSvg('ada-lovelace', 'personal');
+test('defaults: two letters on a stable color, round for builders, square-ish for agents, a building for orgs', () => {
+  const svg = defaultSvg('ada-lovelace', 'personal');
   assert.match(svg, />AL</);
   assert.match(svg, /rx="48"/);
-  assert.equal(svg, initialsSvg('ada-lovelace', 'personal'));
-  assert.match(initialsSvg('scout', 'agent'), /rx="22"/);
-  assert.match(initialsSvg('scout', 'agent'), />SC</);
+  assert.equal(svg, defaultSvg('ada-lovelace', 'personal'));
+  assert.match(defaultSvg('scout', 'agent'), /rx="22"/);
+  assert.match(defaultSvg('scout', 'agent'), />SC</);
+  const org = defaultSvg('quirq', 'org');
+  assert.match(org, /rx="22"/);
+  assert.match(org, /<path d="M6 22V4/);
+  assert.doesNotMatch(org, /<text/);
 });
 
 test('a GitHub-backed name gets its picture, others and failures get initials, bad names a 404', async t => {
@@ -43,4 +47,10 @@ test('a GitHub-backed name gets its picture, others and failures get initials, b
   assert.match((await get('/-/avatar/plain')).body.toString(), />PL</);
   assert.equal((await get('/-/avatar/Bad%20Name')).status, 404);
   assert.equal((await get('/-/other')).status, 418);
+  assert.match((await fetch(app.url + '/-/avatar/plain')).headers.get('cache-control') ?? '', /max-age=300/);
+  // An org that picks a GitHub picture shows it once its cached default is forgotten.
+  logins.plain = 'octocat';
+  assert.match((await get('/-/avatar/plain')).body.toString(), />PL</);
+  forgetAvatar('plain');
+  assert.deepEqual((await get('/-/avatar/plain')).body, png);
 });

@@ -2,7 +2,8 @@
 // builder, org or agent. A name backed by a GitHub account (a builder who
 // signed up with GitHub, an org linked to one) gets its GitHub picture,
 // fetched here so visitors' browsers never contact GitHub; everyone else gets
-// initials on a color derived from the name. Answers are cached in memory.
+// initials (an org, a building) on a color derived from the name. Answers are
+// cached in memory.
 import crypto from 'node:crypto';
 import type http from 'node:http';
 
@@ -27,13 +28,23 @@ export interface AvatarDeps {
 
 const cache = new Map<string, Cached>();
 
-/** Two letters from a name, on one of eight calm hues picked by the name. */
-export function initialsSvg(name: string, kind: string): string {
+/** Drop a name's cached answer, after its picture changed. */
+export function forgetAvatar(name: string): void {
+  cache.delete(name.toLowerCase());
+}
+
+// lucide's building-2, drawn on a 24-unit grid.
+const BUILDING = ['M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z', 'M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2', 'M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2', 'M10 6h4', 'M10 10h4', 'M10 14h4', 'M10 18h4'];
+
+/** Two letters from a name (an org gets a building), on one of eight calm hues picked by the name. */
+export function defaultSvg(name: string, kind: string): string {
   const parts = name.split('-').filter(Boolean);
   const letters = (parts.length > 1 ? parts[0][0] + parts[1][0] : name.slice(0, 2)).toUpperCase();
   const hue = [212, 160, 262, 28, 340, 190, 98, 0][crypto.createHash('sha1').update(name).digest()[0] % 8];
   const radius = kind === 'org' || kind === 'agent' ? 22 : 48;
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96"><rect width="96" height="96" rx="${radius}" fill="hsl(${hue} 45% 88%)"/><text x="48" y="50" text-anchor="middle" dominant-baseline="middle" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="38" font-weight="600" fill="hsl(${hue} 40% 30%)">${letters.replace(/[<&]/g, '')}</text></svg>`;
+  const tile = `<rect width="96" height="96" rx="${radius}" fill="hsl(${hue} 45% 88%)"/>`;
+  if (kind === 'org') return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">${tile}<g transform="translate(26 26) scale(1.8333)" fill="none" stroke="hsl(${hue} 40% 30%)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${BUILDING.map(d => `<path d="${d}"/>`).join('')}</g></svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">${tile}<text x="48" y="50" text-anchor="middle" dominant-baseline="middle" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="38" font-weight="600" fill="hsl(${hue} 40% 30%)">${letters.replace(/[<&]/g, '')}</text></svg>`;
 }
 
 async function picture(base: string, login: string): Promise<Cached | null> {
@@ -60,7 +71,7 @@ async function avatar(deps: AvatarDeps, name: string): Promise<Cached> {
   } catch {
     /* Without the module, initials still show who it is. */
   }
-  found ??= { type: 'image/svg+xml', body: Buffer.from(initialsSvg(name, kind)), expires: Date.now() + INITIALS_TTL };
+  found ??= { type: 'image/svg+xml', body: Buffer.from(defaultSvg(name, kind)), expires: Date.now() + INITIALS_TTL };
   if (cache.size >= MAX_CACHED) cache.delete(cache.keys().next().value!);
   cache.set(name, found);
   return found;
@@ -79,7 +90,8 @@ export async function handleAvatar(deps: AvatarDeps, req: http.IncomingMessage, 
   const found = await avatar(deps, name);
   res.writeHead(200, {
     'content-type': found.type,
-    'cache-control': 'public, max-age=3600',
+    // A default stands in until a GitHub picture is set, so browsers ask again sooner.
+    'cache-control': `public, max-age=${found.type === 'image/svg+xml' ? 300 : 3600}`,
     'x-content-type-options': 'nosniff',
     'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'",
   });

@@ -67,8 +67,20 @@ export function placeUrl(place: Place, hash = ""): string {
   return "/" + [place.space, place.project].filter(Boolean).map(encodeURIComponent).join("/") + (hash ? "#" + hash : "");
 }
 
+// A name whose picture just changed gets a new address, so images load it again.
+const pictureVersions = new Map<string, number>();
+
 export function avatarUrl(name: string): string {
-  return "/-/avatar/" + encodeURIComponent(name.toLowerCase());
+  const key = name.toLowerCase();
+  const version = pictureVersions.get(key);
+  return "/-/avatar/" + encodeURIComponent(key) + (version ? `?v=${version}` : "");
+}
+
+/** An org owner picks the GitHub organization whose picture the org shows ("" for the default). */
+export async function setSpacePicture(space: string, login: string): Promise<void> {
+  const response = await fetch("/-/api/space-picture", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ space, login }) });
+  if (!response.ok) throw new Error((await response.json().catch(() => null) as { error?: string } | null)?.error ?? `Could not change the picture (${response.status}).`);
+  pictureVersions.set(space.toLowerCase(), Date.now());
 }
 
 /** The module's raw view of a file, for image previews and PDFs. */
