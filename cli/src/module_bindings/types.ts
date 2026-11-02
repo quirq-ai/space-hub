@@ -196,6 +196,20 @@ export const RefSyncIn = __t.object("RefSyncIn", {
 });
 export type RefSyncIn = __Infer<typeof RefSyncIn>;
 
+export const Runner = __t.object("Runner", {
+  id: __t.string(),
+  owner: __t.string(),
+  name: __t.string(),
+  kind: __t.string(),
+  url: __t.string(),
+  sealedToken: __t.string(),
+  capabilities: __t.string(),
+  isDefault: __t.bool(),
+  connectedAt: __t.timestamp(),
+  checkedAt: __t.timestamp(),
+});
+export type Runner = __Infer<typeof Runner>;
+
 export const Space = __t.object("Space", {
   name: __t.string(),
   kind: __t.string(),
@@ -243,6 +257,22 @@ export const User = __t.object("User", {
   createdAt: __t.timestamp(),
 });
 export type User = __Infer<typeof User>;
+
+export const Worker = __t.object("Worker", {
+  taskId: __t.string(),
+  runnerId: __t.string(),
+  runnerUrl: __t.string(),
+  launcher: __t.string(),
+  space: __t.string(),
+  project: __t.string(),
+  conversation: __t.string(),
+  title: __t.string(),
+  status: __t.string(),
+  result: __t.string(),
+  createdAt: __t.timestamp(),
+  updatedAt: __t.timestamp(),
+});
+export type Worker = __Infer<typeof Worker>;
 
 export const XoAgent = __t.object("XoAgent", {
   subject: __t.string(),

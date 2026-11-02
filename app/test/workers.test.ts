@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { foldEvents, launchInput, launchOf, linkLabel, repoName, withoutCredit, toDetail, toEvents, toTasks } from "../src/lib/agenthub.ts";
+import { cardActions, cardHeadline, foldEvents, launchInput, launchNote, launchOf, linkLabel, repoName, stateNote, toWorkerDetail, withoutCredit, toDetail, toEvents, toTasks, type RunnerInfo } from "../src/lib/workers.ts";
 
 test("tasks from a list or {tasks}, newest activity first", () => {
   const tasks = toTasks({ tasks: [
@@ -72,4 +72,53 @@ test("launching from GitHub: a repository, or an issue or PR whose link joins th
   assert.deepEqual(launchInput("Fix this ", "quirq-ai/quirq"), { text: "Fix this", repo: "quirq-ai/quirq" });
   assert.equal(repoName("https://github.com/quirq-ai/quirq/pull/3"), "quirq-ai/quirq");
   assert.equal(repoName("not a repo"), "");
+});
+
+// ---------------------------------------------------------------- runners and the worker card
+const all = { followUp: true, stop: true, events: true, repo: true, connect: false };
+const none = { followUp: false, stop: false, events: false, repo: false, connect: false };
+const card = (status: string, extra: Record<string, unknown> = {}, caps = all) => toWorkerDetail({
+  task: { id: "t1", title: "Fix", status }, result: { summary: "ok", links: [], error: null },
+  launcher: "priya", mine: false, runner: { id: "r1", name: "Priya hub", kind: "Agents Hub", capabilities: caps }, ...extra,
+});
+
+test("a viewer only sees the steps, and only when the runner shares them", () => {
+  assert.deepEqual(cardActions(card("running"), "arjun"), { steps: true, followUp: false, stop: false, tearDown: false });
+  assert.deepEqual(cardActions(card("done"), "arjun"), { steps: true, followUp: false, stop: false, tearDown: false });
+  assert.equal(cardActions(card("running", {}, none), "arjun").steps, false);
+});
+
+test("the launcher stops a running worker, and follows up or tears down an idle one, each by capability", () => {
+  assert.deepEqual(cardActions(card("running"), "priya"), { steps: true, followUp: false, stop: true, tearDown: false });
+  assert.deepEqual(cardActions(card("done"), "priya"), { steps: true, followUp: true, stop: false, tearDown: true });
+  assert.deepEqual(cardActions(card("running", {}, none), "priya"), { steps: false, followUp: false, stop: false, tearDown: false });
+  assert.deepEqual(cardActions(card("done", {}, none), "priya"), { steps: false, followUp: false, stop: false, tearDown: true });
+  assert.deepEqual(cardActions(card("gone", { state: "gone" }), "priya"), { steps: false, followUp: false, stop: false, tearDown: false });
+  assert.deepEqual(cardActions(card("done", { state: "disconnected" }), "priya"), { steps: false, followUp: false, stop: false, tearDown: false });
+});
+
+test("the headline says whose runner it is on", () => {
+  assert.equal(cardHeadline(card("running"), "priya"), "on your Agents Hub");
+  assert.equal(cardHeadline(card("running"), "arjun"), "on priya's Agents Hub");
+});
+
+test("a state note for each state, none when live", () => {
+  assert.equal(stateNote(card("gone", { state: "gone" })), "Torn down · result kept");
+  assert.equal(stateNote(card("done", { state: "disconnected" })), "priya's runner is not connected");
+  assert.equal(stateNote(card("done", { state: "unreachable" })), "priya's runner did not answer");
+  assert.equal(stateNote(card("done")), "");
+});
+
+test("a detail keeps only https links and drops unknown states", () => {
+  const d = toWorkerDetail({ task: { id: "t", title: "T", status: "done" }, result: { links: ["https://github.com/o/r/pull/1", "javascript:x"] }, state: "weird", launcher: "priya" });
+  assert.deepEqual(d.result.links.map(l => l.url), ["https://github.com/o/r/pull/1"]);
+  assert.equal(d.state, "");
+  assert.equal(d.runner, null);
+});
+
+test("the launch note names the runner a worker will run on", () => {
+  const r = (id: string, name: string, isDefault: boolean): RunnerInfo => ({ id, name, kind: "Agents Hub", url: "https://x", isDefault, capabilities: all, connectedAt: "", checkedAt: "" });
+  assert.equal(launchNote([]), "Connect a runner in Settings to launch workers");
+  assert.equal(launchNote([r("a", "Mine", true)]), "Runs on Mine · Agents Hub");
+  assert.equal(launchNote([r("a", "Mine", false), r("b", "Work", true)]), "Runs on Work · Agents Hub");
 });

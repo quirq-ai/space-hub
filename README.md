@@ -388,8 +388,8 @@ Once the new hub is in use, delete the old database with
 | `SPACEHUB_BACKUP_DIR` | `/data/.spacehub/backups` | Where the hub keeps them |
 | `SPACEHUB_RECOVERY_OPERATORS` | unset | Builders (comma-separated) who may connect Sub-hubs and open Settings → Sub-hubs; otherwise only the database's owner identity can |
 | `SPACEHUB_VISITOR_HOME` | `quirq/quirq` | Where a visitor who is not signed in lands from the hub's address (`/`): a space or project, once it is on the hub (`off`: the home page for everyone). Signed in, `/` is the home page |
-| `SPACEHUB_AGENTHUB_URL`, `SPACEHUB_AGENTHUB_TOKEN` | unset | Turn on worker agents: members launch them from a chat, as tasks on this Agents Hub with this API token (see Agents launched from chat below) |
-| `SPACEHUB_AGENTHUB_SPACES` | unset | The orgs that have agents, comma-separated. Their members (and owners) launch and steer them, on a hub with xo only once signed in with xo; nobody else can |
+| `SPACEHUB_SECRET_KEY` | unset | Turns on workers on your own runners (see below): base64 of at least 32 random bytes (`openssl rand -base64 32`). Runner tokens are sealed with it (AES-256-GCM) before they are stored. Keep it in the environment, not in `/data`; lose it and everyone connects their runners again. Needs `SPACEHUB_ADMIN_TOKEN` |
+| `SPACEHUB_RUNNER_ALLOW_LOCAL` | unset | `1`: runners at `http://127.0.0.1` or `http://localhost` may be connected. For local development only; on a deployed hub it would let people reach the container's own ports |
 | `/data` volume | | Databases, the server's signing keys, and the identity that owns the module. **Mount persistent storage here and back it up.** Without it, a restart forgets every project and invalidates every client token |
 
 The container starts as root only to take ownership of `/data`, because
@@ -1062,6 +1062,10 @@ cli/src/compat.ts        does this CLI match the hub: the protocol check and its
 cli/src/xo.ts            xo.quirq.dev's API: xo's per-user records and builders
 cli/src/git.ts           git plumbing: rev-list, cat-file, packfile writer
 cli/src/web.ts           web service: sign in/up, create and import projects
+cli/src/workers.ts       runners and workers launched from chats (/-/api/runners, /-/api/workers)
+cli/src/workerclient.ts  a Worker Protocol (worker/1) client for one runner
+cli/src/runnerstore.ts   runners and workers in the module's private tables, through the admin
+cli/src/seal.ts          sealing runner tokens with SPACEHUB_SECRET_KEY
 cli/src/app.ts           the app's page, files and API (/-/api/view, /-/api/chat)
 cli/src/avatar.ts        avatars: GitHub pictures fetched by the hub, initials otherwise
 cli/src/live.ts          live pages: the /-/live event stream (livepage.ts: the page script)
@@ -1226,30 +1230,42 @@ reducers (`xo_put_record`, compare-and-swap on the record's version,
   repositories) is closest to a hub space. The hub stores the record as
   opaque JSON, so nothing breaks; xo's own code should rename to match.
 
-## Agents launched from chat
+## Workers on your own runners
 
-An org's worker agents start from its projects' chats. In a channel, a member
-writes what the agent should do and presses the rocket beside Send instead of
-Send. A small tray asks where on GitHub it works: `owner/repo`, or a link to an
-issue or pull request (the link joins the task). Launch starts a task on the
-org's Agents Hub, which gives it its own sandbox and an agent that works on
-GitHub, and saves the message to the channel. Under the message, everyone in
-the channel then sees the worker: what it is doing, its steps, and its result
-and pull requests. Members stop it, follow up once it stops, or tear it down.
+Workers start from a project's chats and run on the launcher's own runner,
+on the launcher's own account. A runner is anything that speaks the Worker
+Protocol (`worker/1`, below); an Agents Hub is the first.
 
-- **Turn it on** with `SPACEHUB_AGENTHUB_URL` (the Agents Hub's https
-  address), `SPACEHUB_AGENTHUB_TOKEN` (made in its Settings, Agent access) and
-  `SPACEHUB_AGENTHUB_SPACES` (the orgs that have agents), then restart.
-- **The agents belong to the org.** Only members and owners of a listed org
-  launch in its projects and follow its workers.
-- **The token stays on the server.** The browser only talks to the web
-  service at `/-/api/agenthub/` (see `cli/src/agenthub.ts`) with its session
-  cookie; the service checks membership, checks writes come from this site,
-  and calls the Agents Hub with the token. A launch carries an idempotency
-  key, so a retry never starts a task twice.
-- **In the files.** A launch is an ordinary chat turn by the member, ending
-  with `<!-- agenthub:task=<id> -->`; the app shows the worker there, and the
-  task's text says who launched it from which conversation.
+- **Connect a runner** in Settings → Runners: its address and a token. On an
+  Agents Hub, make the token in Settings → Agent access with "Only tasks it
+  starts", so the hub only shows space-hub the workers it launched. Connecting
+  checks the token, then seals it with `SPACEHUB_SECRET_KEY`; it never goes back
+  to a browser. Several runners are fine; one is the default.
+- **Launch.** In a channel, write what the worker should do and press the rocket
+  beside Send. The tray picks the runner (when you have more than one) and, if
+  the runner works on repositories, asks for `owner/repo` or an issue or pull
+  request link. Only people who can write to the project launch there. A launch
+  carries an idempotency key, so a retry never starts a worker twice.
+- **Everyone in the space follows it.** Under the message, members see the
+  worker "on <launcher>'s Agents Hub": what it is doing, its steps (when the
+  runner shares them) and its result. Only the launcher stops it, follows up or
+  tears it down, and only when the runner can.
+- **The result is kept.** When a worker ends, space-hub keeps a copy of its
+  summary and links, so the card still shows them after it is torn down
+  ("Torn down · result kept") or while its runner is disconnected. Connect the
+  same runner again and its workers come back to it. Settings → Your workers
+  lists everything you launched, with a nudge to tear down idle ones.
+- **In the files.** A launch is an ordinary chat turn by the launcher, ending
+  with `<!-- agenthub:task=<id> -->`; the task's text says who launched it from
+  which conversation.
+
+The Worker Protocol a runner speaks, with `Authorization: Bearer <token>`:
+`GET /api/worker` (`{protocol: "worker/1", name, kind, capabilities: {followUp,
+stop, events, repo, connect}}`), and tasks at `POST /api/tasks`, `GET
+/api/tasks/<id>`, `/events?after=`, `POST /messages`, `POST /stop` and `DELETE`.
+The browser only talks to `/-/api/runners` and `/-/api/workers` (see
+`cli/src/workers.ts`); only the protocol's fields of a runner's answers reach
+it, and its token is taken out of a worker's steps.
 
 ## Limits (v0)
 
