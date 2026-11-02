@@ -456,13 +456,10 @@ a.label:hover { text-decoration: none; filter: brightness(.96); }
 .meta-strip > a, .meta-strip > span { display: inline-flex; align-items: center; gap: 6px; color: var(--text-2); white-space: nowrap; }
 .meta-strip > a:hover { color: var(--text); text-decoration: none; }
 .strip-here { display: inline-flex; align-items: center; gap: 6px; color: var(--green); font-weight: 500; }
-/* Who is connected now: chips in a page header, a list in the panel. */
-.live-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; font-size: 13px; }
-.live-strip .strip-here { flex: none; margin-right: 2px; white-space: nowrap; }
-.live-chip { display: inline-flex; align-items: center; gap: 7px; max-width: 100%; padding: 3px 10px 3px 4px; border: 1px solid var(--line); border-radius: 20px; background: var(--panel); color: var(--text-2); }
-.live-chip:hover { border-color: var(--line-strong); text-decoration: none; }
-.live-chip b { color: var(--text); font-weight: 600; }
-.live-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Who is connected now: how many in a page header, each one in the panel. */
+.live-strip { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 13px; }
+.live-strip .strip-here { flex: none; white-space: nowrap; }
+.live-count { color: var(--text-2); font-weight: 600; font-variant-numeric: tabular-nums; }
 .live-panel { padding-bottom: 6px; border-bottom: 1px solid var(--line); }
 .live-list { display: grid; gap: 8px; margin: 8px 0 6px; padding: 0; list-style: none; }
 .live-list li { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; }
@@ -485,8 +482,6 @@ a.overview-tile:hover { border-color: var(--line-strong); text-decoration: none;
 .overview-when { flex: none; color: var(--text-3); font-size: 12.5px; font-weight: 500; }
 @media (max-width: 760px) {
   .meta-strip { gap: 6px 14px; margin-top: 10px; font-size: 12.5px; }
-  .live-strip { flex-wrap: nowrap; margin-inline: -16px; padding-inline: 16px; overflow-x: auto; scrollbar-width: none; }
-  .live-chip { flex: none; }
   .overview-wrap { margin-bottom: 16px; }
   .overview-tile { padding: 10px 12px; }
   .overview-value { font-size: 13.5px; }

@@ -91,12 +91,12 @@ export function ActivityStream({ items, agents, compact = false, empty }: { item
   </div>;
 }
 
-/** The right-hand panel's content: who is here (in a space or project; Home shows that in its header), then the place's activity. */
+/** The right-hand panel's content: who is here (on Home, who is live on the hub), then the place's activity. */
 export function ActivityPanel({ meta }: { meta: Meta | undefined }) {
   if (!meta) return <div className="feed"><SkeletonRows rows={6} /></div>;
   const agents = meta.level === "project" ? meta.agents : [...new Set([...meta.agentList.map(agent => agent.name), ...(meta.level === "space" ? meta.agents : [])])];
   return <div className="feed">
-    {meta.level !== "hub" && <LiveNow variant="panel" here={meta.here} agents={meta.level === "space" ? meta.agentList : []} known={agents} place={meta.level === "project" ? meta.fullName : ""} />}
+    <LiveNow variant="panel" title={meta.level === "hub" ? "Live now" : "Here now"} here={meta.here} agents={meta.level === "project" ? [] : meta.agentList} known={agents} place={meta.level === "project" ? meta.fullName : ""} />
     <ActivityStream items={meta.activity} agents={agents} compact />
   </div>;
 }
@@ -144,17 +144,14 @@ function PushGroup({ group, compact, index }: { group: ActivityItem[]; compact: 
   </li>;
 }
 
-/** Who is connected now (lib/activity.ts): a row of chips in a page header, or a list at the top of the right-hand panel. */
-export function LiveNow({ here, agents = [], known = [], place = "", variant }: { here: Here[]; agents?: AgentInfo[]; known?: string[]; place?: string; variant: "strip" | "panel" }) {
+/** Who is connected now (lib/activity.ts): how many, in a page header, or each one at the top of the right-hand panel. */
+export function LiveNow({ here, agents = [], known = [], place = "", variant, title = "Here now" }: { here: Here[]; agents?: AgentInfo[]; known?: string[]; place?: string; variant: "strip" | "panel"; title?: string }) {
   const rows = liveRows(here, agents, known, place);
   if (variant === "strip") return rows.length ? <div className="live-strip">
-    <span className="strip-here"><i className="online-dot" />Live now</span>
-    {rows.map(row => <a key={row.name} className="live-chip" href={"/" + encodeURIComponent(row.name)} onClick={onLink} title={`${row.name} · ${row.text}`}>
-      <Avatar name={row.name} size={20} kind={row.agent ? "agent" : undefined} /><b>{row.name}</b><span>{row.text}</span>
-    </a>)}
+    <span className="strip-here"><i className="online-dot" />Live now</span><span className="live-count">{rows.length}</span>
   </div> : null;
-  return <section className="live-panel" aria-label="Here now">
-    <h3 className="activity-day-title">Here now{rows.length > 0 && <span className="quiet"> {rows.length}</span>}</h3>
+  return <section className="live-panel" aria-label={title}>
+    <h3 className="activity-day-title">{title}{rows.length > 0 && <span className="quiet"> {rows.length}</span>}</h3>
     {rows.length ? <ul className="live-list">{rows.map(row => <li key={row.name}>
       <a className="person" href={"/" + encodeURIComponent(row.name)} onClick={onLink}><Avatar name={row.name} size={22} kind={row.agent ? "agent" : undefined} /><span>{row.name}</span></a>
       <span className="live-doing" title={row.text}>{row.text}</span><i className="online-dot" title="Connected now" />
