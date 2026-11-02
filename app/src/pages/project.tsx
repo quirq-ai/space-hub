@@ -35,7 +35,7 @@ export function ProjectPage({ route, view, error, me, signIn, refresh }: { route
       { key: "files", label: "Files", href: base + "#" + hashOf("files") },
       ...(meta?.deps || route.tab === "deps" ? [{ key: "deps", label: "Dependencies", href: base + "#" + hashOf("deps"), count: meta?.deps || undefined }] : []),
       { key: "code", label: "Code", href: base + "#" + hashOf("code") },
-      { key: "activity", label: "Activity", href: base + "#" + hashOf("activity") },
+      { key: "activity", label: "Activity", href: base + "#" + hashOf("activity"), count: meta?.activity.length || undefined },
       { key: "people", label: "People", href: base + "#" + hashOf("people"), count: people },
     ]} />
     {meta?.goal && route.tab === "files" && !path && !chatty && <GoalPanel place={place} goal={meta.goal} canWrite={meta.canWrite} />}

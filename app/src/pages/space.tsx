@@ -53,7 +53,7 @@ export function SpacePage({ name, tab, view, error, me, seen }: { name: string; 
       { key: "projects", label: "Projects", href: base, count: meta.projects },
       ...(hasAgents ? [{ key: "agents", label: "Agents", href: base + "#" + hashOf("agents"), count: agentCount }] : []),
       { key: "people", label: meta.kind === "org" ? "Members" : "People", href: base + "#" + hashOf("people"), count: peopleCount || undefined },
-      { key: "activity", label: "Activity", href: base + "#" + hashOf("activity") },
+      { key: "activity", label: "Activity", href: base + "#" + hashOf("activity"), count: meta.activity.length || undefined },
     ]} />
     {tab === "projects" && <>
       {meta.kind !== "agent" && <SpaceOverview name={name} meta={meta} projects={projects} />}
