@@ -1,0 +1,13 @@
+# Built into the server image. In a backup container (SPACEHUB_BACKUP_OF, see
+# server-entrypoint.sh) nothing is served: the public port only answers the
+# platform's health checks.
+{
+	admin off
+	auto_https off
+	persist_config off
+}
+
+:{$PORT:3000} {
+	respond /healthz "ok" 200
+	respond "spacehub backup of {$SPACEHUB_BACKUP_OF}: see that hub's Settings, under Sub-hubs" 200
+}

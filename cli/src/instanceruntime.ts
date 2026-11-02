@@ -1,11 +1,15 @@
 // A connected Sub-hub copies already-complete instance snapshots. Creating a
 // consistent source backup is a separate server concern, never a client guess.
+// A hub that keeps no backups of its own serves its data folder live instead
+// (hubdata.ts): then the Sub-hub makes the backups, a copy of that folder on
+// a schedule, and the hub needs no disk for them.
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
-import { backupKind, canonicalPath, COVERAGE, InstanceVault, MAX_INSTANCE_FILES, type Snapshot, type TransferManifest } from './instancevault.ts';
+import type { HubDataList } from './hubdata.ts';
+import { backupKind, canonicalPath, COVERAGE, InstanceVault, MAX_INSTANCE_FILES, type ReusedFile, type Snapshot, type TransferManifest } from './instancevault.ts';
 
 const PREFIX = '/-/api/instance-recovery';
 const MARKER = '.spacehub-instance-runtime.json';
@@ -14,12 +18,20 @@ const TOKEN = /^[a-f0-9]{64}$/;
 const MAX_JSON = 64 * 1024 ** 2;
 const MAX_INDEX = 4 * 1024 ** 2;
 const NO_FOLLOW = fs.constants.O_NOFOLLOW ?? 0;
+// A file of the hub's data is taken from this machine's last copy when its
+// size and mode are the same and it last changed this long before that copy
+// began, by the hub's clock (coarse file times).
+const SETTLED_MS = 2_000;
+// Files of the hub's data downloaded at once: a first copy is many small files.
+const PARALLEL = 8;
 export type InstanceRuntimeState = 'waiting' | 'syncing' | 'up-to-date' | 'error';
 export interface InstanceRuntimeStatus { state: InstanceRuntimeState; snapshots: number; error?: string }
 export interface InstanceRuntimeOptions {
   storage: string; hub: string; operatorToken?: string; name?: string; intervalSeconds?: number;
   /** Backups kept here, newest first (default 24): the hub makes new ones, older ones go. */
   keep?: number;
+  /** How often to copy the hub's data, for a hub that keeps no backups of its own (default 60). */
+  everyMinutes?: number;
   once?: boolean; signal?: AbortSignal; onStatus?(status: InstanceRuntimeStatus): void;
 }
 export interface InstanceRuntimeDeps { fetch?: typeof fetch; heartbeatIntervalMs?: number }
@@ -91,6 +103,25 @@ function transferManifest(value: unknown, expected: Snapshot, quota: number): Tr
   }
   if (files.length !== details.files || bytes !== details.bytes) refuse('The source returned inconsistent instance sizes');
   return { version: 1, snapshot: details, rootMode: value.rootMode, directories, files };
+}
+// One part of the hub's data folder as it listed it (hubdata.ts), checked.
+function hubDataList(value: unknown, parents: Set<string>): HubDataList {
+  if (!isObject(value) || !integer(value.at) || !permissions(value.rootMode) || !Array.isArray(value.directories) || !Array.isArray(value.files) || value.directories.length + value.files.length > MAX_INSTANCE_FILES) refuse('The hub returned an invalid listing of its data');
+  const seen = new Set<string>();
+  const name = (item: unknown) => { const valid = bundlePath(item); if (seen.has(valid)) refuse('The hub listed a data path twice'); seen.add(valid); return valid; };
+  const directories = value.directories.map(item => {
+    if (!isObject(item) || !permissions(item.mode)) return refuse('The hub returned an invalid listing of its data');
+    const dir = { path: name(item.path), mode: item.mode }; parents.add(dir.path); return dir;
+  });
+  const files = value.files.map(item => {
+    if (!isObject(item) || !permissions(item.mode) || !integer(item.size) || typeof item.mtimeMs !== 'number' || !Number.isFinite(item.mtimeMs) || (item.same !== undefined && (typeof item.same !== 'string' || !/^\d{1,20}:\d{1,20}$/.test(item.same)))) return refuse('The hub returned an invalid listing of its data');
+    return { path: name(item.path), size: item.size, mode: item.mode, mtimeMs: item.mtimeMs, ...(item.same ? { same: item.same as string } : {}) };
+  });
+  for (const item of [...directories, ...files]) {
+    const parent = item.path.includes('/') ? item.path.slice(0, item.path.lastIndexOf('/')) : '';
+    if (parent && !parents.has(parent)) refuse('The hub returned an incomplete listing of its data');
+  }
+  return { at: value.at, rootMode: value.rootMode, directories, files };
 }
 function runtimeDirectory(storage: string) {
   const root = storage + '.runtime'; noLinks(root);
@@ -186,6 +217,8 @@ export async function runInstanceSubhub(options: InstanceRuntimeOptions, deps: I
   if (!Number.isSafeInteger(interval) || interval < 1 || interval > 86400) refuse('Sub-hub interval must be between 1 and 86400 seconds');
   const keep = options.keep ?? 24;
   if (!Number.isSafeInteger(keep) || keep < 1 || keep > 10_000) refuse('Sub-hub --keep must be between 1 and 10000 backups');
+  const every = options.everyMinutes ?? 60;
+  if (!Number.isSafeInteger(every) || every < 1 || every > 7 * 24 * 60) refuse('Sub-hub --every must be between 1 and 10080 minutes');
   const heartbeatInterval = deps.heartbeatIntervalMs ?? 10_000;
   if (!Number.isSafeInteger(heartbeatInterval) || heartbeatInterval < 1 || heartbeatInterval > 15_000) refuse('Invalid Sub-hub heartbeat interval');
   const vault = new InstanceVault(storage);
@@ -258,18 +291,15 @@ export async function runInstanceSubhub(options: InstanceRuntimeOptions, deps: I
     }
     local = found;
   };
-  const download = async (id: string, file: TransferManifest['files'][number], destination: string) => {
-    const response = await machineRequest(`/source/snapshots/${id}/file?path=${encodeURIComponent(file.path)}`, {}, 30 * 60_000);
-    if (!response.ok || response.headers.get('x-spacehub-snapshot') !== id || response.headers.get('x-spacehub-sha256') !== file.sha256) { await response.body?.cancel(); refuse('The hub did not return the requested instance file'); }
-    const declared = response.headers.get('content-length');
-    if (declared && (!/^\d+$/.test(declared) || Number(declared) !== file.size)) { await response.body?.cancel(); refuse('The instance file size did not match its manifest'); }
+  // Save a file the hub sends, exactly `size` bytes; its sha256.
+  const save = async (response: Response, destination: string, size: number, mode = 0o600) => {
     let output: fsp.FileHandle | undefined;
     let bytes = 0; const hash = crypto.createHash('sha256');
     try {
       output = await fsp.open(destination, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | NO_FOLLOW, 0o600);
       if (response.body) for await (const chunk of response.body as any as AsyncIterable<Uint8Array>) {
         bytes += chunk.length;
-        if (bytes > file.size) refuse('The instance file exceeded its manifest size');
+        if (bytes > size) refuse('The instance file exceeded its manifest size');
         hash.update(chunk);
         for (let offset = 0; offset < chunk.length;) {
           const { bytesWritten } = await output.write(chunk, offset, chunk.length - offset);
@@ -277,9 +307,110 @@ export async function runInstanceSubhub(options: InstanceRuntimeOptions, deps: I
           offset += bytesWritten;
         }
       }
-      if (bytes !== file.size || hash.digest('hex') !== file.sha256) refuse('The instance file failed integrity verification');
+      if (bytes !== size) refuse('The instance file failed integrity verification');
+      if (mode !== 0o600) await output.chmod(mode);
       await output.sync();
+      return hash.digest('hex');
     } finally { try { await output?.close(); } finally { await response.body?.cancel(); } }
+  };
+  const download = async (id: string, file: TransferManifest['files'][number], destination: string) => {
+    const response = await machineRequest(`/source/snapshots/${id}/file?path=${encodeURIComponent(file.path)}`, {}, 30 * 60_000);
+    if (!response.ok || response.headers.get('x-spacehub-snapshot') !== id || response.headers.get('x-spacehub-sha256') !== file.sha256) { await response.body?.cancel(); refuse('The hub did not return the requested instance file'); }
+    const declared = response.headers.get('content-length');
+    if (declared && (!/^\d+$/.test(declared) || Number(declared) !== file.size)) { await response.body?.cancel(); refuse('The instance file size did not match its manifest'); }
+    if (await save(response, destination, file.size) !== file.sha256) refuse('The instance file failed integrity verification');
+  };
+  // A copy of the hub's data folder as it is now, when the hub serves it and
+  // keeps no backups of its own: listed and downloaded with the commit logs
+  // last, each file unchanged since this machine's last copy taken from that
+  // copy (shared on disk), so only what changed moves. False when the hub
+  // does not serve its data.
+  const liveCopy = async (): Promise<boolean> => {
+    const last = local.filter(item => item.consistency === 'live-copy').sort((a, b) => b.createdAt - a.createdAt)[0];
+    if (last && !options.once && Date.now() - last.createdAt < every * 60_000) return true;
+    const parents = new Set<string>();
+    const list = async (part: 'body' | 'logs') => {
+      const response = await machineRequest(`/source/live?part=${part}`, {}, 10 * 60_000);
+      if (response.status === 404) { await response.body?.cancel(); return null; }
+      if (!response.ok) { await response.body?.cancel(); refuse('The hub could not list its data'); }
+      return hubDataList(await jsonResponse(response, MAX_JSON), parents);
+    };
+    const body = await list('body');
+    if (!body) return false;
+    announce('syncing');
+    const earlier = last ? new Map(vault.describe(last.id, MAX_INSTANCE_FILES).files.map(file => [file.path, file])) : null;
+    const staging = path.join(runtime, 'staging'); noLinks(staging);
+    const stage = path.join(staging, `live-${crypto.randomBytes(16).toString('hex')}`);
+    fs.mkdirSync(path.join(stage, 'data'), { recursive: true, mode: 0o700 });
+    const reuse: ReusedFile[] = [];
+    // Names of one file on the hub: the last copy's file it was taken from,
+    // or where it was saved here, so it is copied once and linked.
+    const kept = new Map<string, string>(), saved = new Map<string, string>();
+    const take = async (files: HubDataList['files']) => {
+      const unchanged = (file: HubDataList['files'][number]) => {
+        const before = earlier?.get(`data/${file.path}`);
+        return before && before.size === file.size && before.mode === file.mode && file.mtimeMs < last!.createdAt - SETTLED_MS ? before : undefined;
+      };
+      for (const file of files) { const before = unchanged(file); if (before && file.same) kept.set(file.same, before.path); }
+      type Item = { file: HubDataList['files'][number]; target: string };
+      const downloads: Item[] = [], links: Item[] = [], claimed = new Set<string>();
+      for (const file of files) {
+        const name = `data/${file.path}`, target = path.join(stage, ...name.split('/'));
+        const before = unchanged(file)?.path ?? (file.same && file.mtimeMs < (last?.createdAt ?? 0) - SETTLED_MS ? kept.get(file.same) : undefined);
+        if (before) { reuse.push({ path: name, snapshot: last!.id, from: before, mode: file.mode }); continue; }
+        if (file.same && claimed.has(file.same)) { links.push({ file, target }); continue; }
+        if (file.same) claimed.add(file.same);
+        downloads.push({ file, target });
+      }
+      // A dropped connection is tried again, so one does not lose a long copy.
+      const fetchOne = async ({ file, target }: Item) => {
+        for (let attempt = 1; ; attempt++) {
+          if (signal.aborted) refuse('Stopped');
+          try {
+            const response = await machineRequest(`/source/live/file?path=${encodeURIComponent(file.path)}`, {}, 30 * 60_000);
+            if (response.status === 404) { await response.body?.cancel(); return; } // SpacetimeDB removed it since the listing
+            const declared = response.headers.get('content-length');
+            if (!response.ok || !declared || !/^\d+$/.test(declared) || !Number.isSafeInteger(Number(declared))) { await response.body?.cancel(); refuse('The hub did not return the requested data file'); }
+            await save(response, target, Number(declared), file.mode & 0o777);
+            if (file.same) saved.set(file.same, target);
+            return;
+          } catch (error) {
+            if (!(error instanceof TypeError) || attempt >= 4 || signal.aborted) throw error;
+            fs.rmSync(target, { force: true });
+            await wait(attempt * 2000, signal);
+          }
+        }
+      };
+      let next = 0, failure: unknown;
+      await Promise.all(Array.from({ length: Math.min(PARALLEL, downloads.length) }, async () => {
+        while (next < downloads.length && failure === undefined) {
+          try { await fetchOne(downloads[next++]); } catch (error) { failure ??= error; }
+        }
+      }));
+      if (failure !== undefined) throw failure;
+      // Other names of a downloaded file are links to it; one whose first
+      // name went while we copied is downloaded itself.
+      for (const item of links) {
+        const first = saved.get(item.file.same!);
+        if (first) fs.linkSync(first, item.target); else await fetchOne(item);
+      }
+    };
+    try {
+      for (const dir of body.directories) fs.mkdirSync(path.join(stage, 'data', ...dir.path.split('/')), { mode: 0o700 });
+      await take(body.files);
+      const logs = await list('logs') ?? refuse('The hub stopped serving its data');
+      for (const dir of logs.directories) if (!fs.existsSync(path.join(stage, 'data', ...dir.path.split('/')))) fs.mkdirSync(path.join(stage, 'data', ...dir.path.split('/')), { mode: 0o700 });
+      await take(logs.files);
+      writeJson(path.join(stage, 'hub.json'), { kind: 'spacehub-hub-data', version: 1, createdAt: body.at, source: hub, restore: 'Mount data/ as /data and start the same spacehub server image.' });
+      const made = await vault.capture(stage, { source: hub, services: ['spacehub'], consistency: 'live-copy', coverage: { data: true, runtime: false, configuration: false }, createdAt: body.at }, { adopt: true, reuse });
+      verified.add(made.id + ':' + made.sha256);
+      await refreshLocal();
+    } finally {
+      noLinks(stage);
+      if (path.dirname(stage) !== staging) refuse('Invalid Sub-hub staging cleanup');
+      fs.rmSync(stage, { recursive: true, force: true });
+    }
+    return true;
   };
   const cycle = async () => {
     if (!connection.registered) {
@@ -294,13 +425,17 @@ export async function runInstanceSubhub(options: InstanceRuntimeOptions, deps: I
     announce('syncing'); void heartbeat();
     await refreshLocal();
     const response = await machineRequest('/source/snapshots');
-    if (response.status === 503) { await response.body?.cancel(); announce('waiting'); return; }
-    if (!response.ok) { await response.body?.cancel(); refuse('The hub full-instance backup source could not be reached'); }
-    const index = await jsonResponse(response, MAX_INDEX);
-    if (!isObject(index) || !Array.isArray(index.snapshots) || index.snapshots.length > 10_000) refuse('The hub returned an invalid instance snapshot index');
-    const remote = index.snapshots.map(snapshot).sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
-    if (new Set(remote.map(item => item.id)).size !== remote.length) refuse('The hub returned duplicate instance snapshots');
-    if (!remote.length) { announce('waiting'); return; }
+    let remote: Snapshot[] = [];
+    if (response.status === 503) await response.body?.cancel();
+    else {
+      if (!response.ok) { await response.body?.cancel(); refuse('The hub full-instance backup source could not be reached'); }
+      const index = await jsonResponse(response, MAX_INDEX);
+      if (!isObject(index) || !Array.isArray(index.snapshots) || index.snapshots.length > 10_000) refuse('The hub returned an invalid instance snapshot index');
+      remote = index.snapshots.map(snapshot).sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
+      if (new Set(remote.map(item => item.id)).size !== remote.length) refuse('The hub returned duplicate instance snapshots');
+    }
+    // A hub without backups of its own: this machine makes them, when due.
+    if (!remote.length && !(await liveCopy())) { announce('waiting'); return; }
     // Only the newest the --keep window holds: an older one would go again at once.
     for (const entry of remote.slice(0, keep)) {
       if (signal.aborted) return;
@@ -342,7 +477,7 @@ export async function runInstanceSubhub(options: InstanceRuntimeOptions, deps: I
       const id = typeof question.snapshot === 'string' ? question.snapshot : '';
       if (question.op === 'storage') {
         const kept = vault.list(), free = await fsp.statfs(vault.storageDir);
-        reply = { result: { name: connection.name, keep, intervalSeconds: interval, snapshots: kept, bytes: kept.reduce((total, item) => total + item.bytes, 0), freeBytes: free.bavail * free.bsize } };
+        reply = { result: { name: connection.name, keep, intervalSeconds: interval, everyMinutes: every, snapshots: kept, bytes: kept.reduce((total, item) => total + item.bytes, 0), freeBytes: free.bavail * free.bsize } };
       } else if (question.op === 'snapshot' && id) reply = { result: vault.describe(id) };
       else if (question.op === 'verify' && id) reply = { result: await vault.verify(id) };
       else reply = { error: 'This Sub-hub does not answer that question' };

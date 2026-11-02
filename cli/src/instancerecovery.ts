@@ -10,6 +10,7 @@ import { canonicalPath, InstanceVault } from './instancevault.ts';
 import { InstanceConnections } from './instanceconnections.ts';
 import { RelayError, type RelayOp, type SubhubRelay } from './subhubrelay.ts';
 import type { HubBackups } from './hubbackup.ts';
+import { listHubData, openHubFile } from './hubdata.ts';
 
 const PREFIX = '/-/api/instance-recovery';
 export interface InstanceRecoveryDeps {
@@ -24,6 +25,7 @@ export interface InstanceRecoveryDeps {
   machineName?: string;
   relay?: SubhubRelay; // live questions to connected machines, for /subhub/<name>
   hubBackups?: HubBackups | null; // the hub's own schedule (hubbackup.ts): shown in /status, run with POST /hub-backup
+  dataRoot?: string; // the hub's data folder, which sub-hubs copy live (hubdata.ts): GET /source/live, /source/live/file
 }
 
 // How long an operator waits for a machine: the page's own reads give up
@@ -144,6 +146,18 @@ export async function handleInstanceRecovery(deps: InstanceRecoveryDeps, req: ht
     if (route.startsWith('/source/')) {
       const machine = !req.headers.origin && bearer(req) && deps.connections?.authorize(bearer(req)!);
       if (!machine && !(await deps.authorize(req))) fail(403, 'Full-instance source access requires a registered Sub-hub or hub operator');
+      if (route === '/source/live' || route === '/source/live/file') {
+        if (req.method !== 'GET') fail(405, 'Method not allowed');
+        const root = deps.dataRoot || fail(404, 'This hub does not serve its data folder');
+        if (route === '/source/live') {
+          const part = url.searchParams.get('part');
+          if (part !== 'body' && part !== 'logs') fail(400, 'Choose part=body or part=logs');
+          json(res, 200, await listHubData(root, part)); return true;
+        }
+        const file = await openHubFile(root, payloadPath(url));
+        res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': file.size, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'x-spacehub-mtime': String(file.mtimeMs) });
+        await pipeline(file.stream, res); return true;
+      }
       const manifest = /^\/source\/snapshots\/([a-f0-9]{32})\/manifest$/.exec(route), file = /^\/source\/snapshots\/([a-f0-9]{32})\/file$/.exec(route);
       if (req.method !== 'GET' || !(route === '/source/snapshots' || manifest || file)) fail(404, 'No such full-instance source action');
       const relative = file ? payloadPath(url) : undefined;
@@ -179,11 +193,11 @@ export async function handleInstanceRecovery(deps: InstanceRecoveryDeps, req: ht
       await proxy(deps, req, res, route); return true;
     }
     if (route === '/status' && req.method === 'GET') {
-      json(res, 200, { scope: 'instance', source: deps.source, machineName: deps.machineName ?? os.hostname(), available: !!deps.vault, sourceAvailable: !!deps.vault, canManage: true,
+      json(res, 200, { scope: 'instance', source: deps.source, machineName: deps.machineName ?? os.hostname(), available: !!deps.vault, sourceAvailable: !!deps.vault || !!deps.dataRoot, liveData: !!deps.dataRoot, canManage: true,
         cli: { storage: deps.storage, restoreRoot: deps.restoreRoot },
         ...(deps.hubBackups ? { hubBackup: deps.hubBackups.state() } : {}),
-        ...(!deps.vault ? { error: 'Connect a full-instance vault with SPACEHUB_RECOVERY_DIR, or open spacehub subhub serve on the recovery machine' } : {}),
-        ...(!deps.vault ? { sourceError: 'No full-instance backup source is configured. Connected Sub-hubs will wait and retry automatically.' } : {}),
+        ...(!deps.vault ? { error: deps.dataRoot ? 'This hub keeps no backups itself: connected sub-hubs copy its data and keep them' : 'Connect a full-instance vault with SPACEHUB_RECOVERY_DIR, or open spacehub subhub serve on the recovery machine' } : {}),
+        ...(!deps.vault && !deps.dataRoot ? { sourceError: 'No full-instance backup source is configured. Connected Sub-hubs will wait and retry automatically.' } : {}),
       }); return true;
     }
     const vault = deps.vault ?? fail(503, 'No full-instance backup vault is connected');

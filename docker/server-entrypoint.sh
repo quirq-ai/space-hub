@@ -35,6 +35,27 @@ if [ ! -w "$ROOT" ]; then
   exit 1
 fi
 
+# A backup container: the same image, started with SPACEHUB_BACKUP_OF set to
+# the hub it backs up and SPACEHUB_TOKEN to a recovery operator's token (from
+# spacehub auth token; needed until it has connected once). It runs no hub of
+# its own: it is that hub's sub-hub (shown in its Settings as
+# SPACEHUB_BACKUP_NAME, default "backup"), copying the hub's data into
+# $ROOT/backups every SPACEHUB_BACKUP_MINUTES (default 60) and keeping the
+# newest SPACEHUB_BACKUP_KEEP (default 24). The public port answers /healthz.
+if [ -n "${SPACEHUB_BACKUP_OF:-}" ]; then
+  export SPACEHUB_SERVER="$SPACEHUB_BACKUP_OF"
+  caddy run --config /opt/spacehub/backup.Caddyfile --adapter caddyfile &
+  proxy=$!
+  spacehub subhub run --storage "$ROOT/backups" --name "${SPACEHUB_BACKUP_NAME:-backup}" \
+    --every "${SPACEHUB_BACKUP_MINUTES:-60}" --keep "${SPACEHUB_BACKUP_KEEP:-24}" &
+  run=$!
+  trap 'kill -TERM "$run" "$proxy" 2>/dev/null; wait; exit 0' TERM INT
+  # Stop with the sub-hub, so the platform restarts the container.
+  code=0; wait "$run" || code=$?
+  kill -TERM "$proxy" 2>/dev/null || true
+  exit "$code"
+fi
+
 start_spacetime() {
   spacetime --root-dir "$ROOT" start --listen-addr "$INTERNAL" --non-interactive &
   server=$!

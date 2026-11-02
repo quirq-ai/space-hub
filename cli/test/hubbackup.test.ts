@@ -38,21 +38,22 @@ function dataRoot(t: { after(fn: () => void): void }) {
   return { tmp, root };
 }
 
-test('settings: on with a data root, off with 0 minutes, the vault beside the data by default', t => {
+test('settings: off unless asked for, the vault beside the data by default', t => {
   const { root } = dataRoot(t);
   assert.equal(hubBackupConfig({}), null);
+  assert.equal(hubBackupConfig({ SPACEHUB_DATA_ROOT: root }), null, 'backups are kept off the hub by default');
   assert.equal(hubBackupConfig({ SPACEHUB_DATA_ROOT: root, SPACEHUB_BACKUP_MINUTES: '0' }), null);
-  const cfg = hubBackupConfig({ SPACEHUB_DATA_ROOT: root }, 'hub.example')!;
+  const cfg = hubBackupConfig({ SPACEHUB_DATA_ROOT: root, SPACEHUB_BACKUP_MINUTES: '60' }, 'hub.example')!;
   assert.equal(cfg.everyMs, 60 * 60_000);
   assert.equal(cfg.keep, 3);
   assert.equal(cfg.vault.storageDir, path.join(root, '.spacehub', 'backups'));
   assert.throws(() => hubBackupConfig({ SPACEHUB_DATA_ROOT: root, SPACEHUB_BACKUP_MINUTES: '1' }), /5 to 10080/);
-  assert.throws(() => hubBackupConfig({ SPACEHUB_DATA_ROOT: root, SPACEHUB_BACKUP_KEEP: '0' }), /1 to 100/);
+  assert.throws(() => hubBackupConfig({ SPACEHUB_DATA_ROOT: root, SPACEHUB_BACKUP_MINUTES: '60', SPACEHUB_BACKUP_KEEP: '0' }), /1 to 100/);
 });
 
 test('a backup is the data folder without logs, caches, the pid file or the vault; the oldest go past keep', async t => {
   const { tmp, root } = dataRoot(t);
-  const cfg = { ...hubBackupConfig({ SPACEHUB_DATA_ROOT: root, SPACEHUB_BACKUP_KEEP: '2' }, 'hub.example')! };
+  const cfg = { ...hubBackupConfig({ SPACEHUB_DATA_ROOT: root, SPACEHUB_BACKUP_MINUTES: '60', SPACEHUB_BACKUP_KEEP: '2' }, 'hub.example')! };
   const first = await backupHub(cfg, 1_000);
   assert.equal(first.consistency, 'live-copy');
   assert.deepEqual(first.coverage, { data: true, runtime: false, configuration: false });
@@ -84,7 +85,7 @@ test('a backup is the data folder without logs, caches, the pid file or the vaul
 
 test('a sub-hub copies the hub\'s live backups and keeps only its --keep newest', async t => {
   const { tmp, root } = dataRoot(t);
-  const cfg = hubBackupConfig({ SPACEHUB_DATA_ROOT: root, SPACEHUB_BACKUP_KEEP: '3' }, 'hub.example')!;
+  const cfg = hubBackupConfig({ SPACEHUB_DATA_ROOT: root, SPACEHUB_BACKUP_MINUTES: '60', SPACEHUB_BACKUP_KEEP: '3' }, 'hub.example')!;
   const connections = new InstanceConnections(path.join(tmp, 'connections'));
   connections.initialize();
   const server = http.createServer((req, res) => {
@@ -125,7 +126,7 @@ test('a backup copies only what changed since the last one and shares the rest; 
   const past = new Date(Date.now() - 60_000);
   const touch = (dir: string) => { for (const e of fs.readdirSync(dir, { withFileTypes: true })) { const at = path.join(dir, e.name); if (e.isDirectory()) touch(at); else fs.utimesSync(at, past, past); } };
   touch(root);
-  const cfg = hubBackupConfig({ SPACEHUB_DATA_ROOT: root, SPACEHUB_BACKUP_KEEP: '1' }, 'hub.example')!;
+  const cfg = hubBackupConfig({ SPACEHUB_DATA_ROOT: root, SPACEHUB_BACKUP_MINUTES: '60', SPACEHUB_BACKUP_KEEP: '1' }, 'hub.example')!;
   const connections = new InstanceConnections(path.join(tmp, 'connections'));
   connections.initialize();
   const server = http.createServer((req, res) => {
@@ -186,7 +187,7 @@ test('the last attempt is kept with its reason, across a restart; operators see 
   const { tmp, root } = dataRoot(t);
   // A volume's lost+found is left out, even when the hub cannot read it.
   fs.mkdirSync(path.join(root, 'lost+found'), { mode: 0o000 });
-  const cfg = hubBackupConfig({ SPACEHUB_DATA_ROOT: root }, 'hub.example')!;
+  const cfg = hubBackupConfig({ SPACEHUB_DATA_ROOT: root, SPACEHUB_BACKUP_MINUTES: '60' }, 'hub.example')!;
   const lines: string[] = [];
   let backups = startHubBackups(cfg, line => lines.push(line), 60_000);
   t.after(() => backups.stop());
