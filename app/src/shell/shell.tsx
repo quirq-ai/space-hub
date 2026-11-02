@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { BookOpen, Check, ChevronDown, ChevronRight, ChevronsUpDown, Home, LogIn, LogOut, Menu, PanelLeftClose, PanelLeftOpen, Plus, Search, User, X } from "lucide-react";
+import { Activity, BookOpen, Check, ChevronDown, ChevronRight, ChevronsUpDown, Home, LogIn, LogOut, Menu, PanelLeftClose, PanelLeftOpen, Plus, Search, User, X } from "lucide-react";
 import { ThemePicker } from "@/components/theme-picker";
 import { useLoading } from "@/hooks/use-live";
 import { onLink } from "@/router";
@@ -41,8 +41,10 @@ function UserMenu({ name }: { name: string }) {
   </div>;
 }
 
-export function TopBar({ me, signIn, live, onSearch, onMenu, recoveryOnly = false }: {
+export function TopBar({ me, signIn, live, onSearch, onMenu, activity, recoveryOnly = false }: {
   me: { checked: boolean; name: string | null }; signIn: string; live: "live" | "offline" | "loading"; onSearch: () => void; onMenu: () => void;
+  /** The right-hand Activity panel, where the page has one. */
+  activity?: { open: boolean; onToggle: () => void };
   recoveryOnly?: boolean;
 }) {
   return <header className="topbar">
@@ -51,6 +53,7 @@ export function TopBar({ me, signIn, live, onSearch, onMenu, recoveryOnly = fals
     {!recoveryOnly && <button className="search-trigger" type="button" onClick={onSearch} aria-label="Search spaces, projects and files"><Search size={15} /><span>Search spaces, projects, files</span><kbd>⌘K</kbd></button>}
     <span className="topbar-spacer" />
     <span className={`live-pill ${live}`} title={live === "offline" ? recoveryOnly ? "Reconnecting to recovery" : "Reconnecting to the hub" : recoveryOnly ? "Full-instance recovery connection" : "Changes appear as they happen"}><i />{live === "offline" ? "Reconnecting" : "Live"}</span>
+    {activity && <button className={`icon-button${activity.open ? " active" : ""}`} type="button" aria-pressed={activity.open} aria-label="Activity" title={activity.open ? "Hide activity" : "Show activity"} onClick={activity.onToggle}><Activity size={17} /></button>}
     <ThemePicker />
     {recoveryOnly ? <span className="label">Local recovery</span> : !me.checked ? <span className="user-placeholder" aria-hidden="true" /> : me.name ? <UserMenu name={me.name} /> : <a className="button" href={signIn}><LogIn size={15} />Sign in</a>}
   </header>;
@@ -166,11 +169,11 @@ export function Dock({ places }: { places: DockItem[] }) {
   return <nav className="dock" aria-label="Dock">{places.map(item)}</nav>;
 }
 
-/** The right-hand panel: beside the page on wide windows, over it with a scrim on narrower ones. */
-export function Inspector({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+/** The right-hand panel: beside the page on wide windows, over it with a scrim on narrower ones. `note` says whose it is. */
+export function Inspector({ title, note, onClose, children }: { title: string; note?: string; onClose: () => void; children: ReactNode }) {
   return <>
-    <aside className="inspector" aria-label={title}>
-      <div className="inspector-head"><h2>{title}</h2><button className="icon-button" type="button" aria-label={`Close ${title}`} title="Close" onClick={onClose}><X size={16} /></button></div>
+    <aside className="inspector" aria-label={note ? `${title} in ${note}` : title}>
+      <div className="inspector-head"><h2>{title}{note && <span className="inspector-note" title={note}>{note}</span>}</h2><button className="icon-button" type="button" aria-label={`Close ${title}`} title="Close" onClick={onClose}><X size={16} /></button></div>
       {children}
     </aside>
     <button className="scrim only-medium" type="button" aria-label={`Close ${title}`} onClick={onClose} />

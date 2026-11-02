@@ -1,11 +1,13 @@
-import { Bot, Building2, Download, FolderGit2, Github, LayoutTemplate, Plus, Target, User, Users } from "lucide-react";
+import type { CSSProperties, ReactNode } from "react";
+import { Bot, Building2, Download, FolderGit2, GitCommitHorizontal, Github, LayoutTemplate, Plus, Target, User, Users } from "lucide-react";
 import { Meter } from "./goal";
-import { activeBy, kindLabel, latestOf, newestBy, placeUrl, size, type AgentInfo, type SpaceMeta, type View } from "@/api";
+import { activeBy, activityLine, kindLabel, latestOf, newestBy, placeUrl, size, type AgentInfo, type SpaceMeta, type View } from "@/api";
+import type { Entry } from "@/lib/types";
 import { Browser, Glyph } from "@/ui/cards";
 import { PathBar } from "@/shell/path-bar";
 import { hashOf, onLink } from "@/router";
-import { Ago, Avatar, CommandTabs, Empty, Popover, SkeletonRows } from "@/ui/primitives";
-import { ActivityList, HereNow, PageHeader, People, Tabs } from "./common";
+import { Ago, Avatar, AvatarStack, CommandTabs, Empty, Popover, SkeletonRows } from "@/ui/primitives";
+import { ActivityStream, HereNow, PageHeader, People, Tabs } from "./common";
 
 const KIND_ICON = { personal: <User size={13} />, org: <Building2 size={13} />, agent: <Bot size={13} /> } as Record<string, React.ReactNode>;
 
@@ -53,6 +55,7 @@ export function SpacePage({ name, tab, view, error, me, seen }: { name: string; 
       { key: "activity", label: "Activity", href: base + "#" + hashOf("activity") },
     ]} />
     {tab === "projects" && <>
+      {meta.kind !== "agent" && <SpaceOverview name={name} meta={meta} projects={projects} />}
       {projects.length || meta.collaborates.length ? <Browser head={<>{projects.length} {projects.length === 1 ? "project" : "projects"} in {name}</>} groups={[
         { key: "projects", title: "Projects", note: `Each one is a git repository on the hub that ${meta.kind === "org" ? "the org's members" : name} push to.`, cards: projects.map(project => {
           const fullName = `${name}/${project.name}`;
@@ -67,12 +70,48 @@ export function SpacePage({ name, tab, view, error, me, seen }: { name: string; 
       ]} /> : <Empty icon={<FolderGit2 size={20} />} title="No projects yet"><p>Create one with <code>spacehub project create {name}/&lt;name&gt; --source . --push</code>.</p></Empty>}
     </>}
     {tab === "agents" && hasAgents && <AgentList space={name} kind={meta.kind} agents={meta.agentList} canManage={canManage} />}
-    {tab === "activity" && <ActivityList items={meta.activity} />}
+    {tab === "activity" && <ActivityStream items={meta.activity} agents={[...new Set([...meta.agentList.map(agent => agent.name), ...meta.agents])]} />}
     {tab === "people" && <>
       {meta.here.length > 0 && <><h2 className="section-title">Here now</h2><HereNow here={meta.here} /></>}
       <People here={meta.here} groups={[{ title: "Owners", names: meta.owners, note: `They manage ${name}.` }, { title: "Members", names: meta.members, note: `They push to every project of ${name}.` }]} />
     </>}
   </div>;
+}
+
+/** One fact of the overview: a link when it leads somewhere, else plain. */
+function Tile({ href, label, icon, value, note }: { href?: string; label: string; icon: ReactNode; value: ReactNode; note?: ReactNode }) {
+  const body = <><span className="overview-label">{icon}{label}</span><span className="overview-value">{value}</span>{note && <span className="overview-note">{note}</span>}</>;
+  return href ? <a className="overview-tile" href={href} onClick={onLink}>{body}</a> : <div className="overview-tile">{body}</div>;
+}
+
+const PUSHED = new Set(["ref_created", "ref_updated", "ref_forced"]);
+
+/** A builder's or an org's space at a glance, above its projects: goals in progress, agents running, who is here, the newest push. */
+function SpaceOverview({ name, meta, projects }: { name: string; meta: SpaceMeta; projects: Entry[] }) {
+  const base = placeUrl({ space: name, project: "" });
+  const goals = projects.filter(project => project.progress && !project.template);
+  const done = goals.reduce((sum, project) => sum + project.progress!.done, 0);
+  const total = goals.reduce((sum, project) => sum + project.progress!.total, 0);
+  const running = meta.agentList.filter(agent => agent.running.length);
+  const here = [...new Set(meta.here.map(who => who.agent))];
+  const members = new Set([...meta.owners, ...meta.members]).size;
+  const push = meta.activity.find(item => PUSHED.has(item.kind));
+  const pushed = push && activityLine(push);
+  const tiles = 2 + Number(goals.length > 0) + Number(!!push);
+  return <div className="overview-wrap"><div className="overview" style={{ "--tiles": tiles } as CSSProperties} aria-label={`${name} at a glance`}>
+    {goals.length > 0 && <Tile href={goals.length === 1 ? placeUrl({ space: name, project: goals[0].name }) : undefined} label="Goals" icon={<Target size={13} />}
+      value={<><Meter done={done} total={total} size="small" /><span className="overview-clip">{done} of {total} outcomes</span></>}
+      note={goals.length === 1 ? goals[0].name : `across ${goals.length} projects`} />}
+    <Tile href={base + "#" + hashOf("agents")} label="Agents" icon={<Bot size={13} />}
+      value={running.length ? <><i className="online-dot" />{running.length} running</> : meta.agentList.length ? "None running" : "No agents yet"}
+      note={running.length ? running.map(agent => `${agent.name} on ${agent.running.map(run => run.host || "a machine").join(", ")}`).join(", ") : meta.agentList.length ? `${meta.agentList.length} in all` : "Create one with spacehub agent create"} />
+    <Tile href={base + "#" + hashOf("people")} label="Here now" icon={<Users size={13} />}
+      value={here.length ? <><AvatarStack names={here} max={4} size={20} /><span className="overview-clip">{here.length} connected</span></> : "Nobody connected"}
+      note={meta.kind === "org" ? `${members} ${members === 1 ? "member" : "members"}` : undefined} />
+    {push && pushed && <Tile href={pushed.commit || pushed.href || undefined} label="Latest push" icon={<GitCommitHorizontal size={13} />}
+      value={<><Avatar name={push.agent || "hub"} size={18} /><span className="overview-clip">{push.agent || "someone"}</span><span className="overview-when"><Ago iso={push.at} /></span></>}
+      note={<>{push.path}{push.text ? `: ${push.text}` : ""}</>} />}
+  </div></div>;
 }
 
 /** A project card's goal labels: outcomes done, and whether it is a template. */
