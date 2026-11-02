@@ -606,6 +606,14 @@ expect_fail "builders outside the org cannot push" "permission denied" \
   bash -c "cd '$T' && echo x >>index.html && git -c user.name=e2e -c user.email=e2e@example.com commit -qam x && SPACEHUB_HOME='$WORK/home-carol' git push quirq main"
 git -C "$T" reset -q --hard HEAD~1
 check "space view shows the org" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub space view $ORG | grep -q 'members   $BOB'"
+expect_fail "only owners pick an org's GitHub picture" "permission denied" as bob spacehub space edit "$ORG" --github octo-org
+check "the owner picks one" as alice spacehub space edit "$ORG" --github octo-org
+app_has "and the org names it" "space=$ORG" '"githubLogin":"octo-org"'
+expect_fail "a builder's space shows its own account's picture" "is not an org" as alice spacehub space edit "$ALICE" --github octo-org
+same "the app's picture route refuses non-owners" "$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" -H 'content-type: application/json' -d "{\"space\":\"$ORG\",\"login\":\"octo-org\"}" "$WEB/-/api/space-picture")" "403"
+check "the owner goes back to the default" as alice spacehub space edit "$ORG" --github ""
+app_has "which names no GitHub organization" "space=$ORG" '"githubLogin":""'
+check "an org's default picture is a building" bash -c "curl -sf '$WEB/-/avatar/$ORG' | grep -q 'M6 22V4'"
 page_has "the org page lists its projects" "$ORG" "site"
 check "and its members" bash -c "curl -sf '$(ui "$ORG")' | grep -q 'members\"><table><tr><td><a[^>]*><b>$ALICE</b>'"
 page_has "the project names its space" "$ORG/site" '<span class="pill">org</span>'

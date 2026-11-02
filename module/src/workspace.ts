@@ -547,6 +547,8 @@ function agentsOf(db: Db, space: string, now: number): AgentInfo[] {
 function githubLoginOf(db: Db, name: string): string {
   const account = db.githubAccount.username.find(name);
   if (account) return account.login;
+  const picked = db.spaceGithub.space.find(name)?.login;
+  if (picked) return picked;
   const source = db.spaceLink.space.find(name)?.source ?? '';
   return /^https:\/\/github\.com\/([A-Za-z0-9-]{1,39})$/.exec(source)?.[1] ?? '';
 }

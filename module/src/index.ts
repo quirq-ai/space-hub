@@ -278,6 +278,18 @@ const spaceLink = table(
   }
 );
 
+// The GitHub organization whose picture an org shows, chosen by its owners.
+// Only the picture and a link to it: nothing is mirrored, unlike space_link.
+const spaceGithub = table(
+  { name: 'space_github', public: true },
+  {
+    space: t.string().primaryKey(),
+    login: t.string(), // as written
+    setBy: t.string(),
+    setAt: t.timestamp(),
+  }
+);
+
 // Where GitHub had each ref of a mirrored project at the last sync. A ref
 // that still holds that value has no work done here, so it follows GitHub,
 // force pushes included; a ref that moved here only moves forward, and is
@@ -387,6 +399,7 @@ const spacetimedb = schema({
   space,
   spaceRole,
   spaceLink,
+  spaceGithub,
   refSync,
   projectSize,
   agent,
@@ -1255,6 +1268,7 @@ export const deleteOrg = spacetimedb.reducer({ space: t.string() }, (ctx, { spac
   if (projects || agents) throw new SenderError(`"${space}" still has ${projects} projects and ${agents} agents; delete or move them first`);
   for (const r of [...ctx.db.spaceRole.space.filter(space)]) ctx.db.spaceRole.id.delete(r.id);
   ctx.db.spaceLink.space.delete(space);
+  ctx.db.spaceGithub.space.delete(space);
   for (const p of [...ctx.db.presence.projectId.filter(0n)]) if (p.space === space) ctx.db.presence.connectionId.delete(p.connectionId);
   ctx.db.space.name.delete(space);
   logActivity(ctx, { kind: 'org_deleted', path: space, subject: space });
@@ -1444,6 +1458,29 @@ export const unlinkSpace = spacetimedb.reducer({ space: t.string() }, (ctx, { sp
   if (!row) throw new SenderError(`"${space}" is not linked to GitHub`);
   ctx.db.spaceLink.space.delete(space);
   logActivity(ctx, { kind: 'space_unlinked', path: space, subject: row.source });
+});
+
+// The GitHub organization an org takes its picture from; "" goes back to the
+// hub's own. Builders show their GitHub account's picture already.
+export const setSpaceGithub = spacetimedb.reducer({ space: t.string(), login: t.string() }, (ctx, { space, login }) => {
+  space = spaceFor(ctx.db, space);
+  const row = requireSpaceOwner(ctx, space);
+  if (row.kind !== 'org') throw new SenderError(`"${space}" is not an org`);
+  const current = ctx.db.spaceGithub.space.find(space);
+  const wanted = login.trim().replace(/^(?:https?:\/\/)?github\.com\//i, '').replace(/\/+$/, '');
+  if (!wanted) {
+    if (!current) return;
+    ctx.db.spaceGithub.space.delete(space);
+    logActivity(ctx, { kind: 'space_edited', path: space, subject: space, text: 'went back to its own picture' });
+    return;
+  }
+  const m = GITHUB_ACCOUNT.exec(`https://github.com/${wanted}`);
+  if (!m) throw new SenderError('name a GitHub organization, like anthropics');
+  if (current?.login === m[1]) return;
+  const next = { space, login: m[1], setBy: actorName(ctx) ?? '', setAt: ctx.timestamp };
+  if (current) ctx.db.spaceGithub.space.update(next);
+  else ctx.db.spaceGithub.insert(next);
+  logActivity(ctx, { kind: 'space_edited', path: space, subject: space, text: `took its picture from GitHub's ${m[1]}` });
 });
 
 // The web service's progress on a space's sync.

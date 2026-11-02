@@ -85,8 +85,9 @@ export function ActivityStream({ items, agents, compact = false, empty }: { item
   const [filter, setFilter] = useState<ActivityFilter>("all");
   const isAgent = new Set(agents);
   const shown = items.filter(item => keepActivity(filter, item, isAgent));
+  const counts = new Map(FILTERS.map(option => [option.key, option.key === filter ? shown.length : items.filter(item => keepActivity(option.key, item, isAgent)).length]));
   return <div className="activity-stream">
-    {items.length > 0 && <div className="activity-filter-bar"><div className="segmented activity-filter" role="group" aria-label="Show">{FILTERS.map(option => <button key={option.key} type="button" className={filter === option.key ? "on" : undefined} aria-pressed={filter === option.key} onClick={() => setFilter(option.key)}>{option.label}</button>)}</div></div>}
+    {items.length > 0 && <div className="activity-filter-bar"><div className="segmented activity-filter" role="group" aria-label="Show">{FILTERS.map(option => <button key={option.key} type="button" className={filter === option.key ? "on" : undefined} aria-pressed={filter === option.key} onClick={() => setFilter(option.key)}>{option.label}<span className="tab-count">{counts.get(option.key)}</span></button>)}</div></div>}
     {shown.length || filter === "all" ? <ActivityList items={shown} compact={compact} empty={empty} /> : <p className="quiet activity-none">{NONE[filter]}</p>}
   </div>;
 }

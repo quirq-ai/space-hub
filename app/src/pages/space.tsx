@@ -1,7 +1,7 @@
-import type { CSSProperties, ReactNode } from "react";
-import { Bot, Building2, Download, FolderGit2, GitCommitHorizontal, Github, LayoutTemplate, Plus, Target, User, Users } from "lucide-react";
+import { useState, type CSSProperties, type ReactNode } from "react";
+import { Bot, Building2, Download, FolderGit2, GitCommitHorizontal, Github, Image as ImageIcon, LayoutTemplate, Plus, Target, User, Users } from "lucide-react";
 import { Meter } from "./goal";
-import { activeBy, activityLine, kindLabel, latestOf, newestBy, placeUrl, size, type AgentInfo, type SpaceMeta, type View } from "@/api";
+import { activeBy, activityLine, kindLabel, latestOf, newestBy, placeUrl, setSpacePicture, size, type AgentInfo, type SpaceMeta, type View } from "@/api";
 import type { Entry } from "@/lib/types";
 import { Browser, Glyph } from "@/ui/cards";
 import { PathBar } from "@/shell/path-bar";
@@ -32,6 +32,7 @@ export function SpacePage({ name, tab, view, error, me, seen }: { name: string; 
       subtitle={meta.description || (meta.kind === "agent" ? `An agent of ${meta.parent}` : meta.kind === "org" ? "An org on this hub" : `@${name}`)}
       actions={<>
         <Popover label="Clone" icon={<Download size={15} />}><div className="popover-title">Clone every project of {name}</div><CommandTabs tabs={[{ label: "spacehub", lines: [`spacehub space clone ${name}`] }]} note={<>Then keep them all in step: <code>spacehub space sync --watch --auto</code></>} /></Popover>
+        {meta.kind === "org" && canManage && <Popover label="Picture" icon={<ImageIcon size={15} />} width={380}><OrgPicture name={name} login={meta.githubLogin} /></Popover>}
         {me && (meta.owners.includes(me) || meta.members.includes(me)) && <a className="button" href="/-/new"><Plus size={15} />New project</a>}
       </>}>
       <div className="profile-facts">
@@ -150,4 +151,35 @@ export function AgentList({ space, kind, agents, canManage }: { space: string; k
         detail: agent.description || undefined, latest: { text: roleNote(agent) }, time: agent.running[0]?.since,
       })) }))} />
   </>;
+}
+
+/** For an org's owners: show a GitHub organization's picture for the org, or go back to the default. */
+function OrgPicture({ name, login }: { name: string; login: string }) {
+  const [value, setValue] = useState(login);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [saved, setSaved] = useState(login);
+  const save = async (next: string) => {
+    setBusy(true);
+    setError("");
+    try {
+      await setSpacePicture(name, next);
+      setValue(next);
+      setSaved(next);
+    } catch (problem) {
+      setError(problem instanceof Error ? problem.message : String(problem));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <form className="org-picture" onSubmit={event => { event.preventDefault(); void save(value.trim()); }}>
+    <div className="popover-title">Picture from GitHub</div>
+    <p className="quiet">{name} shows this GitHub organization's picture across the hub. Nothing else is copied from GitHub.</p>
+    <div className="org-picture-row">
+      <label className="launch-github"><Github size={14} /><input value={value} placeholder="GitHub organization, like quirq-ai" aria-label="GitHub organization" spellCheck={false} autoCapitalize="off" onChange={event => setValue(event.target.value)} disabled={busy} /></label>
+      <button className="button" type="submit" disabled={busy || !value.trim() || value.trim() === saved}>Save</button>
+    </div>
+    {saved && <button type="button" className="button ghost small" onClick={() => void save("")} disabled={busy}>Use the default picture</button>}
+    {error && <p className="org-picture-error" role="alert">{error}</p>}
+  </form>;
 }
