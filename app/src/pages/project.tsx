@@ -2,7 +2,7 @@ import { Bot, Boxes, Download, FolderGit2, GitBranch, HardDrive } from "lucide-r
 import { placeUrl, rawUrl, size, type Place, type ProjectMeta, type View } from "@/api";
 import { hashOf, onLink, type Route } from "@/router";
 import { Ago, Avatar, AvatarStack, CommandTabs, ErrorNote, Popover, Skeleton } from "@/ui/primitives";
-import { ActivityList, HereNow, PageHeader, People, Tabs } from "./common";
+import { ActivityStream, HereNow, PageHeader, People, Tabs } from "./common";
 import { BranchesTab, CodeTab, CommitTab, CommitsTab } from "./code";
 import { DepsTab } from "./deps";
 import { FilesTab, isChannel } from "./files";
@@ -46,7 +46,7 @@ export function ProjectPage({ route, view, error, me, signIn, refresh }: { route
     {route.tab === "commit" && <CommitTab place={place} oid={route.oid} />}
     {route.tab === "deps" && <DepsTab place={place} />}
     {route.tab === "branches" && <BranchesTab place={place} />}
-    {meta && route.tab === "activity" && <ActivityList items={meta.activity} />}
+    {meta && route.tab === "activity" && <ActivityStream items={meta.activity} agents={meta.agents} />}
     {meta && route.tab === "people" && <>
       {meta.here.length > 0 && <><h2 className="section-title">Here now</h2><HereNow here={meta.here} /></>}
       <People here={meta.here} agents={meta.agents} groups={[

@@ -44,8 +44,8 @@ export function Card({ card }: { card: PlaceCard }) {
     <span className="place-card-icon">{card.icon}</span>
     <span className="place-card-main">
       <span className="place-card-title"><strong>{card.title}</strong>{card.labels}</span>
-      {card.detail && <span className="place-card-detail">{card.detail}</span>}
-      {card.latest ? <span className="place-card-last">{card.latest.who && <Avatar name={card.latest.who} size={16} kind={card.latest.kind} />}<span>{card.latest.who && <b>{card.latest.who}</b>} {card.latest.text}</span></span>
+      {card.detail && <span className="place-card-detail" title={typeof card.detail === "string" ? card.detail : undefined}>{card.detail}</span>}
+      {card.latest ? <span className="place-card-last">{card.latest.who && <Avatar name={card.latest.who} size={16} kind={card.latest.kind} />}<span title={typeof card.latest.text === "string" ? [card.latest.who, card.latest.text].filter(Boolean).join(" ") : undefined}>{card.latest.who && <b>{card.latest.who}</b>} {card.latest.text}</span></span>
         : card.empty ? <span className="place-card-last quiet">{card.empty}</span> : null}
     </span>
     <span className="place-card-meta">

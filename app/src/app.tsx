@@ -9,7 +9,8 @@ import { hashOf, navigate, useRoute } from "@/router";
 import { Dock, Inspector, Progress, Sidebar, TopBar, type DockItem, type SideSection } from "@/shell/shell";
 import { SearchPalette } from "@/shell/search";
 import { Avatar } from "@/ui/primitives";
-import { ActivityFeed, HomePage } from "@/pages/home";
+import { HomePage } from "@/pages/home";
+import { ActivityPanel } from "@/pages/common";
 import { SpacePage } from "@/pages/space";
 import { ProjectPage } from "@/pages/project";
 import { SECTION_ICONS, SECTION_ORDER } from "@/pages/files";
@@ -22,7 +23,7 @@ const RAIL = "spacehub:rail:v1";
 const ACTIVITY = "spacehub:activity:v1";
 
 function readSeen(): Record<string, string> { try { return JSON.parse(localStorage.getItem(SEEN) || "{}") ?? {}; } catch { return {}; } }
-// The home page's activity panel starts open on wide windows unless the viewer closed it; narrower ones open it on demand.
+// The activity panel (Home, a space, a project) starts open on wide windows unless the viewer closed it; narrower ones open it on demand.
 function readActivity() { let stored = ""; try { stored = localStorage.getItem(ACTIVITY) ?? ""; } catch { /* Storage may be blocked. */ } return stored !== "closed" && matchMedia("(min-width: 1180px)").matches; }
 function markSeen(key: string) { try { localStorage.setItem(SEEN, JSON.stringify({ ...readSeen(), [key]: new Date().toISOString() })); } catch { /* Storage may be blocked. */ } }
 
@@ -172,15 +173,18 @@ export function App() {
     ];
   }
 
-  const activity = route.page === "home" && !recovery && activityOpen;
+  // Every place has one: the hub's activity on Home, a space's or a project's on theirs.
+  const hasActivity = !recovery && route.page !== "subhub";
+  const activity = hasActivity && activityOpen;
+  const activityOf = meta && (route.page === "home" ? meta.level === "hub" : meta.level === route.page) ? meta : undefined;
 
   return <div className={`shell${activity ? " with-inspector" : ""}${rail ? " rail" : ""}`}>
     <Progress />
-    <TopBar me={me} signIn={signIn} live={state} onSearch={() => setSearching(true)} onMenu={() => setSidebarOpen(true)} recoveryOnly={recoveryOnly} />
+    <TopBar me={me} signIn={signIn} live={state} onSearch={() => setSearching(true)} onMenu={() => setSidebarOpen(true)} activity={hasActivity ? { open: activityOpen, onToggle: toggleActivity } : undefined} recoveryOnly={recoveryOnly} />
     <Sidebar switcher={switcher} primary={primary} sections={sideSections} footer={footer} open={sidebarOpen} onClose={() => setSidebarOpen(false)} rail={rail} onRail={toggleRail} onSearch={() => setSearching(true)} recoveryOnly={recoveryOnly} />
     <main className="main" id="main">
       <div className="main-scroll">
-        {route.page === "home" && route.tab !== "settings" && !recovery && <HomePage tab={route.tab} view={view as View<HubMeta> | undefined} me={me.name} mySpaces={me.spaces.map(s => s.space)} seen={seen} activityOpen={activityOpen} onActivity={toggleActivity} />}
+        {route.page === "home" && route.tab !== "settings" && !recovery && <HomePage tab={route.tab} view={view as View<HubMeta> | undefined} me={me.name} mySpaces={me.spaces.map(s => s.space)} seen={seen} />}
         {recovery && <SettingsPage onConnectionState={setRecoveryState} />}
         {!recovery && route.page === "subhub" && <SubhubPage name={route.name} backup={route.backup} />}
         {!recovery && route.page === "space" && <SpacePage name={place.space} tab={route.tab} view={view as View<SpaceMeta> | undefined} error={live.error} me={me.name} seen={seen} />}
@@ -188,7 +192,7 @@ export function App() {
       </div>
       <Dock places={places} />
     </main>
-    {activity && <Inspector title="Activity" onClose={toggleActivity}><ActivityFeed view={meta?.level === "hub" ? view as View<HubMeta> : undefined} /></Inspector>}
+    {activity && <Inspector title="Activity" note={route.page === "project" ? placeKey : route.page === "space" ? place.space : undefined} onClose={toggleActivity}><ActivityPanel meta={activityOf} /></Inspector>}
     {searching && !recoveryOnly && <SearchPalette place={place} onClose={() => setSearching(false)} />}
   </div>;
 }
