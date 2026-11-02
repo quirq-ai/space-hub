@@ -46,7 +46,7 @@ export function SpacePage({ name, tab, view, error, me, seen }: { name: string; 
         {meta.here.length > 0 && <a className="strip-here" href={base + "#" + hashOf("people")} onClick={onLink} title={meta.here.map(who => who.agent).join(", ")}><i className="online-dot" />{new Set(meta.here.map(who => who.agent)).size} here now</a>}
       </div>
       {meta.memberOf.length > 0 && <div className="profile-links">
-        {meta.memberOf.map(role => <a key={role.space} className="chip-link" href={placeUrl({ space: role.space, project: "" })} onClick={onLink}><Avatar name={role.space} size={18} kind={role.kind} />{role.space}{role.role === "owner" && <span className="quiet">owner</span>}</a>)}
+        {meta.memberOf.map(role => <a key={role.space} className="chip-link" href={placeUrl({ space: role.space, project: "" })} onClick={onLink}><Avatar name={role.space} size={18} kind={role.kind} />{role.space}{role.founder ? <span className="quiet">founder</span> : role.role === "owner" && <span className="quiet">owner</span>}</a>)}
       </div>}
     </PageHeader>
     <Tabs active={tab} tabs={[
@@ -74,7 +74,12 @@ export function SpacePage({ name, tab, view, error, me, seen }: { name: string; 
     {tab === "activity" && <ActivityStream items={meta.activity} agents={[...new Set([...meta.agentList.map(agent => agent.name), ...meta.agents])]} />}
     {tab === "people" && <>
       {meta.here.length > 0 && <><h2 className="section-title">Here now</h2><HereNow here={meta.here} /></>}
-      <People here={meta.here} groups={[{ title: "Owners", names: meta.owners, note: `They manage ${name}.` }, { title: "Members", names: meta.members, note: `They push to every project of ${name}.` }]} />
+      <People here={meta.here} groups={[
+        // The builder who started an org is its founder; owners added later manage it with them.
+        { title: "Founder", names: meta.founder ? [meta.founder] : [], note: `They started ${name}.` },
+        { title: "Owners", names: meta.owners.filter(owner => owner !== meta.founder), note: `They manage ${name}.` },
+        { title: "Members", names: meta.members, note: `They push to every project of ${name}.` },
+      ]} />
     </>}
   </div>;
 }

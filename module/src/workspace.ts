@@ -135,6 +135,8 @@ export interface Membership {
   space: string;
   kind: string;
   role: string;
+  /** They started that org. */
+  founder: boolean;
 }
 
 export type Meta =
@@ -146,6 +148,8 @@ export type Meta =
       kind: string;
       description: string;
       parent: string;
+      /** Who started an org; other owners were made owners later. "" for builders and agents. */
+      founder: string;
       owners: string[];
       members: string[];
       projects: number;
@@ -177,6 +181,8 @@ export type Meta =
       /** Repositories pinned by the DEPS file at the root (deps.ts); 0 without one. */
       deps: number;
       canWrite: boolean;
+      /** Who started the project's org (see the space meta); "" in a builder's space. */
+      founder: string;
       owners: string[];
       members: string[];
       /** Agents that may push here: connected to the space, or collaborators on the project. */
@@ -505,10 +511,17 @@ function rolesOf(db: Db, space: string) {
   return { owners, members: rest.filter(name => !isAgent(db, name)), agents: rest.filter(name => isAgent(db, name)) };
 }
 
+// Who started an org: its creator. Owners added later are owners.
+function founderOf(db: Db, name: string): string {
+  const space = db.space.name.find(name);
+  return space?.kind === 'org' ? space.createdBy : '';
+}
+
 function projectPeople(db: Db, project: Project) {
   const { owners, members, agents } = rolesOf(db, project.owner);
   const collaborators = [...db.projectMember.projectId.filter(project.id)].map(row => row.agent);
   return {
+    founder: founderOf(db, project.owner),
     owners,
     members,
     agents: [...new Set([...agents, ...collaborators.filter(name => isAgent(db, name))])].sort(),
@@ -614,7 +627,7 @@ function spaceLevel(db: Db, name: string, now: number) {
   const { owners, members } = rolesOf(db, name);
   const agentList = agentsOf(db, name, now);
   const ids = new Set(projects.map(project => project.id));
-  const memberOf = [...db.spaceRole.member.filter(name)].map(role => ({ space: role.space, kind: db.space.name.find(role.space)?.kind ?? '', role: role.role })).sort((a, b) => a.space.localeCompare(b.space));
+  const memberOf = [...db.spaceRole.member.filter(name)].map(role => ({ space: role.space, kind: db.space.name.find(role.space)?.kind ?? '', role: role.role, founder: founderOf(db, role.space) === name })).sort((a, b) => a.space.localeCompare(b.space));
   return finish(
     { rootName: name, rootId: rootId(name), roots: [], directory: { path: '', name, entries } },
     {
@@ -624,6 +637,7 @@ function spaceLevel(db: Db, name: string, now: number) {
       kind: space.kind,
       description: space.description,
       parent: space.parent,
+      founder: founderOf(db, name),
       owners,
       members,
       projects: projects.length,

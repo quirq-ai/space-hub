@@ -606,6 +606,8 @@ expect_fail "builders outside the org cannot push" "permission denied" \
   bash -c "cd '$T' && echo x >>index.html && git -c user.name=e2e -c user.email=e2e@example.com commit -qam x && SPACEHUB_HOME='$WORK/home-carol' git push quirq main"
 git -C "$T" reset -q --hard HEAD~1
 check "space view shows the org" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub space view $ORG | grep -q 'members   $BOB'"
+app_has "the org names its founder, who started it" "space=$ORG" "\"founder\":\"$ALICE\""
+app_has "and the founder's profile says so" "space=$ALICE" "\"space\":\"$ORG\",\"kind\":\"org\",\"role\":\"owner\",\"founder\":true"
 expect_fail "only owners pick an org's GitHub picture" "permission denied" as bob spacehub space edit "$ORG" --github octo-org
 check "the owner picks one" as alice spacehub space edit "$ORG" --github octo-org
 app_has "and the org names it" "space=$ORG" '"githubLogin":"octo-org"'
