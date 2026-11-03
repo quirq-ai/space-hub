@@ -1,7 +1,9 @@
-import { CheckCircle2, Circle, LayoutTemplate, ListChecks, Pencil, Target } from "lucide-react";
-import { placeUrl, type Place, type SpaceGoal } from "@/api";
+import { useEffect, useState } from "react";
+import { CheckCircle2, Circle, FolderGit2, LayoutTemplate, ListChecks, Pencil, Target } from "lucide-react";
+import { placeUrl, viewUrl, type Place, type ProjectMeta, type SpaceGoal, type View } from "@/api";
+import type { Entry } from "@/lib/types";
 import { hashOf, onLink } from "@/router";
-import { Avatar, AvatarStack, Popover } from "@/ui/primitives";
+import { Avatar, AvatarStack, Empty, Popover, SkeletonRows } from "@/ui/primitives";
 
 const SPACE_FILE = "SPACE.md";
 const SHOWN = 6;
@@ -58,6 +60,47 @@ export function GoalPanel({ place, goal, canWrite }: { place: Place; goal: Space
   </section>;
 }
 
+type Outcome = SpaceGoal["outcomes"][number] & { project: string };
+
+/**
+ * A space's outcomes across its projects (each from the project's SPACE.md):
+ * how many are delivered, then the open ones, then the delivered ones, each
+ * with its project and who answers for it.
+ */
+export function SpaceOutcomes({ space, projects }: { space: string; projects: Entry[] }) {
+  const goals = projects.filter(project => project.progress && !project.template).sort((a, b) => a.name.localeCompare(b.name));
+  const done = goals.reduce((sum, project) => sum + project.progress!.done, 0);
+  const total = goals.reduce((sum, project) => sum + project.progress!.total, 0);
+  // Each project's outcomes come with its own view; fetched again when one of them changes.
+  const changed = goals.map(project => `${project.name}@${project.modifiedAt}`).join(" ");
+  const [outcomes, setOutcomes] = useState<Outcome[] | null>(null);
+  useEffect(() => {
+    let current = true;
+    const read = (project: string) => fetch(viewUrl({ space, project }), { cache: "no-store" })
+      .then(response => response.ok ? response.json() as Promise<View<ProjectMeta>> : null)
+      .then(view => (view?.meta.goal?.outcomes ?? []).map(outcome => ({ ...outcome, project })))
+      .catch(() => [] as Outcome[]);
+    void Promise.all(goals.map(project => read(project.name))).then(rows => { if (current) setOutcomes(rows.flat()); });
+    return () => { current = false; };
+  }, [space, changed]);
+  if (!goals.length) return <Empty icon={<Target size={20} />} title="No outcomes yet"><p>A project's outcomes are the task list under <code>## Outcomes</code> in its SPACE.md: what proves its goal is met.</p></Empty>;
+  const open = outcomes?.filter(outcome => !outcome.done) ?? [];
+  const delivered = outcomes?.filter(outcome => outcome.done) ?? [];
+  const row = (outcome: Outcome, index: number) => <li key={index} className={outcome.done ? "done" : ""}>
+    {outcome.done ? <CheckCircle2 size={17} className="outcome-check" /> : <Circle size={17} className="outcome-check" />}
+    <span>{placeholders(outcome.text)}</span>
+    <a className="outcome-project" href={placeUrl({ space, project: outcome.project })} onClick={onLink} title={`In ${space}/${outcome.project}`}><FolderGit2 size={13} />{outcome.project}</a>
+    {outcome.owner && <span className="goal-owner" title={`${outcome.owner} answers for it`}><Avatar name={outcome.owner} size={18} />{outcome.owner}</span>}
+  </li>;
+  return <>
+    <div className="outcomes-summary"><Meter done={done} total={total} /><span><b>{done}</b> of {total} outcomes delivered across {goals.length} {goals.length === 1 ? "project" : "projects"}</span></div>
+    {!outcomes ? <SkeletonRows rows={4} avatar={false} /> : <>
+      {open.length > 0 && <><h2 className="section-title">Open <span className="quiet">{open.length}</span></h2><ul className="outcome-list">{open.map(row)}</ul></>}
+      {delivered.length > 0 && <><h2 className="section-title">Delivered <span className="quiet">{delivered.length}</span></h2><ul className="outcome-list">{delivered.map(row)}</ul></>}
+    </>}
+  </>;
+}
+
 /** A template's {{owner}} and the like, as what they will become. */
 const placeholders = (text: string) => text.replace(/\{\{\s*(space|project|goal|owner|date)\s*\}\}/g, (_, key: string) => `‹${key}›`);
 
@@ -67,14 +110,4 @@ function RulesList({ goal }: { goal: SpaceGoal }) {
     {goal.routines.length > 0 && <><div className="popover-title">Routines</div><ul className="goal-rules">{goal.routines.map((routine, index) => <li key={index}>{placeholders(routine)}</li>)}</ul></>}
     <p className="quiet">People and agents here follow these. They live in SPACE.md.</p>
   </>;
-}
-
-/** The goal's one-line form, for the strip under a project's name. */
-export function GoalChip({ place, goal }: { place: Place; goal: SpaceGoal }) {
-  const done = goal.outcomes.filter(outcome => outcome.done).length;
-  const total = goal.outcomes.length;
-  if (goal.template !== null) return <a href={placeUrl(place)} onClick={onLink} title={goal.template || "New spaces can start from this one"}><LayoutTemplate size={14} />Template</a>;
-  return <a href={placeUrl(place)} onClick={onLink} title={goal.goal || "This space's goal"}>
-    <Target size={14} />{total ? <><Meter done={done} total={total} size="small" />{done}/{total} outcomes</> : "Goal"}
-  </a>;
 }

@@ -1,5 +1,5 @@
 import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { ArrowDownAZ, Clock, Grid3x3, LayoutGrid, List, Search, X } from "lucide-react";
+import { ArrowDownAZ, Clock, LayoutGrid, List, Search, X } from "lucide-react";
 import { onLink } from "@/router";
 import { Ago, Avatar, AvatarStack } from "./primitives";
 
@@ -30,24 +30,13 @@ export function ListHead({ children, actions }: { children: ReactNode; actions?:
   return <div className="list-head"><span>{children}</span>{actions}</div>;
 }
 
-export function CardGroup({ title, note, count, compact, list, icons, cards }: { title: ReactNode; note?: ReactNode; count?: number; compact?: boolean; list?: boolean; icons?: (card: PlaceCard) => ReactNode; cards: PlaceCard[] }) {
+export function CardGroup({ title, note, count, compact, list, cards }: { title: ReactNode; note?: ReactNode; count?: number; compact?: boolean; list?: boolean; cards: PlaceCard[] }) {
   if (!cards.length) return null;
   return <section className="place-group">
     <h2 className="section-title">{title} <span className="quiet">{count ?? cards.length}</span></h2>
     {note && <p className="quiet">{note}</p>}
-    {icons
-      ? <ul className="app-grid">{cards.map(card => <li key={card.key}><AppTile card={card} icon={icons(card)} /></li>)}</ul>
-      : <ul className={`place-cards${compact ? " compact" : ""}${list ? " list" : ""}`}>{cards.map(card => <li key={card.key}><Card card={card} /></li>)}</ul>}
+    <ul className={`place-cards${compact ? " compact" : ""}${list ? " list" : ""}`}>{cards.map(card => <li key={card.key}><Card card={card} /></li>)}</ul>
   </section>;
-}
-
-/** A place as an app on a home screen, like xo-swarm's application page: its icon, its name under it. */
-function AppTile({ card, icon }: { card: PlaceCard; icon: ReactNode }) {
-  const what = typeof card.detail === "string" ? card.detail : "";
-  return <a className={`place-card app-tile${card.fresh ? " fresh" : ""}`} href={card.href} onClick={onLink} title={[card.name, what].filter(Boolean).join(": ")}>
-    <span className="app-tile-icon">{icon}{card.fresh && <i className="app-tile-badge" title="New since you last looked" />}</span>
-    <span className="app-tile-name">{card.title}</span>
-  </a>;
 }
 
 export function Card({ card }: { card: PlaceCard }) {
@@ -73,14 +62,13 @@ export function Glyph({ children, tone }: { children: ReactNode; tone?: "accent"
 }
 
 type Sort = "recent" | "name";
-type View = "cards" | "list" | "icons";
+type View = "cards" | "list";
 const PREFS = "spacehub:browse:v1";
-// Places that have app icons (projects) remember their view apart, starting as icons.
-function readPrefs(): { sort: Sort; view: View; appView: View } {
+function readPrefs(): { sort: Sort; view: View } {
   try {
     const value = JSON.parse(localStorage.getItem(PREFS) || "{}");
-    return { sort: value.sort === "name" ? "name" : "recent", view: value.view === "list" ? "list" : "cards", appView: value.appView === "list" || value.appView === "cards" ? value.appView : "icons" };
-  } catch { return { sort: "recent", view: "cards", appView: "icons" }; }
+    return { sort: value.sort === "name" ? "name" : "recent", view: value.view === "list" ? "list" : "cards" };
+  } catch { return { sort: "recent", view: "cards" }; }
 }
 
 const text = (card: PlaceCard) => `${card.name ?? ""} ${card.search ?? ""}`.toLowerCase();
@@ -93,10 +81,8 @@ const byName = (a: PlaceCard, b: PlaceCard) => (a.name ?? "").localeCompare(b.na
  * viewer), anything new since the viewer last looked pulled to the top, then
  * the groups. Arrow keys move between cards; Enter opens one.
  */
-export function Browser({ head, actions, intro, groups, keepOrder = false, icons }: {
+export function Browser({ head, actions, intro, groups, keepOrder = false }: {
   head: ReactNode; actions?: ReactNode; intro?: ReactNode; groups: Group[]; keepOrder?: boolean;
-  /** An app icon for each card, which adds an icons view: the places as apps on a home screen. */
-  icons?: (card: PlaceCard) => ReactNode;
 }) {
   const [prefs, setPrefs] = useState(readPrefs);
   const [query, setQuery] = useState("");
@@ -117,10 +103,7 @@ export function Browser({ head, actions, intro, groups, keepOrder = false, icons
   const freshKeys = new Set(fresh.map(card => card.key));
   const shown = groups.map(group => ({ ...group, cards: shape(group.cards.filter(card => !freshKeys.has(card.key))) }));
   const found = fresh.length + shown.reduce((sum, group) => sum + group.cards.length, 0);
-  const view = icons ? prefs.appView : prefs.view;
-  const list = view === "list";
-  const tiles = view === "icons" && icons ? icons : undefined;
-  const choose = (next: View) => set(icons ? { appView: next } : { view: next });
+  const list = prefs.view === "list";
 
   const move = (event: KeyboardEvent<HTMLDivElement>) => {
     const step = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[event.key];
@@ -143,15 +126,14 @@ export function Browser({ head, actions, intro, groups, keepOrder = false, icons
         <button type="button" className={prefs.sort === "name" ? "on" : ""} aria-pressed={prefs.sort === "name"} onClick={() => set({ sort: "name" })} title="By name"><ArrowDownAZ size={14} /></button>
       </div>
       <div className="segmented browser-toggle" role="group" aria-label="View">
-        {icons && <button type="button" className={tiles ? "on" : ""} aria-pressed={!!tiles} onClick={() => choose("icons")} title="Icons"><Grid3x3 size={14} /></button>}
-        <button type="button" className={view === "cards" ? "on" : ""} aria-pressed={view === "cards"} onClick={() => choose("cards")} title="Cards"><LayoutGrid size={14} /></button>
-        <button type="button" className={list ? "on" : ""} aria-pressed={list} onClick={() => choose("list")} title="List"><List size={14} /></button>
+        <button type="button" className={!list ? "on" : ""} aria-pressed={!list} onClick={() => set({ view: "cards" })} title="Cards"><LayoutGrid size={14} /></button>
+        <button type="button" className={list ? "on" : ""} aria-pressed={list} onClick={() => set({ view: "list" })} title="List"><List size={14} /></button>
       </div>
       {actions}
     </div>
     {intro && !words.length && <p className="place-intro">{intro}</p>}
-    <CardGroup title="New since you last looked" note="Changed after your last visit; they move back to their group once you open them." list={list} icons={tiles} cards={fresh} />
-    {shown.map(group => <CardGroup key={group.key} title={group.title} note={words.length ? undefined : group.note} compact={group.compact} list={list} icons={tiles} cards={group.cards} />)}
+    <CardGroup title="New since you last looked" note="Changed after your last visit; they move back to their group once you open them." list={list} cards={fresh} />
+    {shown.map(group => <CardGroup key={group.key} title={group.title} note={words.length ? undefined : group.note} compact={group.compact} list={list} cards={group.cards} />)}
     {words.length > 0 && !found && <p className="quiet browser-none">Nothing here matches “{query}”. <button type="button" className="nav-more" onClick={() => setQuery("")}>Clear the filter</button></p>}
   </div>;
 }

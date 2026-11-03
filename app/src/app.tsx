@@ -1,31 +1,27 @@
 import { useEffect, useRef, useState } from "react";
-import { BookOpen, BrainCircuit, Hash, Folder, FolderGit2, History, Home, Settings, Users, User } from "lucide-react";
+import { BookOpen, Hash, FolderGit2, History, Home, Settings, Users, User } from "lucide-react";
 import { placeUrl, viewUrl, type HubMeta, type Place, type ProjectMeta, type SpaceMeta, type View } from "@/api";
 import { useLive } from "@/hooks/use-live";
 import { channelSeenKey, ChannelsContext, useChannels } from "@/hooks/use-channels";
 import { channelCards, channelOf } from "@/lib/channels";
 import { recentProjects, rememberProject, useMe } from "@/hooks/use-me";
 import { hashOf, navigate, useRoute } from "@/router";
-import { Dock, Inspector, Progress, Sidebar, TopBar, type DockItem, type SideSection } from "@/shell/shell";
+import { Dock, GlassFilter, Inspector, Progress, Sidebar, TopBar, type DockItem, type SideSection } from "@/shell/shell";
+import { PathBar } from "@/shell/path-bar";
 import { SearchPalette } from "@/shell/search";
 import { Avatar } from "@/ui/primitives";
 import { HomePage } from "@/pages/home";
 import { ActivityPanel } from "@/pages/common";
-import { SpacePage } from "@/pages/space";
-import { ProjectPage } from "@/pages/project";
-import { SECTION_ORDER } from "@/pages/files";
-import { HOME_ICONS, projectIcons, sectionIcon } from "@/shell/dock-icons";
+import { SpacePage, spaceTabs } from "@/pages/space";
+import { ProjectPage, projectTabs } from "@/pages/project";
+import { APP_ICONS, SECTION_ICONS } from "@/shell/dock-icons";
 import { SettingsPage } from "@/pages/settings";
 import { SubhubPage } from "@/pages/subhub";
 
 const HUB: Place = { space: "", project: "" };
 const SEEN = "spacehub:seen:v1";
-const RAIL = "spacehub:rail:v1";
-const ACTIVITY = "spacehub:activity:v1";
 
 function readSeen(): Record<string, string> { try { return JSON.parse(localStorage.getItem(SEEN) || "{}") ?? {}; } catch { return {}; } }
-// The activity panel (Home, a space, a project) starts open on wide windows unless the viewer closed it; narrower ones open it on demand.
-function readActivity() { let stored = ""; try { stored = localStorage.getItem(ACTIVITY) ?? ""; } catch { /* Storage may be blocked. */ } return stored !== "closed" && matchMedia("(min-width: 1180px)").matches; }
 function markSeen(key: string) { try { localStorage.setItem(SEEN, JSON.stringify({ ...readSeen(), [key]: new Date().toISOString() })); } catch { /* Storage may be blocked. */ } }
 
 export function App() {
@@ -42,11 +38,10 @@ export function App() {
   const [recoveryState, setRecoveryState] = useState<"live" | "offline" | "loading">("loading");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [searching, setSearching] = useState(false);
-  const [rail, setRail] = useState(() => { try { return localStorage.getItem(RAIL) === "on"; } catch { return false; } });
-  const toggleRail = () => setRail(on => { try { localStorage.setItem(RAIL, on ? "off" : "on"); } catch { /* Storage may be blocked. */ } return !on; });
   const [seen, setSeen] = useState(readSeen);
-  const [activityOpen, setActivityOpen] = useState(readActivity);
-  const toggleActivity = () => setActivityOpen(open => { try { localStorage.setItem(ACTIVITY, open ? "closed" : "open"); } catch { /* Storage may be blocked. */ } return !open; });
+  // The activity panel slides over like your places panel: opened from the top bar, closed by a click beside it.
+  const [activityOpen, setActivityOpen] = useState(false);
+  const toggleActivity = () => setActivityOpen(open => !open);
 
   // Keep the place's last view while another path of the same place loads, so nothing goes blank.
   const kept = useRef<{ key: string; view: View }>(undefined);
@@ -150,41 +145,32 @@ export function App() {
     { key: "builders", label: "Builders", href: "/#" + hashOf("builders"), icon: <Users size={16} />, active: homeTab === "builders" },
   ];
 
-  // Navigation has one job per piece: the breadcrumb goes up, the dock goes
-  // down (the places inside where you are), the tabs switch how you look at
-  // the place, and the sidebar goes across (siblings, and where you were).
-  let places: DockItem[] = [];
-  if (!recovery && route.page === "project" && meta?.level === "project") {
-    const roots = [...(view?.snapshot.roots ?? [])].sort((a, b) => {
-      const left = SECTION_ORDER.indexOf(a.name.toLowerCase());
-      const right = SECTION_ORDER.indexOf(b.name.toLowerCase());
-      return (left < 0 ? 99 : left) - (right < 0 ? 99 : right) || a.name.localeCompare(b.name);
-    });
-    const top = route.tab === "files" ? route.path.split("/")[0] : "";
-    places = roots.slice(0, 8).map(root => ({ key: root.path, label: root.name, href: placeUrl(place, hashOf("files", { path: root.path })), icon: sectionIcon(root.name), active: top === root.path }));
-  } else if (!recovery && route.page === "space" && meta?.level === "space") {
-    const entries = view?.snapshot.directory.entries ?? [];
-    const icons = projectIcons(entries.map(entry => entry.name));
-    places = [...entries].sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt)).slice(0, 8)
-      .map(entry => ({ key: entry.name, label: entry.name, href: placeUrl({ space: place.space, project: entry.name }), icon: icons.get(entry.name)!, fresh: !!seen[`${place.space}/${entry.name}`] && entry.modifiedAt > seen[`${place.space}/${entry.name}`] }));
-  } else if (route.page === "home" && !recovery) {
-    // The hub's front page in three parts; the page shows one at a time.
-    places = [
-      { key: "home", label: "Home", href: "/", icon: HOME_ICONS.home, active: route.tab === "home" },
-      { key: "agents", label: "Agents", href: "/#" + hashOf("agents"), icon: HOME_ICONS.agents, active: route.tab === "agents" },
-      { key: "builders", label: "Builders", href: "/#" + hashOf("builders"), icon: HOME_ICONS.builders, active: route.tab === "builders" },
-    ];
-  }
+  // Navigation has one job per piece: the breadcrumb goes up (and across,
+  // through each step's menu), a place's bar switches between its sections,
+  // its overview opens what it holds, and the dock holds what the page in
+  // front offers: the hub's own three on Home, a space's or a project's
+  // sections elsewhere (the first five, in its bar's order).
+  const sections = route.page === "space" ? { tabs: spaceTabs(place.space, meta?.level === "space" ? meta : undefined, meta?.level === "space" ? view?.snapshot.directory.entries : undefined), active: route.tab as string }
+    : route.page === "project" ? projectTabs(route, meta?.level === "project" ? view as View<ProjectMeta> : undefined) : undefined;
+  const dock: DockItem[] = recoveryOnly ? [] : sections ? sections.tabs.slice(0, 5).map(tab => ({ key: tab.key, label: tab.label, href: tab.href, icon: SECTION_ICONS[tab.key] ?? APP_ICONS.home, active: tab.key === sections.active })) : [
+    { key: "home", label: "Home", href: "/", icon: APP_ICONS.home, active: homeTab === "home" },
+    { key: "agents", label: "Agents", href: "/#" + hashOf("agents"), icon: APP_ICONS.agents, active: homeTab === "agents" },
+    { key: "builders", label: "Builders", href: "/#" + hashOf("builders"), icon: APP_ICONS.builders, active: homeTab === "builders" },
+  ];
+  const path = route.page === "project" && route.tab === "files" ? route.path : "";
+  const crumbs = route.page === "subhub" ? <span className="path-bar"><span className="path-item"><span className="crumb-sep" aria-hidden="true">›</span><span className="path-seg"><a className="current" aria-current="page" href={location.pathname}>Sub-hub {route.name}</a></span></span></span>
+    : <PathBar place={recovery || route.page === "home" ? HUB : place} path={path} />;
 
   // Every place has one: the hub's activity on Home, a space's or a project's on theirs.
   const hasActivity = !recovery && route.page !== "subhub";
   const activity = hasActivity && activityOpen;
   const activityOf = meta && (route.page === "home" ? meta.level === "hub" : meta.level === route.page) ? meta : undefined;
 
-  return <div className={`shell${activity ? " with-inspector" : ""}${rail ? " rail" : ""}`}>
+  return <div className={`os${activity ? " with-inspector" : ""}`}>
+    <GlassFilter />
     <Progress />
-    <TopBar me={me} signIn={signIn} live={state} onSearch={() => setSearching(true)} onMenu={() => setSidebarOpen(true)} activity={hasActivity ? { open: activityOpen, onToggle: toggleActivity } : undefined} recoveryOnly={recoveryOnly} />
-    <Sidebar switcher={switcher} primary={primary} sections={sideSections} footer={footer} open={sidebarOpen} onClose={() => setSidebarOpen(false)} rail={rail} onRail={toggleRail} onSearch={() => setSearching(true)} recoveryOnly={recoveryOnly} />
+    <TopBar me={me} signIn={signIn} live={state} onSearch={() => setSearching(true)} onMenu={() => setSidebarOpen(open => !open)} crumbs={crumbs} activity={hasActivity ? { open: activityOpen, onToggle: toggleActivity } : undefined} recoveryOnly={recoveryOnly} />
+    <Sidebar switcher={switcher} primary={primary} sections={sideSections} footer={footer} open={sidebarOpen} onClose={() => setSidebarOpen(false)} onSearch={() => setSearching(true)} recoveryOnly={recoveryOnly} />
     <main className="main" id="main">
       <div className="main-scroll">
         {route.page === "home" && route.tab !== "settings" && !recovery && <HomePage tab={route.tab} view={view as View<HubMeta> | undefined} me={me.name} mySpaces={me.spaces.map(s => s.space)} seen={seen} />}
@@ -193,7 +179,7 @@ export function App() {
         {!recovery && route.page === "space" && <SpacePage name={place.space} tab={route.tab} view={view as View<SpaceMeta> | undefined} error={live.error} me={me.name} signIn={signIn} seen={seen} />}
         {!recovery && route.page === "project" && <ChannelsContext.Provider value={channels}><ProjectPage route={route} view={view as View<ProjectMeta> | undefined} error={live.error} me={me.name} signIn={signIn} refresh={live.refresh} /></ChannelsContext.Provider>}
       </div>
-      <Dock places={places} />
+      <Dock places={dock} />
     </main>
     {activity && <Inspector title="Activity" note={route.page === "project" ? placeKey : route.page === "space" ? place.space : undefined} onClose={toggleActivity}><ActivityPanel meta={activityOf} /></Inspector>}
     {searching && !recoveryOnly && <SearchPalette place={place} onClose={() => setSearching(false)} />}
