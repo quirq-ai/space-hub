@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { Activity, BookOpen, Check, ChevronDown, ChevronRight, ChevronsUpDown, Home, LogIn, LogOut, Menu, PanelLeftClose, PanelLeftOpen, Plus, Search, User, X } from "lucide-react";
 import { ThemePicker } from "@/components/theme-picker";
 import { useLoading } from "@/hooks/use-live";
+import type { DockIcon } from "./dock-icons";
+import { AppIcon } from "@/ui/app-icon";
 import { onLink } from "@/router";
 import { Avatar, QuirqMark } from "@/ui/primitives";
 
@@ -54,7 +56,6 @@ export function TopBar({ me, signIn, live, onSearch, onMenu, activity, recoveryO
     <span className="topbar-spacer" />
     <span className={`live-pill ${live}`} title={live === "offline" ? recoveryOnly ? "Reconnecting to recovery" : "Reconnecting to the hub" : recoveryOnly ? "Full-instance recovery connection" : "Changes appear as they happen"}><i />{live === "offline" ? "Reconnecting" : "Live"}</span>
     {activity && <button className={`icon-button${activity.open ? " active" : ""}`} type="button" aria-pressed={activity.open} aria-label="Activity" title={activity.open ? "Hide activity" : "Show activity"} onClick={activity.onToggle}><Activity size={17} /></button>}
-    <ThemePicker />
     {recoveryOnly ? <span className="label">Local recovery</span> : !me.checked ? <span className="user-placeholder" aria-hidden="true" /> : me.name ? <UserMenu name={me.name} /> : <a className="button" href={signIn}><LogIn size={15} />Sign in</a>}
   </header>;
 }
@@ -148,6 +149,7 @@ export function Sidebar({ switcher, primary, sections, footer, open, onClose, ra
         })}
       </div>
       <div className="side-foot">
+        <ThemePicker variant="nav" />
         {footer.filter(item => !recoveryOnly || item.key === "settings").map(item => <Item key={item.key} item={item} rail={rail} onClose={onClose} />)}
         <button type="button" className="nav-item rail-toggle only-wide" onClick={onRail} aria-label={rail ? "Expand the sidebar" : "Collapse the sidebar"} title={rail ? "Expand the sidebar" : "Collapse the sidebar"}>
           <span className="nav-icon">{rail ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</span><span className="nav-label">Collapse</span>
@@ -158,15 +160,57 @@ export function Sidebar({ switcher, primary, sections, footer, open, onClose, ra
   </>;
 }
 
-export type DockItem = { key: string; label: string; href: string; icon: ReactNode; active?: boolean; fresh?: boolean };
+export type DockItem = { key: string; label: string; href: string; icon: DockIcon; active?: boolean; fresh?: boolean };
 
 /** The dock: the places inside where you are (a project's sections, a space's projects, the hub's spaces). */
+// xo-swarm's liquid glass: the backdrop is bent through fractal noise, blurred
+// into a soft displacement map, under a frosted tint and a shine on the edge.
+function GlassFilter() {
+  return <svg className="dock-filter" aria-hidden="true">
+    <filter id="dock-glass" x="0%" y="0%" width="100%" height="100%" filterUnits="objectBoundingBox">
+      <feTurbulence type="fractalNoise" baseFrequency="0.01 0.01" numOctaves={1} seed={5} result="turbulence" />
+      <feGaussianBlur in="turbulence" stdDeviation={3} result="softMap" />
+      <feDisplacementMap in="SourceGraphic" in2="softMap" scale={150} xChannelSelector="R" yChannelSelector="G" />
+    </filter>
+  </svg>;
+}
+
+// macOS's dock magnification: an icon grows and lifts the nearer the pointer
+// is, along a cosine over `REACH` pixels each way.
+const REACH = 140;
+
+/** The places inside where you are, as app icons on a glass dock: they magnify under the pointer, bounce when opened, and show their name above. */
 export function Dock({ places }: { places: DockItem[] }) {
+  const row = useRef<HTMLDivElement>(null);
+  const magnify = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const box = row.current;
+    if (!box || event.pointerType !== "mouse" || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const x = event.clientX - box.getBoundingClientRect().left + box.scrollLeft;
+    for (const item of Array.from(box.children) as HTMLElement[]) {
+      // Layout positions, which the magnification itself does not move.
+      const distance = Math.abs(x - (item.offsetLeft + item.offsetWidth / 2));
+      item.style.setProperty("--lift", distance < REACH ? ((Math.cos((distance / REACH) * Math.PI) + 1) / 2).toFixed(3) : "0");
+    }
+  };
+  const settle = () => { for (const item of Array.from(row.current?.children ?? []) as HTMLElement[]) item.style.removeProperty("--lift"); };
+  const open = (event: ReactMouseEvent<HTMLAnchorElement>) => {
+    const item = event.currentTarget;
+    item.classList.remove("opening");
+    void item.offsetWidth;
+    item.classList.add("opening");
+    onLink(event);
+  };
   if (!places.length) return null;
-  const item = (entry: DockItem) => <a key={entry.key} className={`dock-item${entry.active ? " active" : ""}`} href={entry.href} onClick={onLink} aria-label={entry.label} aria-current={entry.active ? "page" : undefined}>
-    <span className="dock-icon">{entry.icon}</span><span className="dock-label">{entry.label}</span>{entry.fresh && <span className="dock-fresh" title="Changed since you last looked" />}
-  </a>;
-  return <nav className="dock" aria-label="Dock">{places.map(item)}</nav>;
+  return <nav className="dock" aria-label="Dock">
+    <GlassFilter />
+    <span className="dock-glass"><span className="dock-effect" /><span className="dock-tint" /><span className="dock-shine" /></span>
+    <div className="dock-items" ref={row} onPointerMove={magnify} onPointerLeave={settle}>
+      {places.map(entry => <a key={entry.key} className={`dock-item${entry.active ? " active" : ""}`} href={entry.href} onClick={open} onAnimationEnd={event => event.currentTarget.classList.remove("opening")} aria-label={entry.label} aria-current={entry.active ? "page" : undefined}>
+        <span className="dock-pic"><AppIcon icon={entry.icon} />{entry.fresh && <span className="dock-fresh" title="Changed since you last looked" />}</span>
+        <span className="dock-name" aria-hidden="true">{entry.label}</span>
+      </a>)}
+    </div>
+  </nav>;
 }
 
 /** The right-hand panel: beside the page on wide windows, over it with a scrim on narrower ones. `note` says whose it is. */

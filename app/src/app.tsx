@@ -13,7 +13,8 @@ import { HomePage } from "@/pages/home";
 import { ActivityPanel } from "@/pages/common";
 import { SpacePage } from "@/pages/space";
 import { ProjectPage } from "@/pages/project";
-import { SECTION_ICONS, SECTION_ORDER } from "@/pages/files";
+import { SECTION_ORDER } from "@/pages/files";
+import { HOME_ICONS, projectIcons, sectionIcon } from "@/shell/dock-icons";
 import { SettingsPage } from "@/pages/settings";
 import { SubhubPage } from "@/pages/subhub";
 
@@ -160,16 +161,18 @@ export function App() {
       return (left < 0 ? 99 : left) - (right < 0 ? 99 : right) || a.name.localeCompare(b.name);
     });
     const top = route.tab === "files" ? route.path.split("/")[0] : "";
-    places = roots.slice(0, 8).map(root => { const Icon = SECTION_ICONS.get(root.name.toLowerCase()) ?? Folder; return { key: root.path, label: root.name, href: placeUrl(place, hashOf("files", { path: root.path })), icon: <Icon size={22} strokeWidth={1.7} />, active: top === root.path }; });
+    places = roots.slice(0, 8).map(root => ({ key: root.path, label: root.name, href: placeUrl(place, hashOf("files", { path: root.path })), icon: sectionIcon(root.name), active: top === root.path }));
   } else if (!recovery && route.page === "space" && meta?.level === "space") {
-    places = [...(view?.snapshot.directory.entries ?? [])].sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt)).slice(0, 8)
-      .map(entry => ({ key: entry.name, label: entry.name, href: placeUrl({ space: place.space, project: entry.name }), icon: <FolderGit2 size={22} strokeWidth={1.7} />, fresh: !!seen[`${place.space}/${entry.name}`] && entry.modifiedAt > seen[`${place.space}/${entry.name}`] }));
+    const entries = view?.snapshot.directory.entries ?? [];
+    const icons = projectIcons(entries.map(entry => entry.name));
+    places = [...entries].sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt)).slice(0, 8)
+      .map(entry => ({ key: entry.name, label: entry.name, href: placeUrl({ space: place.space, project: entry.name }), icon: icons.get(entry.name)!, fresh: !!seen[`${place.space}/${entry.name}`] && entry.modifiedAt > seen[`${place.space}/${entry.name}`] }));
   } else if (route.page === "home" && !recovery) {
     // The hub's front page in three parts; the page shows one at a time.
     places = [
-      { key: "home", label: "Home", href: "/", icon: <Home size={22} strokeWidth={1.7} />, active: route.tab === "home" },
-      { key: "agents", label: "Agents", href: "/#" + hashOf("agents"), icon: <BrainCircuit size={22} strokeWidth={1.7} />, active: route.tab === "agents" },
-      { key: "builders", label: "Builders", href: "/#" + hashOf("builders"), icon: <Users size={22} strokeWidth={1.7} />, active: route.tab === "builders" },
+      { key: "home", label: "Home", href: "/", icon: HOME_ICONS.home, active: route.tab === "home" },
+      { key: "agents", label: "Agents", href: "/#" + hashOf("agents"), icon: HOME_ICONS.agents, active: route.tab === "agents" },
+      { key: "builders", label: "Builders", href: "/#" + hashOf("builders"), icon: HOME_ICONS.builders, active: route.tab === "builders" },
     ];
   }
 
