@@ -14,8 +14,8 @@
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
   --skeleton: rgba(0, 0, 0, .06); --skeleton-shine: rgba(255, 255, 255, .6);
   /* What floats on the wallpaper: glass, labels on it, and the frosted sheets (menus, panels). */
-  --wallpaper: url(/-/app/wallpaper-light.svg?v=2); --wall: #e5ebf6;
-  --glass-tint: rgba(255, 255, 255, .3); --widget-tint: rgba(255, 255, 255, .56); --sheet-tint: rgba(246, 246, 248, .74); --sheet: rgba(255, 255, 255, .84);
+  --wallpaper: url(/-/app/wallpaper-light.svg?v=3); --wall: #eef0f5;
+  --glass-tint: rgba(255, 255, 255, .3); --widget-tint: rgba(255, 255, 255, .66); --sheet-tint: rgba(246, 246, 248, .74); --sheet: rgba(255, 255, 255, .84);
   --glass-edge: rgba(255, 255, 255, .75); --glass-edge-2: rgba(255, 255, 255, .4); --glass-sheen: rgba(255, 255, 255, .3);
   --on-wall: #1d1d1f; --on-wall-2: rgba(29, 29, 31, .78); --on-wall-shadow: 0 0 6px rgba(255, 255, 255, .85), 0 0 2px rgba(255, 255, 255, .9);
   --bar-hover: rgba(0, 0, 0, .06);
@@ -35,8 +35,8 @@
   --green: #30d158; --green-soft: rgba(48, 209, 88, .16); --red: #ff4245; --red-soft: rgba(255, 66, 69, .15); --amber: #ff9230; --amber-soft: rgba(255, 146, 48, .16);
   --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 28px rgba(0, 0, 0, .35); --shadow-lg: 0 4px 14px rgba(0, 0, 0, .4), 0 24px 60px rgba(0, 0, 0, .55);
   --skeleton: rgba(255, 255, 255, .06); --skeleton-shine: rgba(255, 255, 255, .08);
-  --wallpaper: url(/-/app/wallpaper-dark.svg?v=4); --wall: #000000;
-  --glass-tint: rgba(20, 20, 24, .45); --widget-tint: rgba(14, 14, 17, .62); --sheet-tint: rgba(16, 16, 19, .8); --sheet: rgba(30, 30, 34, .92);
+  --wallpaper: url(/-/app/wallpaper-dark.svg?v=5); --wall: #000000;
+  --glass-tint: rgba(20, 20, 24, .45); --widget-tint: rgba(14, 14, 17, .7); --sheet-tint: rgba(16, 16, 19, .8); --sheet: rgba(30, 30, 34, .92);
   --glass-edge: rgba(255, 255, 255, .28); --glass-edge-2: rgba(255, 255, 255, .1); --glass-sheen: rgba(255, 255, 255, .1);
   --on-wall: #fff; --on-wall-2: rgba(255, 255, 255, .78); --on-wall-shadow: 0 1px 3px rgba(0, 0, 0, .5);
   --bar-hover: rgba(255, 255, 255, .1);
@@ -177,17 +177,17 @@ kbd { padding: 1px 6px; border: 1px solid var(--line); border-bottom-width: 2px;
 .place-bar .profile-facts, .place-bar .meta-strip { margin: 10px 0 0 66px; }
 .place-bar .button { background: var(--fill-strong); }
 .place-bar .button.primary { background: var(--accent); }
-/* A place's sections: tabs along the bottom of its bar, the open one underlined in the system blue. */
-.tabs-wrap { margin: 12px -20px 0; padding: 0 12px; }
+/* A place's sections: tabs along the bottom of its bar, the open one on a gray pill. */
+.tabs-wrap { margin: 14px -8px 0; padding: 0 0 12px; }
 .tabs { position: relative; display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; }
 .tabs::-webkit-scrollbar { display: none; }
 /* Sections that do not fit fade at the edge that has more. */
 .tabs-wrap.fade-right .tabs { mask-image: linear-gradient(to right, #000 calc(100% - 44px), transparent); }
 .tabs-wrap.fade-left .tabs { mask-image: linear-gradient(to left, #000 calc(100% - 44px), transparent); }
 .tabs-wrap.fade-left.fade-right .tabs { mask-image: linear-gradient(to right, transparent, #000 44px, #000 calc(100% - 44px), transparent); }
-.tab { display: inline-flex; align-items: center; gap: 6px; padding: 10px 12px 11px; border-bottom: 2.5px solid transparent; color: var(--text-2); font-size: 14px; font-weight: 550; white-space: nowrap; }
-.tab:hover { text-decoration: none; color: var(--text); }
-.tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.tab { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 10px; color: var(--text-2); font-size: 14px; font-weight: 550; white-space: nowrap; }
+.tab:hover { text-decoration: none; background: var(--bar-hover); color: var(--text); }
+.tab.active { background: var(--fill-strong); color: var(--text); }
 /* A section that is not the overview sits in a panel, like an app's window. */
 .window { flex: 1; min-width: 0; margin-bottom: 14px; padding: 20px 24px 28px; border-radius: var(--radius-xl); background: var(--bg); box-shadow: 0 18px 50px rgba(0, 0, 0, .24), 0 0 0 .5px rgba(0, 0, 0, .08); animation: window-in .28s cubic-bezier(.2, .8, .2, 1); }
 .window-note { margin: 0 0 14px; color: var(--text-2); font-size: 13.5px; }
@@ -558,8 +558,8 @@ a.label:hover { text-decoration: none; filter: brightness(.96); }
   .place-name p { font-size: 13px; }
   .place-bar .profile-facts, .place-bar .meta-strip { margin-left: 0; }
   .place-bar .page-actions { width: 100%; flex-wrap: wrap; }
-  .tabs-wrap { margin: 8px -14px 0; padding: 0 6px; }
-  .tab { padding: 9px 10px 10px; font-size: 13.5px; }
+  .tabs-wrap { margin: 10px -6px 0; padding: 0 0 10px; }
+  .tab { padding: 6px 10px; font-size: 13.5px; }
   .window { padding: 14px 14px 20px; border-radius: 22px; }
   .tree-message { display: none; }
   .tree-name { width: auto; }

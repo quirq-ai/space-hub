@@ -43,7 +43,7 @@ export function SpacePage({ name, tab, view, error, me, signIn, seen }: { name: 
       <div className="profile-facts">
         <span><FolderGit2 size={14} />{meta.projects} {meta.projects === 1 ? "project" : "projects"}</span>
         <span>{size(meta.bytes)} stored</span>
-        <span>Joined <Ago iso={meta.createdAt} /></span>
+        <span><span>Joined <Ago iso={meta.createdAt} /></span></span>
         {meta.kind === "org" && <a href={base + "#" + hashOf("people")} onClick={onLink} title="Members and agents of this org"><Users size={14} />{peopleCount} {peopleCount === 1 ? "member" : "members"}, {agentCount} {agentCount === 1 ? "agent" : "agents"}</a>}
         {meta.githubLogin && <a href={meta.github || `https://github.com/${meta.githubLogin}`} target="_blank" rel="noreferrer"><Github size={14} />{meta.githubLogin}</a>}
         {!!meta.aliases?.length && <span title={`These addresses show ${name} too`}>Also {meta.aliases.map(alias => "/" + alias).join(", ")}</span>}
