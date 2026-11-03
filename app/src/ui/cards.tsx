@@ -30,14 +30,17 @@ export function ListHead({ children, actions }: { children: ReactNode; actions?:
   return <div className="list-head"><span>{children}</span>{actions}</div>;
 }
 
-export function CardGroup({ title, note, count, compact, list, icons, cards }: { title: ReactNode; note?: ReactNode; count?: number; compact?: boolean; list?: boolean; icons?: (card: PlaceCard) => ReactNode; cards: PlaceCard[] }) {
+export function CardGroup({ title, note, count, compact, list, icons, bare, cards }: { title: ReactNode; note?: ReactNode; count?: number; compact?: boolean; list?: boolean; icons?: (card: PlaceCard) => ReactNode; bare?: boolean; cards: PlaceCard[] }) {
   if (!cards.length) return null;
+  // Icons sit on one panel, so the grid lines up with the page; a lone group needs no label, the toolbar names it.
+  if (icons) return <section className="place-group app-group" aria-label={typeof title === "string" ? title : undefined}>
+    {!bare && <div className="app-group-head"><h2 className="overview-label">{title}<span className="app-group-count">{count ?? cards.length}</span></h2>{note && <p className="app-group-note">{note}</p>}</div>}
+    <ul className="app-grid">{cards.map(card => <li key={card.key}><AppTile card={card} icon={icons(card)} /></li>)}</ul>
+  </section>;
   return <section className="place-group">
     <h2 className="section-title">{title} <span className="quiet">{count ?? cards.length}</span></h2>
     {note && <p className="quiet">{note}</p>}
-    {icons
-      ? <ul className="app-grid">{cards.map(card => <li key={card.key}><AppTile card={card} icon={icons(card)} /></li>)}</ul>
-      : <ul className={`place-cards${compact ? " compact" : ""}${list ? " list" : ""}`}>{cards.map(card => <li key={card.key}><Card card={card} /></li>)}</ul>}
+    <ul className={`place-cards${compact ? " compact" : ""}${list ? " list" : ""}`}>{cards.map(card => <li key={card.key}><Card card={card} /></li>)}</ul>
   </section>;
 }
 
@@ -112,15 +115,16 @@ export function Browser({ head, actions, intro, groups, keepOrder = false, icons
     const kept = words.length ? cards.filter(card => words.every(word => text(card).includes(word))) : cards;
     return keepOrder && prefs.sort === "recent" ? kept : [...kept].sort((a, b) => order(a, b) || byName(a, b));
   };
-  const all = groups.flatMap(group => group.cards);
-  const fresh = shape(all.filter(card => card.fresh));
-  const freshKeys = new Set(fresh.map(card => card.key));
-  const shown = groups.map(group => ({ ...group, cards: shape(group.cards.filter(card => !freshKeys.has(card.key))) }));
-  const found = fresh.length + shown.reduce((sum, group) => sum + group.cards.length, 0);
   const view = icons ? prefs.appView : prefs.view;
   const list = view === "list";
   const tiles = view === "icons" && icons ? icons : undefined;
   const choose = (next: View) => set(icons ? { appView: next } : { view: next });
+  const all = groups.flatMap(group => group.cards);
+  // Icons keep their place on the grid, marked with a dot, rather than moving to a group of their own.
+  const fresh = tiles ? [] : shape(all.filter(card => card.fresh));
+  const freshKeys = new Set(fresh.map(card => card.key));
+  const shown = groups.map(group => ({ ...group, cards: shape(group.cards.filter(card => !freshKeys.has(card.key))) }));
+  const found = fresh.length + shown.reduce((sum, group) => sum + group.cards.length, 0);
 
   const move = (event: KeyboardEvent<HTMLDivElement>) => {
     const step = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[event.key];
@@ -151,7 +155,7 @@ export function Browser({ head, actions, intro, groups, keepOrder = false, icons
     </div>
     {intro && !words.length && <p className="place-intro">{intro}</p>}
     <CardGroup title="New since you last looked" note="Changed after your last visit; they move back to their group once you open them." list={list} icons={tiles} cards={fresh} />
-    {shown.map(group => <CardGroup key={group.key} title={group.title} note={words.length ? undefined : group.note} compact={group.compact} list={list} icons={tiles} cards={group.cards} />)}
+    {shown.map(group => <CardGroup key={group.key} title={group.title} note={words.length ? undefined : group.note} compact={group.compact} list={list} icons={tiles} bare={shown.filter(other => other.cards.length).length === 1} cards={group.cards} />)}
     {words.length > 0 && !found && <p className="quiet browser-none">Nothing here matches “{query}”. <button type="button" className="nav-more" onClick={() => setQuery("")}>Clear the filter</button></p>}
   </div>;
 }

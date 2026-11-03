@@ -95,8 +95,8 @@ export function SpacePage({ name, tab, view, error, me, signIn, seen }: { name: 
 }
 
 /** One fact of the overview: a link when it leads somewhere, else plain. */
-function Tile({ href, label, icon, value, note }: { href?: string; label: string; icon: ReactNode; value: ReactNode; note?: ReactNode }) {
-  const body = <><span className="overview-label">{icon}{label}</span><span className="overview-value">{value}</span>{note && <span className="overview-note">{note}</span>}</>;
+function Tile({ href, label, icon, value, note, aside }: { href?: string; label: string; icon: ReactNode; value: ReactNode; note?: ReactNode; aside?: ReactNode }) {
+  const body = <><span className="overview-label">{icon}{label}{aside && <span className="overview-aside">{aside}</span>}</span><span className="overview-value">{value}</span>{note && <span className="overview-note">{note}</span>}</>;
   return href ? <a className="overview-tile" href={href} onClick={onLink}>{body}</a> : <div className="overview-tile">{body}</div>;
 }
 
@@ -116,7 +116,7 @@ function SpaceOverview({ name, meta, projects }: { name: string; meta: SpaceMeta
   const tiles = 2 + Number(goals.length > 0) + Number(!!push);
   return <div className="overview-wrap"><div className="overview" style={{ "--tiles": tiles } as CSSProperties} aria-label={`${name} at a glance`}>
     {goals.length > 0 && <Tile href={goals.length === 1 ? placeUrl({ space: name, project: goals[0].name }) : undefined} label="Goals" icon={<Target size={13} />}
-      value={<><Meter done={done} total={total} size="small" /><span className="overview-clip">{done} of {total} outcomes</span></>}
+      value={<span className="overview-clip">{done} of {total} outcomes</span>} aside={<Meter done={done} total={total} size="small" />}
       note={goals.length === 1 ? goals[0].name : `across ${goals.length} projects`} />}
     <Tile href={base + "#" + hashOf("agents")} label="Agents" icon={<Bot size={13} />}
       value={running.length ? <><i className="online-dot" />{running.length} running</> : meta.agentList.length ? "None running" : "No agents yet"}
@@ -125,7 +125,7 @@ function SpaceOverview({ name, meta, projects }: { name: string; meta: SpaceMeta
       value={here.length ? <><AvatarStack names={here} max={4} size={20} /><span className="overview-clip">{here.length} connected</span></> : "Nobody connected"}
       note={meta.kind === "org" ? `${members} ${members === 1 ? "member" : "members"}` : undefined} />
     {push && pushed && <Tile href={pushed.commit || pushed.href || undefined} label="Latest push" icon={<GitCommitHorizontal size={13} />}
-      value={<><Avatar name={push.agent || "hub"} size={18} /><span className="overview-clip">{push.agent || "someone"}</span><span className="overview-when"><Ago iso={push.at} /></span></>}
+      value={<><Avatar name={push.agent || "hub"} size={18} /><span className="overview-clip">{push.agent || "someone"}</span></>} aside={<Ago iso={push.at} />}
       note={<>{push.path}{push.text ? `: ${push.text}` : ""}</>} />}
   </div></div>;
 }
