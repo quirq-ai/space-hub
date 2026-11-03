@@ -3,7 +3,7 @@ import { BookOpen, Bot, Boxes, Download, GitBranch, GitCommitHorizontal, HardDri
 import { placeUrl, rawUrl, size, type Place, type ProjectMeta, type View } from "@/api";
 import { hashOf, navigate, onLink, type Route } from "@/router";
 import { Ago, Avatar, AvatarStack, CommandTabs, Empty, ErrorNote, Popover, Skeleton } from "@/ui/primitives";
-import { ActivityStream, HereNow, People, PlaceBar, RecentActivity } from "./common";
+import { ActivityStream, HereNow, People, PlaceBar, type Tab } from "./common";
 import { ChatSection } from "./chat-section";
 import { BranchesTab, CodeTab, CommitTab, CommitsTab } from "./code";
 import { DepsTab } from "./deps";
@@ -11,40 +11,52 @@ import { FilesTab, isChannel, SECTION_ICONS, SECTION_ORDER } from "./files";
 import { GoalPanel } from "./goal";
 import { Markdown, RawFiles } from "@/components/content-view";
 import { AppIcon } from "@/ui/app-icon";
-import { AppGrid, HomeScreen, Widget, Widgets } from "@/ui/home-screen";
+import { HomeScreen, Launchpad, Widget, Widgets } from "@/ui/home-screen";
 import { folderIcon, projectIcon } from "@/shell/dock-icons";
 
-type ProjectRoute = Extract<Route, { page: "project" }>;
+export type ProjectRoute = Extract<Route, { page: "project" }>;
 
 const filesHref = (place: Place, path: string) => placeUrl(place, hashOf("files", { path }));
 
-/** A project: its bar (what it is, its sections), then the section open: its overview, or the files, code, chat, activity or contributors in a panel. */
-export function ProjectPage({ route, view, error, me, signIn, refresh }: { route: ProjectRoute; view: View<ProjectMeta> | undefined; error: string; me: string | null; signIn: string; refresh: () => void }) {
+/**
+ * A project's sections, in order: its chat, its overview, files, code, what
+ * happened, who contributes and what it pins; and which one is open. Its bar
+ * shows them all; the dock shows the first five.
+ */
+export function projectTabs(route: ProjectRoute, view: View<ProjectMeta> | undefined): { tabs: Tab[]; active: string; chatRoot?: string } {
   const { place } = route;
   const meta = view?.meta;
-  const base = placeUrl(place);
-  const raw = meta ? (file: string) => rawUrl(place, meta.defaultBranch, file) : undefined;
   // The Chat folder's channels are the project's chat, when it has them; otherwise its one chat (Chat/chat.json).
   const chatRoot = view?.snapshot.roots.find(root => root.name.toLowerCase() === "chat")?.path;
   const path = route.tab === "files" ? route.path : "";
   const inChat = !!chatRoot && (path === chatRoot || path.startsWith(chatRoot + "/"));
   const overview = route.tab === "files" && !path && route.as !== "folder";
-  const tab = overview ? "overview" : route.tab === "files" ? (inChat ? "chat" : "files") : route.tab === "commit" || route.tab === "commits" || route.tab === "branches" ? "code" : route.tab;
+  const active = overview ? "overview" : route.tab === "files" ? (inChat ? "chat" : "files") : route.tab === "commit" || route.tab === "commits" || route.tab === "branches" ? "code" : route.tab;
   const people = meta ? new Set([...meta.owners, ...meta.members, ...meta.collaborators, ...meta.agents]).size : undefined;
+  return { chatRoot, active, tabs: [
+    { key: "chat", label: "Chat", href: chatRoot ? filesHref(place, chatRoot) : placeUrl(place, hashOf("chat")) },
+    { key: "overview", label: "Overview", href: placeUrl(place) },
+    { key: "files", label: "Files", href: placeUrl(place, hashOf("files", { as: "folder" })) },
+    { key: "code", label: "Code", href: placeUrl(place, hashOf("code")) },
+    { key: "activity", label: "Activity", href: placeUrl(place, hashOf("activity")), count: meta?.activity.length || undefined },
+    { key: "people", label: "Contributors", href: placeUrl(place, hashOf("people")), count: people },
+    ...(meta?.deps || route.tab === "deps" ? [{ key: "deps", label: "Dependencies", href: placeUrl(place, hashOf("deps")), count: meta?.deps || undefined }] : []),
+  ] };
+}
+
+/** A project: its bar (what it is, its sections), then the section open: its overview, or the files, code, chat, activity or contributors in a panel. */
+export function ProjectPage({ route, view, error, me, signIn, refresh }: { route: ProjectRoute; view: View<ProjectMeta> | undefined; error: string; me: string | null; signIn: string; refresh: () => void }) {
+  const { place } = route;
+  const meta = view?.meta;
+  const raw = meta ? (file: string) => rawUrl(place, meta.defaultBranch, file) : undefined;
+  const { tabs, active: tab, chatRoot } = projectTabs(route, view);
+  const overview = tab === "overview";
   const chatty = route.tab === "files" && view && (view.snapshot.file?.format === "json" || (!view.snapshot.file && route.as !== "folder" && isChannel(view.snapshot)));
   return <RawFiles.Provider value={raw}><div className={`place${chatty || route.tab === "chat" ? " place-chat" : ""}`}>
     <PlaceBar icon={<AppIcon icon={projectIcon(place.project)} size={52} />} title={place.project}
       subtitle={meta ? meta.description || `A project of ${place.space}` : error ? undefined : <Skeleton width={220} />}
       actions={meta ? <Popover label="Clone" icon={<Download size={15} />}><CloneProject place={place} /></Popover> : undefined}
-      active={tab} tabs={[
-        { key: "overview", label: "Overview", href: base },
-        { key: "files", label: "Files", href: placeUrl(place, hashOf("files", { as: "folder" })) },
-        { key: "code", label: "Code", href: placeUrl(place, hashOf("code")) },
-        { key: "chat", label: "Chat", href: chatRoot ? filesHref(place, chatRoot) : placeUrl(place, hashOf("chat")) },
-        { key: "activity", label: "Activity", href: placeUrl(place, hashOf("activity")), count: meta?.activity.length || undefined },
-        { key: "people", label: "Contributors", href: placeUrl(place, hashOf("people")), count: people },
-        ...(meta?.deps || route.tab === "deps" ? [{ key: "deps", label: "Dependencies", href: placeUrl(place, hashOf("deps")), count: meta?.deps || undefined }] : []),
-      ]}>
+      active={tab} tabs={tabs}>
       {meta && <ProjectStrip place={place} meta={meta} />}
     </PlaceBar>
     {!meta && error && <div className="window"><ErrorNote message={error} retry={refresh} /></div>}
@@ -65,7 +77,7 @@ export function ProjectPage({ route, view, error, me, signIn, refresh }: { route
   </div></RawFiles.Provider>;
 }
 
-/** A project's overview: a row of stats, its goal, its folders as apps (Chat has its own section), what happened lately, and its README. */
+/** A project's overview: a row of stats, its goal, its folders as apps (Chat has its own section), and its README. */
 function ProjectOverview({ place, view, chatRoot }: { place: Place; view: View<ProjectMeta> | undefined; chatRoot?: string }) {
   const first = useRef(true);
   const index = view?.snapshot.directory.entries.find(entry => entry.kind === "file" && entry.name === "index.json");
@@ -104,10 +116,8 @@ function ProjectOverview({ place, view, chatRoot }: { place: Place; view: View<P
       </Widget>
     </Widgets>
     {meta.goal && <Widget size="full" className="goal-widget"><GoalPanel place={place} goal={meta.goal} canWrite={meta.canWrite} /></Widget>}
-    <AppGrid title="Sections" apps={sections.map(app)} />
-    <AppGrid title="Folders" apps={folders.map(app)} />
+    <Launchpad label={`Folders of ${place.project}`} groups={[{ title: "Sections", apps: sections.map(app) }, { title: "Folders", apps: folders.map(app) }]} />
     {index && <a className="callout glass-callout" href={filesHref(place, index.path)} onClick={onLink}><BookOpen size={18} /><span><strong>Open the saved view</strong><span>index.json</span></span></a>}
-    <RecentActivity items={meta.activity} href={placeUrl(place, hashOf("activity"))} />
     {readme && <Widget size="full" className="readme-widget" title={readme.name} icon={<BookOpen size={13} />} aside={<a href={filesHref(place, readme.path)} onClick={onLink}>Open</a>}>
       <Markdown content={readme.content} filePath={readme.path} navigate={next => navigate(filesHref(place, next))} />
     </Widget>}

@@ -15,6 +15,7 @@ function Glyph({ art, glass, cut, letters }: { art: DockArt; glass: string; cut:
     case "guide": return <><path d="M38 32h44a8 8 0 0 1 8 8v56H44a6 6 0 0 1-6-6z" fill={glass} /><path d="M50 50h26M50 62h20" stroke={cut} strokeWidth="6" strokeLinecap="round" /></>;
     case "agents": return <><circle cx="64" cy="29" r="7" fill={glass} /><rect x="60" y="30" width="8" height="16" rx="4" fill={glass} /><rect x="32" y="44" width="64" height="50" rx="16" fill={glass} /><circle cx="50" cy="67" r="7" fill={cut} /><circle cx="78" cy="67" r="7" fill={cut} /><rect x="51" y="80" width="26" height="5" rx="2.5" fill={cut} /></>;
     case "builders": return <><g fill={glass} opacity=".72"><circle cx="82" cy="47" r="12" /><path d="M62 94c0-15 9-25 20-25s20 10 20 25z" /></g><g fill={glass}><circle cx="52" cy="50" r="15" /><path d="M24 98c0-18 12-30 28-30s28 12 28 30z" /></g></>;
+    case "code": return <><path d="M50 46L32 66l18 20M78 46l18 20-18 20" fill="none" stroke={glass} strokeWidth="11" strokeLinecap="round" strokeLinejoin="round" /><path d="M70 40L58 92" stroke={glass} strokeWidth="9" strokeLinecap="round" /></>;
     case "letters": return <text x="64" y="68" textAnchor="middle" dominantBaseline="central" fontSize={letters && letters.length > 1 ? 46 : 58} fontWeight="700" letterSpacing="-1" fontFamily="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif" fill={glass}>{letters}</text>;
   }
 }

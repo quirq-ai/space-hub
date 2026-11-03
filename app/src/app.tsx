@@ -12,9 +12,9 @@ import { SearchPalette } from "@/shell/search";
 import { Avatar } from "@/ui/primitives";
 import { HomePage } from "@/pages/home";
 import { ActivityPanel } from "@/pages/common";
-import { SpacePage } from "@/pages/space";
-import { ProjectPage } from "@/pages/project";
-import { APP_ICONS } from "@/shell/dock-icons";
+import { SpacePage, spaceTabs } from "@/pages/space";
+import { ProjectPage, projectTabs } from "@/pages/project";
+import { APP_ICONS, SECTION_ICONS } from "@/shell/dock-icons";
 import { SettingsPage } from "@/pages/settings";
 import { SubhubPage } from "@/pages/subhub";
 
@@ -147,9 +147,12 @@ export function App() {
 
   // Navigation has one job per piece: the breadcrumb goes up (and across,
   // through each step's menu), a place's bar switches between its sections,
-  // its overview opens what it holds, and the dock holds the hub's own three:
-  // Home, Agents and Builders, the same from anywhere.
-  const dock: DockItem[] = recoveryOnly ? [] : [
+  // its overview opens what it holds, and the dock holds what the page in
+  // front offers: the hub's own three on Home, a space's or a project's
+  // sections elsewhere (the first five, in its bar's order).
+  const sections = route.page === "space" ? { tabs: spaceTabs(place.space, meta?.level === "space" ? meta : undefined, meta?.level === "space" ? view?.snapshot.directory.entries : undefined), active: route.tab as string }
+    : route.page === "project" ? projectTabs(route, meta?.level === "project" ? view as View<ProjectMeta> : undefined) : undefined;
+  const dock: DockItem[] = recoveryOnly ? [] : sections ? sections.tabs.slice(0, 5).map(tab => ({ key: tab.key, label: tab.label, href: tab.href, icon: SECTION_ICONS[tab.key] ?? APP_ICONS.home, active: tab.key === sections.active })) : [
     { key: "home", label: "Home", href: "/", icon: APP_ICONS.home, active: homeTab === "home" },
     { key: "agents", label: "Agents", href: "/#" + hashOf("agents"), icon: APP_ICONS.agents, active: homeTab === "agents" },
     { key: "builders", label: "Builders", href: "/#" + hashOf("builders"), icon: APP_ICONS.builders, active: homeTab === "builders" },

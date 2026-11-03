@@ -4,9 +4,9 @@ import type { Entry } from "@/lib/types";
 import { hashOf } from "@/router";
 import { Browser } from "@/ui/cards";
 import { Ago, Avatar, AvatarStack, CommandTabs, Empty, Popover, QuirqMark, SkeletonRows } from "@/ui/primitives";
-import { AppGrid, HomeScreen, Widget, Widgets } from "@/ui/home-screen";
+import { HomeScreen, Launchpad, Widget, Widgets } from "@/ui/home-screen";
 import { projectIcon, spaceIcon } from "@/shell/dock-icons";
-import { PlaceBar, RecentActivity } from "./common";
+import { PlaceBar } from "./common";
 import { AgentList } from "./space";
 
 const kindOf = (detail = "") => detail.startsWith("org") ? "org" : detail.startsWith("agent") ? "agent" : "personal";
@@ -35,7 +35,7 @@ export function HomePage({ tab, view, me, mySpaces, seen }: HomeProps) {
   </div>;
 }
 
-/** The hub at a glance in a row of stats, then the spaces and newest projects as apps, then what happened lately. */
+/** The hub at a glance in a row of stats, then its spaces and newest projects as apps. */
 function HubOverview({ view, mySpaces, seen }: { view: View<HubMeta>; mySpaces: string[]; seen: Record<string, string> }) {
   const spaces = [...view.snapshot.directory.entries].sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
   const recent = view.meta.allProjects.slice(0, 8);
@@ -67,14 +67,15 @@ function HubOverview({ view, mySpaces, seen }: { view: View<HubMeta>; mySpaces: 
         <span className="widget-note">in {count(view.meta.spaces, "space")}</span>
       </Widget>
     </Widgets>
-    <AppGrid title="Your spaces" apps={spaces.filter(space => mine.has(space.name)).map(spaceApp)} />
-    <AppGrid title="Orgs" apps={spaces.filter(space => !mine.has(space.name) && kindOf(space.detail) === "org").map(spaceApp)} />
-    <AppGrid title="Recently pushed" apps={recent.map(project => {
+    <Launchpad label="spacehub" groups={[
+      { title: "Your spaces", apps: spaces.filter(space => mine.has(space.name)).map(spaceApp) },
+      { title: "Orgs", apps: spaces.filter(space => !mine.has(space.name) && kindOf(space.detail) === "org").map(spaceApp) },
+      { title: "Recently pushed", apps: recent.map(project => {
       const [space, name] = project.fullName.split("/");
       return { key: project.fullName, label: name, title: [project.fullName, project.description].filter(Boolean).join(": "), href: placeUrl({ space, project: name }), icon: projectIcon(name), badge: !!seen[project.fullName] && project.pushedAt > seen[project.fullName] };
-    })} />
+      }) },
+    ]} />
     {!view.meta.spaces && <Widget size="full" className="empty-widget"><Empty icon={<Building2 size={20} />} title="No spaces yet"><p>Sign up and push a project to start the first space. <a href="/-/guide">Read the guide</a>.</p></Empty></Widget>}
-    <RecentActivity items={view.meta.activity} />
   </HomeScreen>;
 }
 

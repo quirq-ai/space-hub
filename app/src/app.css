@@ -18,7 +18,7 @@
   --glass-tint: rgba(255, 255, 255, .3); --widget-tint: rgba(255, 255, 255, .66); --sheet-tint: rgba(246, 246, 248, .74); --sheet: rgba(255, 255, 255, .84);
   --glass-edge: rgba(255, 255, 255, .75); --glass-edge-2: rgba(255, 255, 255, .4); --glass-sheen: rgba(255, 255, 255, .3);
   --on-wall: #1d1d1f; --on-wall-2: rgba(29, 29, 31, .78); --on-wall-shadow: 0 0 6px rgba(255, 255, 255, .85), 0 0 2px rgba(255, 255, 255, .9);
-  --bar-hover: rgba(0, 0, 0, .06);
+  --bar-hover: rgba(0, 0, 0, .06); --launch-field: rgba(255, 255, 255, .55);
   /* open-chat's content renderers, on this palette */
   --canvas: var(--bg); --card: var(--panel); --muted: var(--text-2); --subtle: var(--fill); --neutral: var(--fill); --sky: var(--accent-soft);
   --blue: var(--accent-soft); --blue-dark: var(--accent-text); --row-hover: var(--hover); --card-border: var(--line); --collection-border: var(--line);
@@ -39,7 +39,7 @@
   --glass-tint: rgba(20, 20, 24, .45); --widget-tint: rgba(14, 14, 17, .7); --sheet-tint: rgba(16, 16, 19, .8); --sheet: rgba(30, 30, 34, .92);
   --glass-edge: rgba(255, 255, 255, .28); --glass-edge-2: rgba(255, 255, 255, .1); --glass-sheen: rgba(255, 255, 255, .1);
   --on-wall: #fff; --on-wall-2: rgba(255, 255, 255, .78); --on-wall-shadow: 0 1px 3px rgba(0, 0, 0, .5);
-  --bar-hover: rgba(255, 255, 255, .1);
+  --bar-hover: rgba(255, 255, 255, .1); --launch-field: rgba(255, 255, 255, .08);
 }
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; }
@@ -205,9 +205,6 @@ kbd { padding: 1px 6px; border: 1px solid var(--line); border-bottom-width: 2px;
 .widget { position: relative; isolation: isolate; display: flex; min-width: 0; min-height: 150px; border-radius: var(--radius-xl); color: var(--text); box-shadow: 0 10px 30px rgba(0, 0, 0, .14), 0 1px 3px rgba(0, 0, 0, .06); transition: transform .25s cubic-bezier(.2, .9, .3, 1.3); }
 .widget .glass-tint { background: var(--widget-tint); }
 .widget.full { margin-top: 22px; min-height: 0; }
-.recent-widget .widget-body { padding: 14px 20px 10px; }
-.recent-widget .activity-day-title { margin: 10px 0 2px; }
-.recent-widget .widget-aside a { font-weight: 600; }
 .widget:has([aria-expanded="true"]) { z-index: 30; }
 a.widget:hover { text-decoration: none; transform: translateY(-2px); }
 a.widget:active { transform: scale(.98); }
@@ -230,20 +227,26 @@ a.widget:active { transform: scale(.98); }
 .readme-widget .widget-aside a { font-weight: 600; }
 .empty-widget .widget-body { padding: 4px; }
 .glass-callout { margin-top: 18px; }
-/* The apps: icons with their names under them, spread across the width like an iPad's home screen. */
-.springboard { margin-top: 26px; }
-.springboard-title { display: flex; align-items: baseline; gap: 7px; margin: 0 0 6px 8px; color: var(--on-wall-2); font-size: 13px; font-weight: 650; text-shadow: var(--on-wall-shadow); }
-.springboard-title span { font-weight: 500; opacity: .8; }
-.app-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(98px, 1fr)); gap: 12px 6px; margin: 0; padding: 0; list-style: none; }
-.app-tile { display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 8px 2px 6px; border-radius: 18px; color: var(--on-wall); text-align: center; }
+/* The apps, like macOS's Launchpad: a search field, then big icons with their names under them in a centered grid. */
+.launchpad { margin-top: 26px; }
+.launch-search { display: flex; align-items: center; justify-content: center; gap: 6px; width: min(260px, 100%); height: 30px; margin: 0 auto 10px; padding: 0 10px; border: 1px solid var(--glass-edge-2); border-radius: 8px; background: var(--launch-field); color: var(--on-wall-2); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
+.launch-search:focus-within { border-color: var(--glass-edge); }
+.launch-search input { width: 0; flex: 1; border: 0; outline: 0; background: none; color: var(--on-wall); font: 13px var(--font); }
+.launch-search input::placeholder { color: var(--on-wall-2); }
+.launch-group + .launch-group { margin-top: 10px; }
+.launch-title { display: flex; justify-content: center; align-items: baseline; gap: 6px; margin: 12px 0 2px; color: var(--on-wall-2); font-size: 12.5px; font-weight: 600; text-shadow: var(--on-wall-shadow); }
+.launch-title span { font-weight: 500; opacity: .75; }
+.launch-none { margin: 24px 0; color: var(--on-wall-2); text-align: center; text-shadow: var(--on-wall-shadow); }
+.app-grid { display: grid; grid-template-columns: repeat(auto-fill, 132px); justify-content: center; gap: 22px 18px; margin: 0; padding: 10px 0; list-style: none; }
+.app-tile { display: flex; flex-direction: column; align-items: center; gap: 9px; padding: 6px 4px; border-radius: 18px; color: var(--on-wall); text-align: center; }
 .app-tile:hover { text-decoration: none; }
 .app-tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.app-tile-icon { position: relative; width: 64px; height: 64px; filter: drop-shadow(0 6px 12px rgba(0, 0, 0, .2)); transition: transform .25s cubic-bezier(.2, .9, .3, 1.3); }
+.app-tile-icon { position: relative; width: 84px; height: 84px; filter: drop-shadow(0 8px 16px rgba(0, 0, 0, .28)); transition: transform .25s cubic-bezier(.2, .9, .3, 1.3); }
 .app-tile:hover .app-tile-icon { transform: translateY(-3px); }
-.app-tile:active .app-tile-icon { transform: scale(.9); filter: drop-shadow(0 3px 6px rgba(0, 0, 0, .2)) brightness(.85); }
-.app-tile-name { max-width: 100%; overflow: hidden; font-size: 12.5px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; text-shadow: var(--on-wall-shadow); }
+.app-tile:active .app-tile-icon { transform: scale(.92); filter: drop-shadow(0 3px 6px rgba(0, 0, 0, .2)) brightness(.85); }
+.app-tile-name { max-width: 100%; overflow: hidden; font-size: 13px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; text-shadow: var(--on-wall-shadow); }
 /* An iOS badge: something changed since you looked. */
-.app-badge { position: absolute; top: -5px; right: -5px; width: 18px; height: 18px; border-radius: 50%; background: #ff3b30; box-shadow: 0 0 0 2px rgba(255, 255, 255, .92), 0 2px 4px rgba(0, 0, 0, .25); }
+.app-badge { position: absolute; top: -6px; right: -6px; width: 22px; height: 22px; border-radius: 50%; background: #ff3b30; box-shadow: 0 2px 5px rgba(0, 0, 0, .3); }
 
 /* The right-hand glass panel (Activity on Home, a space or a project). Its feed: on open the rows come in one after another; later a new row grows in at the top. */
 .inspector { position: fixed; top: 72px; right: 12px; bottom: 12px; z-index: 30; isolation: isolate; width: 352px; border-radius: var(--radius-xl); color: var(--text); box-shadow: var(--shadow-lg); animation: panel-in .3s cubic-bezier(.2, .8, .2, 1); }
@@ -544,8 +547,11 @@ a.label:hover { text-decoration: none; filter: brightness(.96); }
   .widget-body { padding: 13px 14px; }
   .widget-value { font-size: 19px; }
   .profile-facts { gap: 4px 14px; font-size: 12.5px; }
-  .springboard { margin-top: 20px; }
-  .app-grid { grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); gap: 8px 0; }
+  .launchpad { margin-top: 18px; }
+  .app-grid { grid-template-columns: repeat(auto-fill, 86px); gap: 14px 4px; }
+  .app-tile-icon { width: 62px; height: 62px; }
+  .app-tile-name { font-size: 12px; }
+  .app-badge { width: 18px; height: 18px; }
   .dock { bottom: 10px; max-width: calc(100% - 16px); border-radius: 26px; }
   .dock-items { gap: 2px; padding: 7px 8px 4px; overflow-x: auto; scrollbar-width: none; }
   .dock-item { width: 56px; }
@@ -830,6 +836,18 @@ a.label:hover { text-decoration: none; filter: brightness(.96); }
 .goal-outcomes li.done > span:first-of-type { color: var(--text-3); text-decoration: line-through; text-decoration-color: var(--line-strong); }
 .goal-check { flex: none; color: var(--text-3); }
 .goal-outcomes li.done .goal-check { color: var(--green); }
+/* A space's outcomes across its projects: a summary, then open and delivered ones as grouped lists. */
+.outcomes-summary { display: flex; align-items: center; gap: 10px; margin: 2px 0 6px; color: var(--text-2); font-size: 13.5px; }
+.outcomes-summary b { color: var(--text); }
+.outcome-list { display: grid; margin: 0 0 18px; padding: 2px 14px; border-radius: 14px; background: var(--panel); list-style: none; }
+.outcome-list li { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 0; font-size: 14px; }
+.outcome-list li + li { box-shadow: inset 27px .5px 0 var(--panel), inset 0 .5px 0 var(--line); }
+.outcome-list li > span:first-of-type { flex: 1; min-width: 0; }
+.outcome-check { flex: none; color: var(--text-3); }
+.outcome-list li.done .outcome-check { color: var(--green); }
+.outcome-project { display: inline-flex; flex: none; align-items: center; gap: 5px; max-width: 180px; overflow: hidden; color: var(--text-2); font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
+.outcome-project:hover { color: var(--text); text-decoration: none; }
+@media (max-width: 760px) { .outcome-list li { flex-wrap: wrap; } .outcome-list li > span:first-of-type { flex-basis: calc(100% - 30px); } .outcome-project { margin-left: 27px; } }
 .goal-owner { display: inline-flex; align-items: center; gap: 5px; flex: none; color: var(--text-2); font-size: 12px; }
 .goal-owner .avatar { border-radius: 50%; }
 .goal-more { padding-left: 24px !important; font-size: 13px; }

@@ -1,5 +1,5 @@
 /** What a drawn icon shows (ui/app-icon.tsx): a section's glyph, or a project's initials. */
-export type DockArt = "vision" | "goals" | "library" | "letters" | "settings" | "folder" | "guide" | "agents" | "builders";
+export type DockArt = "vision" | "goals" | "library" | "letters" | "settings" | "folder" | "guide" | "agents" | "builders" | "code";
 
 /**
  * A dock or app-grid icon: one of xo-swarm's app pictures (public/dock-*.png,
@@ -37,6 +37,19 @@ export const APP_ICONS = {
   settings: { art: "settings", hue: 220, gray: true },
   guide: { art: "guide", hue: 22 },
 } satisfies Record<string, DockIcon>;
+
+/** The dock's icon for each section of a space or a project (pages/space.tsx spaceTabs, pages/project.tsx projectTabs). */
+export const SECTION_ICONS: Record<string, DockIcon> = {
+  chat: SECTIONS.chat,
+  projects: { art: "folder", hue: 212 },
+  outcomes: { art: "goals", hue: 145 },
+  people: { art: "builders", hue: 208 },
+  activity: SECTIONS.activity,
+  overview: picture("overview"),
+  files: FILES,
+  code: { art: "code", hue: 262 },
+  deps: { art: "library", hue: 22 },
+};
 
 /** A space's own picture (GitHub's, or the hub's default) as an app icon. */
 export const spaceIcon = (src: string): DockIcon => ({ src });

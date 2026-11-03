@@ -5,7 +5,7 @@ import { hashOf, onLink } from "@/router";
 import { Ago, Avatar, AvatarStack, Empty, PersonLink, SkeletonRows } from "@/ui/primitives";
 import { dayOf, FILTERS, keepActivity, liveRows, MODES, type ActivityFilter } from "@/lib/activity";
 import { Browser } from "@/ui/cards";
-import { Glass, Widget } from "@/ui/home-screen";
+import { Glass } from "@/ui/home-screen";
 
 export function PageHeader({ crumbs, title, subtitle, leading, actions, children }: {
   crumbs?: { label: string; href: string }[]; title: ReactNode; subtitle?: ReactNode; leading?: ReactNode; actions?: ReactNode; children?: ReactNode;
@@ -66,14 +66,6 @@ export function PlaceBar({ icon, title, badge, subtitle, actions, tabs, active, 
     {children}
     {tabs?.length ? <Tabs tabs={tabs} active={active ?? ""} /> : null}
   </header>;
-}
-
-/** The newest few things that happened here, on a home screen, with a way to the rest. */
-export function RecentActivity({ items, href }: { items: ActivityItem[]; href?: string }) {
-  if (!items.length) return null;
-  return <Widget size="full" className="recent-widget" title="Recent activity" icon={<History size={13} />} aside={href && <a href={href} onClick={onLink}>See all</a>}>
-    <ActivityList items={items.slice(0, 6)} compact />
-  </Widget>;
 }
 
 export function ActivityList({ items, empty = "Nothing has happened here yet.", compact = false }: { items: ActivityItem[]; empty?: string; compact?: boolean }) {

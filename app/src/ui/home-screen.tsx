@@ -1,5 +1,6 @@
-import type { ReactNode } from "react";
-import { onLink } from "@/router";
+import { useState, type KeyboardEvent, type ReactNode } from "react";
+import { Search } from "lucide-react";
+import { navigate, onLink } from "@/router";
 import type { DockIcon } from "@/shell/dock-icons";
 import { AppIcon } from "./app-icon";
 
@@ -41,16 +42,35 @@ export function Widget({ title, icon, aside, href, size = "small", className, ch
 
 export type HomeApp = { key: string; label: string; href: string; icon: DockIcon; badge?: boolean; title?: string };
 
-/** Apps on the home screen, like xo-swarm's application page: each icon with its name under it, a dot when it changed since you looked. */
-export function AppGrid({ title, apps }: { title?: string; apps: HomeApp[] }) {
-  if (!apps.length) return null;
-  return <section className="springboard" aria-label={title}>
-    {title && <h2 className="springboard-title">{title}<span>{apps.length}</span></h2>}
-    <ul className="app-grid">{apps.map(app => <li key={app.key}>
-      <a className="app-tile" href={app.href} onClick={onLink} title={app.title ?? app.label}>
-        <span className="app-tile-icon"><AppIcon icon={app.icon} size={64} />{app.badge && <i className="app-badge" title="New since you last looked" />}</span>
-        <span className="app-tile-name">{app.label}</span>
-      </a>
-    </li>)}</ul>
+export type AppGroup = { title?: string; apps: HomeApp[] };
+
+/**
+ * A place's apps, like macOS's Launchpad: a search field, then each group's
+ * big icons in a centered grid with their names under them, a dot on one
+ * that changed since you looked. Enter opens the first match.
+ */
+export function Launchpad({ label, groups }: { label: string; groups: AppGroup[] }) {
+  const [query, setQuery] = useState("");
+  const total = groups.reduce((sum, group) => sum + group.apps.length, 0);
+  if (!total) return null;
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const match = (app: HomeApp) => words.every(word => `${app.label} ${app.title ?? ""}`.toLowerCase().includes(word));
+  const shown = groups.map(group => ({ ...group, apps: group.apps.filter(match) })).filter(group => group.apps.length);
+  const keys = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Escape") setQuery("");
+    if (event.key === "Enter" && shown.length) navigate(shown[0].apps[0].href);
+  };
+  return <section className="launchpad" aria-label={label}>
+    {total > 6 && <label className="launch-search"><Search size={13} /><input value={query} onChange={event => setQuery(event.target.value)} onKeyDown={keys} placeholder="Search" aria-label={`Search ${label}`} /></label>}
+    {shown.map(group => <div key={group.title ?? ""} className="launch-group">
+      {group.title && <h2 className="launch-title">{group.title}<span>{group.apps.length}</span></h2>}
+      <ul className="app-grid">{group.apps.map(app => <li key={app.key}>
+        <a className="app-tile" href={app.href} onClick={onLink} title={app.title ?? app.label}>
+          <span className="app-tile-icon"><AppIcon icon={app.icon} size={84} />{app.badge && <i className="app-badge" title="New since you last looked" />}</span>
+          <span className="app-tile-name">{app.label}</span>
+        </a>
+      </li>)}</ul>
+    </div>)}
+    {words.length > 0 && !shown.length && <p className="launch-none">Nothing here matches “{query}”.</p>}
   </section>;
 }
