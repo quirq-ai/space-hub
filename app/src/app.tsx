@@ -14,7 +14,7 @@ import { ActivityPanel } from "@/pages/common";
 import { SpacePage } from "@/pages/space";
 import { ProjectPage } from "@/pages/project";
 import { SECTION_ORDER } from "@/pages/files";
-import { HOME_ICONS, PROJECT_ICON, sectionIcon } from "@/shell/dock-icons";
+import { HOME_ICONS, projectIcons, sectionIcon } from "@/shell/dock-icons";
 import { SettingsPage } from "@/pages/settings";
 import { SubhubPage } from "@/pages/subhub";
 
@@ -163,8 +163,10 @@ export function App() {
     const top = route.tab === "files" ? route.path.split("/")[0] : "";
     places = roots.slice(0, 8).map(root => ({ key: root.path, label: root.name, href: placeUrl(place, hashOf("files", { path: root.path })), icon: sectionIcon(root.name), active: top === root.path }));
   } else if (!recovery && route.page === "space" && meta?.level === "space") {
-    places = [...(view?.snapshot.directory.entries ?? [])].sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt)).slice(0, 8)
-      .map(entry => ({ key: entry.name, label: entry.name, href: placeUrl({ space: place.space, project: entry.name }), icon: PROJECT_ICON, fresh: !!seen[`${place.space}/${entry.name}`] && entry.modifiedAt > seen[`${place.space}/${entry.name}`] }));
+    const entries = view?.snapshot.directory.entries ?? [];
+    const icons = projectIcons(entries.map(entry => entry.name));
+    places = [...entries].sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt)).slice(0, 8)
+      .map(entry => ({ key: entry.name, label: entry.name, href: placeUrl({ space: place.space, project: entry.name }), icon: icons.get(entry.name)!, fresh: !!seen[`${place.space}/${entry.name}`] && entry.modifiedAt > seen[`${place.space}/${entry.name}`] }));
   } else if (route.page === "home" && !recovery) {
     // The hub's front page in three parts; the page shows one at a time.
     places = [

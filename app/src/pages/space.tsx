@@ -9,6 +9,8 @@ import { hashOf, onLink } from "@/router";
 import { Ago, Avatar, AvatarStack, CommandTabs, Empty, Popover, SkeletonRows } from "@/ui/primitives";
 import { ActivityStream, HereNow, PageHeader, People, Tabs } from "./common";
 import { ChatSection } from "./chat-section";
+import { AppIcon } from "@/ui/app-icon";
+import { projectIcon, projectIcons } from "@/shell/dock-icons";
 
 const KIND_ICON = { personal: <User size={13} />, org: <Building2 size={13} />, agent: <Bot size={13} /> } as Record<string, React.ReactNode>;
 
@@ -24,6 +26,8 @@ export function SpacePage({ name, tab, view, error, me, signIn, seen }: { name: 
   const agentCount = meta.agentList.length;
   const canManage = !!me && meta.owners.includes(me);
   const hasChat = meta.kind === "org" || meta.kind === "agent";
+  // The same colors as the dock: projects of this space, worked out together.
+  const icons = projectIcons(projects.map(project => project.name));
   const byProject = newestBy(meta.activity, item => item.path);
   const peopleByProject = activeBy(meta.activity, item => item.path);
   return <div className="page">
@@ -61,7 +65,7 @@ export function SpacePage({ name, tab, view, error, me, signIn, seen }: { name: 
     ]} />
     {tab === "projects" && <>
       {meta.kind !== "agent" && <SpaceOverview name={name} meta={meta} projects={projects} />}
-      {projects.length || meta.collaborates.length ? <Browser head={<>{projects.length} {projects.length === 1 ? "project" : "projects"} in {name}</>} groups={[
+      {projects.length || meta.collaborates.length ? <Browser head={<>{projects.length} {projects.length === 1 ? "project" : "projects"} in {name}</>} icons={card => <AppIcon icon={icons.get(card.name ?? "") ?? projectIcon((card.name ?? "").split("/").pop() ?? "")} size={64} />} groups={[
         { key: "projects", title: "Projects", note: `Each one is a git repository on the hub that ${meta.kind === "org" ? "the org's members" : name} push to.`, cards: projects.map(project => {
           const fullName = `${name}/${project.name}`;
           return { key: project.name, name: project.name, search: [project.goal, project.detail].filter(Boolean).join(" "), people: peopleByProject.get(fullName), href: placeUrl({ space: name, project: project.name }), icon: <Glyph tone={project.goal ? "accent" : undefined}>{project.template ? <LayoutTemplate size={17} /> : project.goal ? <Target size={17} /> : <FolderGit2 size={17} />}</Glyph>, title: project.name,

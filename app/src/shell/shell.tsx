@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { Activity, BookOpen, Check, ChevronDown, ChevronRight, ChevronsUpDown, Home, LogIn, LogOut, Menu, PanelLeftClose, PanelLeftOpen, Plus, Search, User, X } from "lucide-react";
 import { ThemePicker } from "@/components/theme-picker";
 import { useLoading } from "@/hooks/use-live";
 import type { DockIcon } from "./dock-icons";
+import { AppIcon } from "@/ui/app-icon";
 import { onLink } from "@/router";
 import { Avatar, QuirqMark } from "@/ui/primitives";
 
@@ -174,26 +175,39 @@ function GlassFilter() {
   </svg>;
 }
 
-function DockPicture({ icon }: { icon: DockIcon }) {
-  if ("glyph" in icon) {
-    const Glyph = icon.glyph;
-    return <span className="dock-tile" style={{ "--hue": icon.hue } as CSSProperties}><Glyph size={28} strokeWidth={2} /></span>;
-  }
-  return <>
-    <img className={`dock-img${icon.dark ? " dock-light" : ""}`} src={icon.src} alt="" width={54} height={54} draggable={false} />
-    {icon.dark && <img className="dock-img dock-dark" src={icon.dark} alt="" width={54} height={54} draggable={false} />}
-  </>;
-}
+// macOS's dock magnification: an icon grows and lifts the nearer the pointer
+// is, along a cosine over `REACH` pixels each way.
+const REACH = 140;
 
-/** The places inside where you are, as app icons on a glass dock; a name shows on hover. */
+/** The places inside where you are, as app icons on a glass dock: they magnify under the pointer, bounce when opened, and show their name above. */
 export function Dock({ places }: { places: DockItem[] }) {
+  const row = useRef<HTMLDivElement>(null);
+  const magnify = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const box = row.current;
+    if (!box || event.pointerType !== "mouse" || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const x = event.clientX - box.getBoundingClientRect().left + box.scrollLeft;
+    for (const item of Array.from(box.children) as HTMLElement[]) {
+      // Layout positions, which the magnification itself does not move.
+      const distance = Math.abs(x - (item.offsetLeft + item.offsetWidth / 2));
+      item.style.setProperty("--lift", distance < REACH ? ((Math.cos((distance / REACH) * Math.PI) + 1) / 2).toFixed(3) : "0");
+    }
+  };
+  const settle = () => { for (const item of Array.from(row.current?.children ?? []) as HTMLElement[]) item.style.removeProperty("--lift"); };
+  const open = (event: ReactMouseEvent<HTMLAnchorElement>) => {
+    const item = event.currentTarget;
+    item.classList.remove("opening");
+    void item.offsetWidth;
+    item.classList.add("opening");
+    onLink(event);
+  };
   if (!places.length) return null;
   return <nav className="dock" aria-label="Dock">
     <GlassFilter />
-    <span className="dock-effect" /><span className="dock-tint" /><span className="dock-shine" />
-    <div className="dock-items">
-      {places.map(entry => <a key={entry.key} className={`dock-item${entry.active ? " active" : ""}`} href={entry.href} onClick={onLink} aria-label={entry.label} title={entry.label} aria-current={entry.active ? "page" : undefined}>
-        <DockPicture icon={entry.icon} />{entry.fresh && <span className="dock-fresh" title="Changed since you last looked" />}
+    <span className="dock-glass"><span className="dock-effect" /><span className="dock-tint" /><span className="dock-shine" /></span>
+    <div className="dock-items" ref={row} onPointerMove={magnify} onPointerLeave={settle}>
+      {places.map(entry => <a key={entry.key} className={`dock-item${entry.active ? " active" : ""}`} href={entry.href} onClick={open} onAnimationEnd={event => event.currentTarget.classList.remove("opening")} aria-label={entry.label} aria-current={entry.active ? "page" : undefined}>
+        <span className="dock-pic"><AppIcon icon={entry.icon} />{entry.fresh && <span className="dock-fresh" title="Changed since you last looked" />}</span>
+        <span className="dock-name" aria-hidden="true">{entry.label}</span>
       </a>)}
     </div>
   </nav>;
