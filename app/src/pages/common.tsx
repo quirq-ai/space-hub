@@ -54,9 +54,9 @@ export function Tabs({ tabs, active }: { tabs: Tab[]; active: string }) {
  * you always see where you are and where you can go next.
  */
 export function PlaceBar({ icon, title, badge, subtitle, actions, tabs, active, children }: {
-  icon: ReactNode; title: ReactNode; badge?: ReactNode; subtitle?: ReactNode; actions?: ReactNode; tabs: Tab[]; active: string; children?: ReactNode;
+  icon: ReactNode; title: ReactNode; badge?: ReactNode; subtitle?: ReactNode; actions?: ReactNode; tabs?: Tab[]; active?: string; children?: ReactNode;
 }) {
-  return <header className="place-bar">
+  return <header className={`place-bar${tabs?.length ? "" : " untabbed"}`}>
     <Glass />
     <div className="place-id">
       <span className="place-icon">{icon}</span>
@@ -64,7 +64,7 @@ export function PlaceBar({ icon, title, badge, subtitle, actions, tabs, active, 
       {actions && <div className="page-actions">{actions}</div>}
     </div>
     {children}
-    <Tabs tabs={tabs} active={active} />
+    {tabs?.length ? <Tabs tabs={tabs} active={active ?? ""} /> : null}
   </header>;
 }
 

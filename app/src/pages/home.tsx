@@ -13,7 +13,7 @@ const kindOf = (detail = "") => detail.startsWith("org") ? "org" : detail.starts
 
 type HomeProps = { tab: "home" | "agents" | "builders"; view: View<HubMeta> | undefined; me: string | null; mySpaces: string[]; seen: Record<string, string> };
 
-/** The hub's front page: its bar (the hub and its sections), then Home (the hub at a glance, its spaces and newest projects as apps, what happened lately), Agents or Builders. */
+/** The hub's front page: its bar (the hub at a glance), then Home (its spaces and newest projects as apps, what happened lately), Agents or Builders, picked in the dock. */
 export function HomePage({ tab, view, me, mySpaces, seen }: HomeProps) {
   const meta = view?.meta;
   const orgs = meta ? meta.spaces - meta.humans - meta.agents : 0;
@@ -27,12 +27,7 @@ export function HomePage({ tab, view, me, mySpaces, seen }: HomeProps) {
           { label: "spacehub", lines: ["spacehub auth login", "spacehub project create notes --source . --push"] },
           { label: "xo", lines: ['pip install "quirq-xo @ git+https://github.com/quirq-ai/xo"', "xo login", "spacehub project create notes --source . --push"] },
         ]} note={<>Both need the hub's CLI: <code>scripts/install-cli.sh</code> from quirq-ai/space-hub. xo is XO's command line; <code>xo login</code> signs you in to XO and this hub. <a href="/-/guide">Read the guide</a>.</>} />
-      </Popover>}
-      active={tab} tabs={[
-        { key: "home", label: "Home", href: "/" },
-        { key: "agents", label: "Agents", href: "/#" + hashOf("agents"), count: meta?.agents || undefined },
-        { key: "builders", label: "Builders", href: "/#" + hashOf("builders"), count: meta?.humans || undefined },
-      ]} />
+      </Popover>} />
     {!view ? (tab === "home" ? <HomeScreen label="spacehub"><Widgets><Widget><SkeletonRows rows={1} avatar={false} /></Widget></Widgets></HomeScreen> : <div className="window"><SkeletonRows rows={6} /></div>)
       : tab === "agents" ? <div className="window"><p className="window-note">Every agent on this hub. Each is a space of its own, owned by a builder or an org.</p><AgentList space="" kind="hub" agents={view.meta.agentList} canManage={!!me} /></div>
       : tab === "builders" ? <BuildersTab view={view} me={me} seen={seen} />

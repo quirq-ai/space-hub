@@ -5,7 +5,6 @@ import { useLoading } from "@/hooks/use-live";
 import type { DockIcon } from "./dock-icons";
 import { AppIcon } from "@/ui/app-icon";
 import { Glass } from "@/ui/home-screen";
-import { startSpace } from "@/ui/space";
 import { onLink } from "@/router";
 import { Avatar, QuirqMark } from "@/ui/primitives";
 
@@ -200,16 +199,6 @@ export type DockItem = { key: string; label: string; href: string; icon: DockIco
 // xo-swarm's liquid glass: the backdrop is bent through fractal noise, blurred
 // into a soft displacement map, under a frosted tint and a shine on the edge.
 // Rendered once; every distorted pane of glass points at it.
-/** The wallpaper, live: spacetime's fabric in 3D around a gravity well (ui/space.ts), behind everything. */
-export function SpaceScene() {
-  const ref = useRef<HTMLCanvasElement>(null);
-  useEffect(() => {
-    const canvas = ref.current, ctx = canvas?.getContext("2d");
-    return canvas && ctx ? startSpace(canvas, ctx) : undefined;
-  }, []);
-  return <canvas className="space" ref={ref} aria-hidden="true" />;
-}
-
 export function GlassFilter() {
   return <svg className="glass-filter" aria-hidden="true">
     <filter id="glass-distortion" x="0%" y="0%" width="100%" height="100%" filterUnits="objectBoundingBox">

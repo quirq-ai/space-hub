@@ -1,5 +1,5 @@
 /** What a drawn icon shows (ui/app-icon.tsx): a section's glyph, or a project's initials. */
-export type DockArt = "vision" | "goals" | "library" | "letters" | "settings" | "folder" | "guide";
+export type DockArt = "vision" | "goals" | "library" | "letters" | "settings" | "folder" | "guide" | "agents" | "builders";
 
 /**
  * A dock or app-grid icon: one of xo-swarm's app pictures (public/dock-*.png,
@@ -29,9 +29,11 @@ const SECTIONS: Record<string, DockIcon> = {
 /** A top folder on a project's home screen: its section's icon, else a folder in a color of its own. */
 export const folderIcon = (name: string): DockIcon => SECTIONS[name.toLowerCase()] ?? { art: "folder", hue: HUES[slotOf(name)] };
 
-/** The dock's own apps: the hub's front page, settings and the guide. */
+/** The dock's own apps (the hub's front page, its agents and its builders), plus settings and the guide. */
 export const APP_ICONS = {
   home: picture("apps"),
+  agents: { art: "agents", hue: 262 },
+  builders: { art: "builders", hue: 208 },
   settings: { art: "settings", hue: 220, gray: true },
   guide: { art: "guide", hue: 22 },
 } satisfies Record<string, DockIcon>;
