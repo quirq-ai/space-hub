@@ -51,6 +51,8 @@ export function WorkerCard({ id, me }: { id: string; me: string | null }) {
     const note = detail.status === 404 ? "This worker is not known here." : detail.status === 403 ? "Only members of this space can follow its workers." : detail.error;
     return <div className="worker is-quiet"><div className="worker-head"><i className="worker-dot" /><strong className="worker-title">Worker</strong><span className="worker-status">{note || "Loading…"}</span></div></div>;
   }
+  // A follow-up box only stays while the worker can take one: torn down, disconnected or running again closes it.
+  if (reply !== null && !can.followUp) setReply(null);
   const quiet = stateNote(worker, me);
   const StateIcon = worker.state ? STATE_ICON[worker.state] : null;
 
@@ -60,7 +62,7 @@ export function WorkerCard({ id, me }: { id: string; me: string | null }) {
     try {
       const path = `/workers/${encodeURIComponent(id)}`;
       if (what === "stop") await send("POST", `${path}/stop`, {});
-      if (what === "teardown") await send("DELETE", path);
+      if (what === "teardown") { await send("DELETE", path); setReply(null); }
       if (what === "reply") { await send("POST", `${path}/messages`, { text: reply }, key); setReply(null); setKey(newKey()); }
       detail.refresh(); events.refresh();
     } catch (err) {
