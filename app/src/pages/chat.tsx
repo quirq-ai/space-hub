@@ -5,7 +5,7 @@ import { Markdown } from "@/components/content-view";
 import { useChat } from "@/hooks/use-chat";
 import { useLive } from "@/hooks/use-live";
 import { WorkerCard } from "@/components/worker-card";
-import { defaultRunner, launchInput, launchNote, launchOf, newKey, recentRepos, rememberRepo, repoName, send, type RunnerInfo, type WorkersStatus } from "@/lib/workers";
+import { defaultRunner, launchInput, launchNote, launchOf, runnerLabel, newKey, recentRepos, rememberRepo, repoName, send, type RunnerInfo, type WorkersStatus } from "@/lib/workers";
 import { type Place } from "@/api";
 import { Ago, Avatar, AvatarStack, ErrorNote } from "@/ui/primitives";
 
@@ -133,7 +133,7 @@ function LaunchTray({ place, path, draft, runners, onClose, onLaunched }: { plac
     <div className="launch-row">
       <Rocket size={15} className="launch-icon" />
       <span className="launch-title">Launch {draft.trim() ? "this message" : "a message"} as a worker</span>
-      {runners.length > 1 && <select aria-label="Runner" value={runner?.id ?? ""} onChange={event => setChosen(event.target.value)}>{runners.map(r => <option key={r.id} value={r.id}>{r.name} · {r.kind}</option>)}</select>}
+      {runners.length > 1 && <select aria-label="Runner" value={runner?.id ?? ""} onChange={event => setChosen(event.target.value)}>{runners.map(r => <option key={r.id} value={r.id}>{runnerLabel(r.name, r.kind)}</option>)}</select>}
       <button type="button" className="icon-button" aria-label="Close" onClick={onClose}><X size={14} /></button>
     </div>
     <div className="launch-row">
@@ -142,7 +142,7 @@ function LaunchTray({ place, path, draft, runners, onClose, onLaunched }: { plac
     </div>
     {repos && recent.length > 0 && <div className="launch-recent">{recent.map(name => <button key={name} type="button" className={name === repo ? "on" : undefined} onClick={() => setGithub(name)}>{name}</button>)}</div>}
     {repos && github.trim() && !repo && <p className="launch-note">Use owner/repo, or paste a github.com link.</p>}
-    {runner ? <p className="launch-note">Runs on {runner.name} · {runner.kind}</p> : <p className="launch-note"><a href="/#/settings">{launchNote(runners)}</a></p>}
+    {runner ? <p className="launch-note">Runs on {runnerLabel(runner.name, runner.kind)}</p> : <p className="launch-note"><a href="/#/settings">{launchNote(runners)}</a></p>}
     {!draft.trim() && <p className="launch-note">Write what the worker should do in the message box, then launch.</p>}
     {error && <p className="launch-note is-error">{error}</p>}
   </div>;

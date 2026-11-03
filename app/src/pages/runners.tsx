@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Bot, Plug, Rocket } from "lucide-react";
 import { useLive } from "@/hooks/use-live";
-import { isRunning, send, statusLabel, type RunnerInfo } from "@/lib/workers";
+import { isRunning, runnerLabel, send, statusLabel, type RunnerInfo } from "@/lib/workers";
 import { Ago, Empty, ErrorNote, SkeletonRows } from "@/ui/primitives";
 
 type MyWorker = { taskId: string; runnerId: string; title: string; status: string; space: string; project: string; updatedAt: string };
@@ -31,7 +31,7 @@ export function RunnersSection() {
     {list.loading && !list.data ? <SkeletonRows rows={1} /> : runners.length === 0
       ? <Empty icon={<Bot size={22} />} title="No runner connected"><p>Connect a runner to launch workers from chats. Make a token on the runner that only sees the tasks it starts (Agents Hub: Settings → Agent access → Only tasks it starts), then paste its address and token here.</p></Empty>
       : <ul className="runner-list">{runners.map(r => <li key={r.id} className="runner-row">
-        <div><strong>{r.name}</strong> <span className="quiet">{r.kind}{r.isDefault ? " · default" : ""}</span><div className="quiet">{r.url} · checked <Ago iso={r.checkedAt} /></div></div>
+        <div><strong>{runnerLabel(r.name, r.kind)}</strong>{r.isDefault && <span className="quiet"> · default</span>}<div className="quiet">{r.url} · checked <Ago iso={r.checkedAt} /></div></div>
         <div className="subhub-actions">
           <button type="button" className="button small" disabled={!!busy} onClick={() => void run(`test:${r.id}`, () => send("POST", `/runners/${r.id}/test`, {}), `${r.name} answered.`)}>{busy === `test:${r.id}` ? "Testing…" : "Test"}</button>
           {!r.isDefault && <button type="button" className="button small" disabled={!!busy} onClick={() => void run(`default:${r.id}`, () => send("PATCH", `/runners/${r.id}`, { default: true }))}>Make default</button>}

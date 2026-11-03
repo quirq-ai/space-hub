@@ -107,12 +107,19 @@ export function cardHeadline(detail: WorkerDetail, me: string | null): string {
   return me && detail.launcher === me ? `on your ${kind}` : `on ${detail.launcher}'s ${kind}`;
 }
 
-/** Why a card shows its kept copy instead of the live worker; "" when it is live. */
-export function stateNote(detail: WorkerDetail): string {
+/** Why a card shows its kept copy instead of the live worker; "" when it is live. The launcher reads "Your runner". */
+export function stateNote(detail: WorkerDetail, me: string | null = null): string {
+  const mine = !!me && detail.launcher === me;
+  const whose = mine ? "Your runner" : `${detail.launcher}'s runner`;
   if (detail.state === "gone") return "Torn down · result kept";
-  if (detail.state === "disconnected") return `${detail.launcher}'s runner is not connected`;
-  if (detail.state === "unreachable") return `${detail.launcher}'s runner did not answer`;
+  if (detail.state === "disconnected") return mine ? `${whose} is not connected · connect it again in Settings` : `${whose} is not connected`;
+  if (detail.state === "unreachable") return `${whose} did not answer`;
   return "";
+}
+
+/** A runner's name and kind, naming it once when the name only repeats the kind ("Agents Hub", "Agents Hub · OpenAI"). */
+export function runnerLabel(name: string, kind: string): string {
+  return !name || kind.startsWith(name) ? kind : `${name} · ${kind}`;
 }
 
 /** The runner a launch goes to: the default one, else the first. */
@@ -121,7 +128,15 @@ export const defaultRunner = (runners: RunnerInfo[]) => runners.find(r => r.isDe
 /** Under the launch tray: where the worker will run. */
 export function launchNote(runners: RunnerInfo[]): string {
   const r = defaultRunner(runners);
-  return r ? `Runs on ${r.name} · ${r.kind}` : "Connect a runner in Settings to launch workers";
+  return r ? `Runs on ${runnerLabel(r.name, r.kind)}` : "Connect a runner in Settings to launch workers";
+}
+
+/**
+ * A worker's Markdown with only web links kept: a link or image into the runner's sandbox (a relative path,
+ * /workspace/..., sandbox:...) cannot be opened from here, so it shows as its text.
+ */
+export function webLinksOnly(markdown: string): string {
+  return markdown.replace(/!?\[([^\]]*)\]\(([^)\s]*)(?:\s+"[^"]*")?\)/g, (all, text: string, url: string) => (/^https?:\/\//i.test(url) && !all.startsWith("!") ? all : text));
 }
 
 /** "github.com/owner/repo/pull/12" as "owner/repo#12". */
@@ -141,7 +156,12 @@ export function foldEvents(events: TaskEvent[]): ThreadItem[] {
   const steps = new Map<string, Step>();
   let group: Extract<ThreadItem, { type: "steps" }> | null = null;
   const end = () => { if (group) group.open = false; group = null; };
-  const note = (key: string, text: string, tone: Extract<ThreadItem, { type: "note" }>["tone"] = "") => items.push({ type: "note", key, text, tone });
+  // The same note twice in a row (a runner repeating an event) shows once.
+  const note = (key: string, text: string, tone: Extract<ThreadItem, { type: "note" }>["tone"] = "") => {
+    const last = items.at(-1);
+    if (last?.type === "note" && last.text === text) return;
+    items.push({ type: "note", key, text, tone });
+  };
   events.forEach((event, index) => {
     const seq = Number(event.seq);
     if (Number.isFinite(seq)) { if (seen.has(seq)) return; seen.add(seq); }

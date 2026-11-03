@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cardActions, cardHeadline, foldEvents, launchInput, launchNote, launchOf, linkLabel, repoName, stateNote, toWorkerDetail, withoutCredit, toDetail, toEvents, toTasks, type RunnerInfo } from "../src/lib/workers.ts";
+import { cardActions, cardHeadline, foldEvents, launchInput, launchNote, launchOf, linkLabel, repoName, runnerLabel, stateNote, toWorkerDetail, webLinksOnly, withoutCredit, toDetail, toEvents, toTasks, type RunnerInfo } from "../src/lib/workers.ts";
 
 test("tasks from a list or {tasks}, newest activity first", () => {
   const tasks = toTasks({ tasks: [
@@ -106,6 +106,9 @@ test("a state note for each state, none when live", () => {
   assert.equal(stateNote(card("gone", { state: "gone" })), "Torn down · result kept");
   assert.equal(stateNote(card("done", { state: "disconnected" })), "priya's runner is not connected");
   assert.equal(stateNote(card("done", { state: "unreachable" })), "priya's runner did not answer");
+  assert.equal(stateNote(card("done", { state: "disconnected" }), "priya"), "Your runner is not connected · connect it again in Settings");
+  assert.equal(stateNote(card("done", { state: "unreachable" }), "priya"), "Your runner did not answer");
+  assert.equal(stateNote(card("done", { state: "disconnected" }), "arjun"), "priya's runner is not connected");
   assert.equal(stateNote(card("done")), "");
 });
 
@@ -121,4 +124,30 @@ test("the launch note names the runner a worker will run on", () => {
   assert.equal(launchNote([]), "Connect a runner in Settings to launch workers");
   assert.equal(launchNote([r("a", "Mine", true)]), "Runs on Mine · Agents Hub");
   assert.equal(launchNote([r("a", "Mine", false), r("b", "Work", true)]), "Runs on Work · Agents Hub");
+});
+
+test("a runner is named once when its name is the start of its kind", () => {
+  assert.equal(runnerLabel("Agents Hub", "Agents Hub · OpenAI"), "Agents Hub · OpenAI");
+  assert.equal(runnerLabel("Krish's hub", "Agents Hub · OpenAI"), "Krish's hub · Agents Hub · OpenAI");
+  assert.equal(runnerLabel("", "Agents Hub"), "Agents Hub");
+  const r: RunnerInfo = { id: "a", name: "Agents Hub", kind: "Agents Hub · OpenAI", url: "https://x", isDefault: true, capabilities: all, connectedAt: "", checkedAt: "" };
+  assert.equal(launchNote([r]), "Runs on Agents Hub · OpenAI");
+});
+
+test("links a viewer cannot open (sandbox files) become plain text; web links stay", () => {
+  assert.equal(webLinksOnly("Saved in the [research brief](research/brief.md)."), "Saved in the research brief.");
+  assert.equal(webLinksOnly("See [file](/workspace/work/a.md) and [x](sandbox:/a)"), "See file and x");
+  assert.equal(webLinksOnly("Watch [Intro](https://youtu.be/zjkBMFhNj_g) now"), "Watch [Intro](https://youtu.be/zjkBMFhNj_g) now");
+  assert.equal(webLinksOnly("An image ![chart](out/chart.png) here"), "An image chart here");
+  assert.equal(webLinksOnly("Plain text, no links."), "Plain text, no links.");
+});
+
+test("the same note twice in a row shows once", () => {
+  const items = foldEvents([
+    { seq: 1, kind: "env", state: "connected" },
+    { seq: 2, kind: "env", state: "connected" },
+    { seq: 3, kind: "message", text: "hi" },
+    { seq: 4, kind: "env", state: "connected" },
+  ]);
+  assert.deepEqual(items.map(i => i.type === "note" ? `note:${i.text}` : i.type), ["note:Sandbox connected.", "agent", "note:Sandbox connected."]);
 });
