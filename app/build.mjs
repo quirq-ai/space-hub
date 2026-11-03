@@ -15,6 +15,8 @@ await build({
   minify: !watch,
   sourcemap: watch ? 'inline' : false,
   outdir: 'dist',
+  // The stylesheet's wallpapers are served beside it by the web service, not bundled.
+  external: ['/-/app/*'],
   define: { 'process.env.NODE_ENV': JSON.stringify(watch ? 'development' : 'production') },
   logLevel: 'warning',
 });

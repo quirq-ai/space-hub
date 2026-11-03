@@ -1,11 +1,11 @@
 /** What a drawn icon shows (ui/app-icon.tsx): a section's glyph, or a project's initials. */
-export type DockArt = "vision" | "goals" | "library" | "builders" | "letters";
+export type DockArt = "vision" | "goals" | "library" | "builders" | "letters" | "code" | "settings" | "boxes" | "folder" | "guide";
 
 /**
  * A dock or app-grid icon: one of xo-swarm's app pictures (public/dock-*.png,
  * with its dark-mode version), or one drawn in their look where none fits.
  */
-export type DockIcon = { src: string; dark?: string } | { art: DockArt; hue: number; letters?: string };
+export type DockIcon = { src: string; dark?: string; round?: boolean } | { art: DockArt; hue: number; letters?: string; gray?: boolean };
 
 // Bump with the pictures: they are cached for good.
 const VERSION = "1";
@@ -28,6 +28,26 @@ const SECTIONS: Record<string, DockIcon> = {
 
 /** A project's top folder: its section's icon, else the Files folder. */
 export const sectionIcon = (name: string): DockIcon => SECTIONS[name.toLowerCase()] ?? FILES;
+
+/** A top folder on a project's home screen: its section's icon, else a folder in a color of its own. */
+export const folderIcon = (name: string): DockIcon => SECTIONS[name.toLowerCase()] ?? { art: "folder", hue: HUES[slotOf(name)] };
+
+/** The apps every place keeps in its dock: what the place holds, and the ways to look at it. */
+export const APP_ICONS = {
+  home: picture("apps"),
+  files: FILES,
+  code: { art: "code", hue: 228 },
+  chat: picture("messages", false),
+  activity: picture("usage"),
+  people: { art: "builders", hue: 190 },
+  agents: picture("agent"),
+  deps: { art: "boxes", hue: 36 },
+  settings: { art: "settings", hue: 220, gray: true },
+  guide: { art: "guide", hue: 22 },
+} satisfies Record<string, DockIcon>;
+
+/** A space's own picture (GitHub's, or the hub's default) as an app icon. */
+export const spaceIcon = (src: string): DockIcon => ({ src });
 
 // Seven hues far apart, so tiles side by side never look alike.
 const HUES = [212, 4, 145, 270, 28, 186, 330];
@@ -63,10 +83,3 @@ export function projectIcons(names: string[]): Map<string, DockIcon> {
 
 /** One project on its own (another space's, say). */
 export const projectIcon = (name: string): DockIcon => projectIcons([name]).get(name)!;
-
-/** The hub's front page in three parts. */
-export const HOME_ICONS: Record<"home" | "agents" | "builders", DockIcon> = {
-  home: picture("apps"),
-  agents: picture("agent"),
-  builders: { art: "builders", hue: 190 },
-};

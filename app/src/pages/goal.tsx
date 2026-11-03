@@ -68,13 +68,3 @@ function RulesList({ goal }: { goal: SpaceGoal }) {
     <p className="quiet">People and agents here follow these. They live in SPACE.md.</p>
   </>;
 }
-
-/** The goal's one-line form, for the strip under a project's name. */
-export function GoalChip({ place, goal }: { place: Place; goal: SpaceGoal }) {
-  const done = goal.outcomes.filter(outcome => outcome.done).length;
-  const total = goal.outcomes.length;
-  if (goal.template !== null) return <a href={placeUrl(place)} onClick={onLink} title={goal.template || "New spaces can start from this one"}><LayoutTemplate size={14} />Template</a>;
-  return <a href={placeUrl(place)} onClick={onLink} title={goal.goal || "This space's goal"}>
-    <Target size={14} />{total ? <><Meter done={done} total={total} size="small" />{done}/{total} outcomes</> : "Goal"}
-  </a>;
-}

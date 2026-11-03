@@ -1,50 +1,26 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { History, Users } from "lucide-react";
+import { useState, type CSSProperties, type ReactNode } from "react";
+import { ChevronLeft, History, Users } from "lucide-react";
 import { activityLine, groupActivity, placeUrl, pushedFiles, type ActivityItem, type AgentInfo, type Here, type Meta } from "@/api";
 import { hashOf, onLink } from "@/router";
 import { Ago, Avatar, AvatarStack, Empty, PersonLink, SkeletonRows } from "@/ui/primitives";
 import { dayOf, FILTERS, keepActivity, liveRows, MODES, type ActivityFilter } from "@/lib/activity";
 import { Browser } from "@/ui/cards";
+import { Glass } from "@/ui/home-screen";
 
-export function PageHeader({ crumbs, title, subtitle, leading, actions, children }: {
-  crumbs?: { label: string; href: string }[]; title: ReactNode; subtitle?: ReactNode; leading?: ReactNode; actions?: ReactNode; children?: ReactNode;
+/** An app window's header: a glass back button to where it opened from, its large title, and its actions. */
+export function PageHeader({ back, title, subtitle, leading, actions, children }: {
+  back?: { label: string; href: string }; title?: ReactNode; subtitle?: ReactNode; leading?: ReactNode; actions?: ReactNode; children?: ReactNode;
 }) {
   return <header className="page-header">
-    {crumbs && crumbs.length > 0 && <nav className="crumbs" aria-label="Breadcrumb">{crumbs.map((crumb, i) => <span key={i}>{i > 0 && <span className="crumb-sep">/</span>}<a href={crumb.href} onClick={onLink}>{crumb.label}</a></span>)}</nav>}
-    <div className="page-title-row">
+    {back && <a className="back-button" href={back.href} onClick={onLink} aria-label={`Back to ${back.label}`}><Glass /><ChevronLeft size={18} strokeWidth={2.5} /><span>{back.label}</span></a>}
+    {/* Without a title the content names itself (a channel, a conversation). */}
+    {title !== undefined && <div className="page-title-row">
       {leading}
       <div className="page-title"><h1>{title}</h1>{subtitle && <p>{subtitle}</p>}</div>
       {actions && <div className="page-actions">{actions}</div>}
-    </div>
+    </div>}
     {children}
   </header>;
-}
-
-export type Tab = { key: string; label: string; href: string; count?: number };
-
-/** A place's sections. When they do not fit (a phone), they scroll sideways, fade at the edge that has more, and keep the active one in view. */
-export function Tabs({ tabs, active }: { tabs: Tab[]; active: string }) {
-  const bar = useRef<HTMLElement>(null);
-  const [edges, setEdges] = useState({ left: false, right: false });
-  useEffect(() => {
-    const el = bar.current;
-    if (!el) return;
-    const update = () => setEdges(current => {
-      const next = { left: el.scrollLeft > 2, right: el.scrollLeft + el.clientWidth < el.scrollWidth - 2 };
-      return next.left === current.left && next.right === current.right ? current : next;
-    });
-    // Scrolls only the bar, never the page.
-    const on = el.querySelector<HTMLElement>(".tab.active");
-    if (on && (on.offsetLeft < el.scrollLeft || on.offsetLeft + on.offsetWidth > el.scrollLeft + el.clientWidth)) el.scrollLeft = on.offsetLeft - 24;
-    update();
-    el.addEventListener("scroll", update, { passive: true });
-    const observer = new ResizeObserver(update);
-    observer.observe(el);
-    return () => { el.removeEventListener("scroll", update); observer.disconnect(); };
-  }, [active, tabs.map(tab => `${tab.key}:${tab.count ?? ""}`).join(" ")]);
-  return <div className={`tabs-wrap${edges.left ? " fade-left" : ""}${edges.right ? " fade-right" : ""}`}><nav className="tabs" aria-label="Sections" ref={bar}>{tabs.map(tab => <a key={tab.key} href={tab.href} onClick={onLink} className={tab.key === active ? "tab active" : "tab"} aria-current={tab.key === active ? "page" : undefined}>
-    {tab.label}{tab.count !== undefined && <span className="tab-count">{tab.count}</span>}
-  </a>)}</nav></div>;
 }
 
 export function ActivityList({ items, empty = "Nothing has happened here yet.", compact = false }: { items: ActivityItem[]; empty?: string; compact?: boolean }) {
@@ -97,7 +73,7 @@ export function ActivityPanel({ meta }: { meta: Meta | undefined }) {
   if (!meta) return <div className="feed"><SkeletonRows rows={6} /></div>;
   const agents = meta.level === "project" ? meta.agents : [...new Set([...meta.agentList.map(agent => agent.name), ...(meta.level === "space" ? meta.agents : [])])];
   return <div className="feed">
-    <LiveNow variant="panel" title={meta.level === "hub" ? "Live now" : "Here now"} here={meta.here} agents={meta.level === "project" ? [] : meta.agentList} known={agents} place={meta.level === "project" ? meta.fullName : ""} />
+    <LiveNow title={meta.level === "hub" ? "Live now" : "Here now"} here={meta.here} agents={meta.level === "project" ? [] : meta.agentList} known={agents} place={meta.level === "project" ? meta.fullName : ""} />
     <ActivityStream items={meta.activity} agents={agents} compact />
   </div>;
 }
@@ -145,12 +121,9 @@ function PushGroup({ group, compact, index }: { group: ActivityItem[]; compact: 
   </li>;
 }
 
-/** Who is connected now (lib/activity.ts): how many, in a page header, or each one at the top of the right-hand panel. */
-export function LiveNow({ here, agents = [], known = [], place = "", variant, title = "Here now" }: { here: Here[]; agents?: AgentInfo[]; known?: string[]; place?: string; variant: "strip" | "panel"; title?: string }) {
+/** Who is connected now (lib/activity.ts), each one at the top of the right-hand panel. */
+export function LiveNow({ here, agents = [], known = [], place = "", title = "Here now" }: { here: Here[]; agents?: AgentInfo[]; known?: string[]; place?: string; title?: string }) {
   const rows = liveRows(here, agents, known, place);
-  if (variant === "strip") return rows.length ? <div className="live-strip">
-    <span className="strip-here"><i className="online-dot" />Live now</span><span className="live-count">{rows.length}</span>
-  </div> : null;
   return <section className="live-panel" aria-label={title}>
     <h3 className="activity-day-title">{title}{rows.length > 0 && <span className="quiet"> {rows.length}</span>}</h3>
     {rows.length ? <ul className="live-list">{rows.map(row => <li key={row.name}>
