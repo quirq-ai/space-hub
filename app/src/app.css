@@ -43,7 +43,7 @@
 }
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; }
-body { margin: 0; background: var(--wall); color: var(--text); font: 14px/1.5 var(--font); -webkit-font-smoothing: antialiased; }
+body { margin: 0; background: var(--wall) var(--wallpaper) center / cover no-repeat fixed; color: var(--text); font: 14px/1.5 var(--font); -webkit-font-smoothing: antialiased; }
 a { color: var(--accent-text); text-decoration: none; }
 a:hover { text-decoration: underline; }
 button { font: inherit; color: inherit; }
@@ -65,8 +65,10 @@ code, kbd, .mono { font-family: var(--mono); font-size: 12px; }
 .glass-filter { position: absolute; width: 0; height: 0; }
 
 /* ---------------------------------------------------------------- shell */
-/* The wallpaper fills the window; the glass top bar floats over it, the page scrolls under the floating dock. */
-.os { position: relative; display: flex; flex-direction: column; height: 100vh; height: 100dvh; overflow: hidden; background: var(--wall) var(--wallpaper) center / cover no-repeat; }
+/* The wallpaper fills the window: the live scene on its canvas (ui/space.ts), the drawn SVG on the body until its first
+   frame. The glass top bar floats over it, the page scrolls under the floating dock. */
+.os { position: relative; display: flex; flex-direction: column; height: 100vh; height: 100dvh; overflow: hidden; }
+.space { position: fixed; inset: 0; z-index: -1; width: 100%; height: 100%; pointer-events: none; }
 .progress { position: fixed; inset: 0 0 auto; height: 2px; z-index: 60; pointer-events: none; opacity: 0; background: linear-gradient(90deg, transparent, var(--accent) 40%, var(--accent) 60%, transparent); background-size: 50% 100%; background-repeat: no-repeat; transition: opacity .2s; }
 .progress.on { opacity: 1; animation: progress 1.1s ease-in-out infinite; }
 @keyframes progress { from { background-position: -50% 0; } to { background-position: 150% 0; } }

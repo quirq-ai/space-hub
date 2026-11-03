@@ -6,7 +6,7 @@ import { channelSeenKey, ChannelsContext, useChannels } from "@/hooks/use-channe
 import { channelCards, channelOf } from "@/lib/channels";
 import { recentProjects, rememberProject, useMe } from "@/hooks/use-me";
 import { hashOf, navigate, useRoute } from "@/router";
-import { Dock, GlassFilter, Inspector, Progress, Sidebar, TopBar, type DockItem, type SideSection } from "@/shell/shell";
+import { Dock, GlassFilter, SpaceScene, Inspector, Progress, Sidebar, TopBar, type DockItem, type SideSection } from "@/shell/shell";
 import { PathBar } from "@/shell/path-bar";
 import { SearchPalette } from "@/shell/search";
 import { Avatar } from "@/ui/primitives";
@@ -170,6 +170,7 @@ export function App() {
   const activityOf = meta && (route.page === "home" ? meta.level === "hub" : meta.level === route.page) ? meta : undefined;
 
   return <div className={`os${activity ? " with-inspector" : ""}`}>
+    <SpaceScene />
     <GlassFilter />
     <Progress />
     <TopBar me={me} signIn={signIn} live={state} onSearch={() => setSearching(true)} onMenu={() => setSidebarOpen(open => !open)} crumbs={crumbs} activity={hasActivity ? { open: activityOpen, onToggle: toggleActivity } : undefined} recoveryOnly={recoveryOnly} />
