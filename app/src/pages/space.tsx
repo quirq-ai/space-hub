@@ -1,22 +1,22 @@
 import { useState } from "react";
 import { Bot, Building2, Download, FolderGit2, GitCommitHorizontal, Github, Image as ImageIcon, Plus, Target, User, Users } from "lucide-react";
 import { Meter } from "./goal";
-import { activeBy, activityLine, kindLabel, latestOf, newestBy, placeUrl, setSpacePicture, size, type AgentInfo, type SpaceMeta, type View } from "@/api";
+import { activityLine, kindLabel, placeUrl, setSpacePicture, size, type AgentInfo, type SpaceMeta, type View } from "@/api";
 import type { Entry } from "@/lib/types";
 import { Browser } from "@/ui/cards";
 import { hashOf, onLink } from "@/router";
 import { Ago, Avatar, AvatarStack, CommandTabs, Empty, Popover, SkeletonRows } from "@/ui/primitives";
 import { ActivityStream, HereNow, People, PlaceBar, RecentActivity } from "./common";
 import { ChatSection } from "./chat-section";
-import { Overview, Panel, ProjectMark, Stat, Stats } from "@/ui/overview";
-import { projectHues } from "@/ui/project-marks";
+import { AppGrid, HomeScreen, Widget, Widgets } from "@/ui/home-screen";
+import { projectIcon, projectIcons } from "@/shell/dock-icons";
 
 const KIND_ICON = { personal: <User size={13} />, org: <Building2 size={13} />, agent: <Bot size={13} /> } as Record<string, React.ReactNode>;
 
-/** A builder's profile, an org, or an agent: its bar (who they are, its sections), then the section open: its overview (the space at a glance, its projects, what happened lately), or a list in a panel. */
+/** A builder's profile, an org, or an agent: its bar (who they are, its sections), then the section open: its overview (the space at a glance, its projects as apps, what happened lately), or a list in a panel. */
 export function SpacePage({ name, tab, view, error, me, signIn, seen }: { name: string; tab: "projects" | "agents" | "chat" | "activity" | "people"; view: View<SpaceMeta> | undefined; error: string; me: string | null; signIn: string; seen: Record<string, string> }) {
   if (!view) return <div className="place">{error ? <div className="window"><Empty icon={<User size={20} />} title={`No space named ${name}`}><p>{error}</p></Empty></div>
-    : <header className="place-bar"><div className="profile-skeleton"><span className="skeleton round" style={{ width: 40, height: 40 }} /><SkeletonRows rows={1} avatar={false} /></div></header>}</div>;
+    : <header className="place-bar"><div className="profile-skeleton"><span className="skeleton round" style={{ width: 52, height: 52 }} /><SkeletonRows rows={1} avatar={false} /></div></header>}</div>;
   const meta = view.meta;
   const base = placeUrl({ space: name, project: "" });
   const canManage = !!me && meta.owners.includes(me);
@@ -26,7 +26,7 @@ export function SpacePage({ name, tab, view, error, me, signIn, seen }: { name: 
   const hasAgents = meta.kind !== "agent";
   const hasChat = meta.kind === "org" || meta.kind === "agent";
   return <div className={`place${tab === "chat" ? " place-chat" : ""}`}>
-    <PlaceBar icon={<Avatar name={name} size={40} kind={meta.kind} />} title={meta.displayName} badge={<span className="kind-badge">{KIND_ICON[meta.kind]}{kindLabel(meta.kind)}</span>}
+    <PlaceBar icon={<Avatar name={name} size={52} kind={meta.kind} />} title={meta.displayName} badge={<span className="kind-badge">{KIND_ICON[meta.kind]}{kindLabel(meta.kind)}</span>}
       subtitle={meta.description || (meta.kind === "agent" ? `An agent of ${meta.parent}` : meta.kind === "org" ? "An org on this hub" : `@${name}`)}
       actions={<>
         <Popover label="Clone" icon={<Download size={15} />}><div className="popover-title">Clone every project of {name}</div><CommandTabs tabs={[{ label: "spacehub", lines: [`spacehub space clone ${name}`] }]} note={<>Then keep them all in step: <code>spacehub space sync --watch --auto</code></>} /></Popover>
@@ -68,34 +68,29 @@ export function SpacePage({ name, tab, view, error, me, signIn, seen }: { name: 
   </div>;
 }
 
-/** A space's overview: one row of stats, its projects (what each is, who changed it last, who is at work), and beside them what happened lately. */
+/** A space's overview: a row of stats, its projects as apps right below, then what happened lately. */
 function SpaceOverview({ name, meta, projects: entries, seen }: { name: string; meta: SpaceMeta; projects: Entry[]; seen: Record<string, string> }) {
   const projects = [...entries].sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
-  // The same tints as anywhere else this space's projects show.
-  const hues = projectHues(projects.map(project => project.name));
-  const byProject = newestBy(meta.activity, item => item.path);
-  const peopleByProject = activeBy(meta.activity, item => item.path);
-  const stats = overviewOf(name, meta, projects);
-  return <Overview label={name} side={<RecentActivity items={meta.activity} href={placeUrl({ space: name, project: "" }, hashOf("activity"))} />}>
-    {stats.length > 0 && <Stats>{stats}</Stats>}
-    {projects.length || meta.collaborates.length ? <Browser head={<>{projects.length} {projects.length === 1 ? "project" : "projects"} in {name}</>} groups={[
-      { key: "projects", title: "Projects", note: `Each one is a git repository on the hub that ${meta.kind === "org" ? "the org's members" : name} push to.`, cards: projects.map(project => {
-        const fullName = `${name}/${project.name}`;
-        return { key: project.name, name: project.name, search: [project.goal, project.detail].filter(Boolean).join(" "), people: peopleByProject.get(fullName), href: placeUrl({ space: name, project: project.name }),
-          icon: <ProjectMark name={project.name} hue={hues.get(project.name)} />, title: project.name, detail: project.goal || project.detail || undefined,
-          latest: latestOf(byProject.get(fullName)), time: project.modifiedAt, fresh: !!seen[fullName] && project.modifiedAt > seen[fullName] };
-      }) },
-      { key: "collaborates", title: "Collaborates on", note: "Projects of other spaces they may push to.", compact: true, cards: meta.collaborates.map(fullName => {
-        const [space, project] = fullName.split("/");
-        return { key: fullName, name: fullName, href: placeUrl({ space, project }), icon: <ProjectMark name={project} />, title: fullName };
-      }) },
-    ]} /> : <Panel><Empty icon={<FolderGit2 size={20} />} title="No projects yet"><p>Create one with <code>spacehub project create {name}/&lt;name&gt; --source . --push</code>.</p></Empty></Panel>}
-  </Overview>;
+  // The same colors as anywhere else this space's projects show.
+  const icons = projectIcons(projects.map(project => project.name));
+  return <HomeScreen label={name}>
+    <Widgets>{overviewOf(name, meta, projects)}</Widgets>
+    <AppGrid title="Projects" apps={projects.map(project => {
+      const fullName = `${name}/${project.name}`;
+      return { key: project.name, label: project.name, href: placeUrl({ space: name, project: project.name }), icon: icons.get(project.name)!, title: [project.name, project.goal || project.detail].filter(Boolean).join(": "), badge: !!seen[fullName] && project.modifiedAt > seen[fullName] };
+    })} />
+    <AppGrid title="Collaborates on" apps={meta.collaborates.map(fullName => {
+      const [space, project] = fullName.split("/");
+      return { key: fullName, label: project, title: fullName, href: placeUrl({ space, project }), icon: projectIcon(project) };
+    })} />
+    {!projects.length && !meta.collaborates.length && <Widget size="full" className="empty-widget"><Empty icon={<FolderGit2 size={20} />} title="No projects yet"><p>Create one with <code>spacehub project create {name}/&lt;name&gt; --source . --push</code>.</p></Empty></Widget>}
+    <RecentActivity items={meta.activity} href={placeUrl({ space: name, project: "" }, hashOf("activity"))} />
+  </HomeScreen>;
 }
 
 const PUSHED = new Set(["ref_created", "ref_updated", "ref_forced"]);
 
-/** A builder's or an org's space at a glance, as one row of stats: goals in progress, agents running, who is here, the newest push. */
+/** A builder's or an org's space at a glance, as one row of small widgets: goals in progress, agents running, who is here, the newest push. */
 function overviewOf(name: string, meta: SpaceMeta, projects: Entry[]) {
   const base = placeUrl({ space: name, project: "" });
   const goals = projects.filter(project => project.progress && !project.template);
@@ -106,23 +101,23 @@ function overviewOf(name: string, meta: SpaceMeta, projects: Entry[]) {
   const members = new Set([...meta.owners, ...meta.members]).size;
   const push = meta.activity.find(item => PUSHED.has(item.kind));
   const pushed = push && activityLine(push);
-  const stats = [];
-  if (goals.length) stats.push(<Stat key="goals" href={goals.length === 1 ? placeUrl({ space: name, project: goals[0].name }) : undefined} title="Goals" icon={<Target size={14} />} aside={<Meter done={done} total={total} size="small" />}>
-    <span className="stat-value">{done} of {total}</span><span className="stat-note">outcomes done{goals.length === 1 ? ` in ${goals[0].name}` : ` across ${goals.length} projects`}</span>
-  </Stat>);
-  if (meta.kind !== "agent") stats.push(<Stat key="agents" href={base + "#" + hashOf("agents")} title="Agents" icon={<Bot size={14} />}>
-    <span className="stat-value">{running.length ? <><i className="online-dot" />{running.length} running</> : meta.agentList.length ? "None running" : "No agents"}</span>
-    <span className="stat-note">{running.length ? running.map(agent => `${agent.name} on ${agent.running.map(run => run.host || "a machine").join(", ")}`).join(", ") : meta.agentList.length ? `${meta.agentList.length} in all` : "Create one with spacehub agent create"}</span>
-  </Stat>);
-  stats.push(<Stat key="here" href={base + "#" + hashOf("people")} title="Here now" icon={<Users size={14} />}>
-    <span className="stat-value">{here.length ? <><AvatarStack names={here} max={4} size={20} /><span>{here.length}</span></> : "Nobody"}</span>
-    <span className="stat-note">{here.length ? "connected now" : "is connected right now"}{meta.kind === "org" ? ` · ${members} ${members === 1 ? "member" : "members"}` : ""}</span>
-  </Stat>);
-  if (push && pushed) stats.push(<Stat key="push" href={pushed.commit || pushed.href || undefined} title="Latest push" icon={<GitCommitHorizontal size={14} />} aside={<Ago iso={push.at} />}>
-    <span className="stat-value"><Avatar name={push.agent || "hub"} size={20} /><span className="stat-clip">{push.agent || "someone"}</span></span>
-    <span className="stat-note">{push.path}{push.text ? `: ${push.text}` : ""}</span>
-  </Stat>);
-  return stats;
+  const widgets = [];
+  if (goals.length) widgets.push(<Widget key="goals" href={goals.length === 1 ? placeUrl({ space: name, project: goals[0].name }) : undefined} title="Goals" icon={<Target size={13} />} aside={<Meter done={done} total={total} size="small" />}>
+    <span className="widget-value">{done} of {total}</span><span className="widget-note">outcomes done{goals.length === 1 ? ` in ${goals[0].name}` : ` across ${goals.length} projects`}</span>
+  </Widget>);
+  if (meta.kind !== "agent") widgets.push(<Widget key="agents" href={base + "#" + hashOf("agents")} title="Agents" icon={<Bot size={13} />}>
+    <span className="widget-value">{running.length ? <><i className="online-dot" />{running.length} running</> : meta.agentList.length ? "None running" : "No agents"}</span>
+    <span className="widget-note">{running.length ? running.map(agent => `${agent.name} on ${agent.running.map(run => run.host || "a machine").join(", ")}`).join(", ") : meta.agentList.length ? `${meta.agentList.length} in all` : "Create one with spacehub agent create"}</span>
+  </Widget>);
+  widgets.push(<Widget key="here" href={base + "#" + hashOf("people")} title="Here now" icon={<Users size={13} />}>
+    <span className="widget-value">{here.length ? <><AvatarStack names={here} max={4} size={22} /><span>{here.length}</span></> : "Nobody"}</span>
+    <span className="widget-note">{here.length ? "connected now" : "is connected right now"}{meta.kind === "org" ? ` · ${members} ${members === 1 ? "member" : "members"}` : ""}</span>
+  </Widget>);
+  if (push && pushed) widgets.push(<Widget key="push" href={pushed.commit || pushed.href || undefined} title="Latest push" icon={<GitCommitHorizontal size={13} />} aside={<Ago iso={push.at} />}>
+    <span className="widget-value"><Avatar name={push.agent || "hub"} size={20} /><span className="widget-clip">{push.agent || "someone"}</span></span>
+    <span className="widget-note">{push.path}{push.text ? `: ${push.text}` : ""}</span>
+  </Widget>);
+  return widgets;
 }
 
 /** Who owns the agent and where it may push. */

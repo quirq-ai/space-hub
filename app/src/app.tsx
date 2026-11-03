@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { BookOpen, Bot, Hash, FolderGit2, History, Home, Settings, Users, User } from "lucide-react";
+import { BookOpen, Hash, FolderGit2, History, Home, Settings, Users, User } from "lucide-react";
 import { placeUrl, viewUrl, type HubMeta, type Place, type ProjectMeta, type SpaceMeta, type View } from "@/api";
 import { useLive } from "@/hooks/use-live";
 import { channelSeenKey, ChannelsContext, useChannels } from "@/hooks/use-channels";
 import { channelCards, channelOf } from "@/lib/channels";
 import { recentProjects, rememberProject, useMe } from "@/hooks/use-me";
 import { hashOf, navigate, useRoute } from "@/router";
-import { Dock, Inspector, Progress, Sidebar, TopBar, type DockItem, type SideSection } from "@/shell/shell";
+import { Dock, GlassFilter, Inspector, Progress, Sidebar, TopBar, type DockItem, type SideSection } from "@/shell/shell";
 import { PathBar } from "@/shell/path-bar";
 import { SearchPalette } from "@/shell/search";
 import { Avatar } from "@/ui/primitives";
@@ -14,6 +14,7 @@ import { HomePage } from "@/pages/home";
 import { ActivityPanel } from "@/pages/common";
 import { SpacePage } from "@/pages/space";
 import { ProjectPage } from "@/pages/project";
+import { APP_ICONS } from "@/shell/dock-icons";
 import { SettingsPage } from "@/pages/settings";
 import { SubhubPage } from "@/pages/subhub";
 
@@ -149,9 +150,9 @@ export function App() {
   // its overview opens what it holds, and the dock holds the hub's own three:
   // Home, Agents and Builders, the same from anywhere.
   const dock: DockItem[] = recoveryOnly ? [] : [
-    { key: "home", label: "Home", href: "/", icon: <Home size={17} />, active: homeTab === "home" },
-    { key: "agents", label: "Agents", href: "/#" + hashOf("agents"), icon: <Bot size={17} />, active: homeTab === "agents" },
-    { key: "builders", label: "Builders", href: "/#" + hashOf("builders"), icon: <Users size={17} />, active: homeTab === "builders" },
+    { key: "home", label: "Home", href: "/", icon: APP_ICONS.home, active: homeTab === "home" },
+    { key: "agents", label: "Agents", href: "/#" + hashOf("agents"), icon: APP_ICONS.agents, active: homeTab === "agents" },
+    { key: "builders", label: "Builders", href: "/#" + hashOf("builders"), icon: APP_ICONS.builders, active: homeTab === "builders" },
   ];
   const path = route.page === "project" && route.tab === "files" ? route.path : "";
   const crumbs = route.page === "subhub" ? <span className="path-bar"><span className="path-item"><span className="crumb-sep" aria-hidden="true">›</span><span className="path-seg"><a className="current" aria-current="page" href={location.pathname}>Sub-hub {route.name}</a></span></span></span>
@@ -163,6 +164,7 @@ export function App() {
   const activityOf = meta && (route.page === "home" ? meta.level === "hub" : meta.level === route.page) ? meta : undefined;
 
   return <div className={`os${activity ? " with-inspector" : ""}`}>
+    <GlassFilter />
     <Progress />
     <TopBar me={me} signIn={signIn} live={state} onSearch={() => setSearching(true)} onMenu={() => setSidebarOpen(open => !open)} crumbs={crumbs} activity={hasActivity ? { open: activityOpen, onToggle: toggleActivity } : undefined} recoveryOnly={recoveryOnly} />
     <Sidebar switcher={switcher} primary={primary} sections={sideSections} footer={footer} open={sidebarOpen} onClose={() => setSidebarOpen(false)} onSearch={() => setSearching(true)} recoveryOnly={recoveryOnly} />

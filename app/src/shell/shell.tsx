@@ -1,8 +1,10 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { Activity, BookOpen, Check, ChevronDown, ChevronRight, ChevronsUpDown, Home, LogIn, LogOut, PanelLeft, Plus, Search, User, Wifi, WifiOff, X } from "lucide-react";
 import { ThemePicker } from "@/components/theme-picker";
 import { useLoading } from "@/hooks/use-live";
-import { Glass } from "@/ui/overview";
+import type { DockIcon } from "./dock-icons";
+import { AppIcon } from "@/ui/app-icon";
+import { Glass } from "@/ui/home-screen";
 import { onLink } from "@/router";
 import { Avatar, QuirqMark } from "@/ui/primitives";
 
@@ -42,10 +44,18 @@ function UserMenu({ name }: { name: string }) {
   </div>;
 }
 
+/** The time, as a phone's status bar shows it. */
+function Clock() {
+  const read = () => new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const [time, setTime] = useState(read);
+  useEffect(() => { const timer = setInterval(() => setTime(read()), 15_000); return () => clearInterval(timer); }, []);
+  return <time className="clock" suppressHydrationWarning>{time}</time>;
+}
+
 /**
  * The glass bar across the top: your places, where you are (the
  * breadcrumb, each step a menu of the places beside it), search, the
- * activity panel, the connection, and you.
+ * activity panel, the connection and the time, and you.
  */
 export function TopBar({ me, signIn, live, onSearch, onMenu, activity, crumbs, recoveryOnly = false }: {
   me: { checked: boolean; name: string | null }; signIn: string; live: "live" | "offline" | "loading"; onSearch: () => void; onMenu: () => void;
@@ -59,7 +69,7 @@ export function TopBar({ me, signIn, live, onSearch, onMenu, activity, crumbs, r
   const bar = useRef<HTMLElement>(null);
   useLayoutEffect(() => { if (bar.current) bar.current.scrollLeft = bar.current.scrollWidth; });
   return <header className="topbar">
-    <Glass />
+    <Glass distort />
     <button className="bar-button" type="button" aria-label="Open your places" title="Your places" onClick={onMenu}><PanelLeft size={17} /></button>
     <nav className="crumbs-bar" aria-label="Where you are" ref={bar}>
       <a className="logo" href={recoveryOnly ? "/#/settings" : "/"} onClick={onLink} aria-label={recoveryOnly ? "Settings home" : "spacehub home"}><QuirqMark size={20} /><span>spacehub</span></a>
@@ -69,7 +79,7 @@ export function TopBar({ me, signIn, live, onSearch, onMenu, activity, crumbs, r
     {!recoveryOnly && <button className="search-trigger" type="button" onClick={onSearch} aria-label="Search spaces, projects and files" title="Search (⌘K)"><Search size={15} /><span>Search</span><kbd>⌘K</kbd></button>}
     {activity && <button className={`bar-button${activity.open ? " active" : ""}`} type="button" aria-pressed={activity.open} aria-label="Activity" title={activity.open ? "Hide activity" : "Show activity"} onClick={activity.onToggle}><Activity size={17} /></button>}
     <span className={`conn ${live}`} title={live === "offline" ? recoveryOnly ? "Reconnecting to recovery" : "Reconnecting to the hub" : recoveryOnly ? "Full-instance recovery connection" : "Live: changes appear as they happen"}>
-      {live === "offline" ? <WifiOff size={15} /> : <Wifi size={15} />}<span className="conn-text">{live === "offline" ? "Reconnecting" : "Live"}</span>
+      {live === "offline" ? <WifiOff size={15} /> : <Wifi size={15} />}<span className="conn-text">{live === "offline" ? "Reconnecting" : "Live"}</span><Clock />
     </span>
     {recoveryOnly ? <span className="label">Local recovery</span> : !me.checked ? <span className="user-placeholder" aria-hidden="true" /> : me.name ? <UserMenu name={me.name} /> : <a className="button primary" href={signIn}><LogIn size={15} />Sign in</a>}
   </header>;
@@ -143,6 +153,7 @@ export function Sidebar({ switcher, primary, sections, footer, open, onClose, on
   }, [open, onClose]);
   return <>
     <nav className={`sidebar${open ? " open" : ""}`} aria-label="Your places" inert={!open}>
+      <Glass />
       <div className="sidebar-head">
         {!recoveryOnly && <SpaceSwitcher current={switcher.current} options={switcher.options} />}
         <button className="bar-button" type="button" aria-label="Close your places" onClick={onClose}><X size={16} /></button>
@@ -181,22 +192,64 @@ export function Sidebar({ switcher, primary, sections, footer, open, onClose, on
   </>;
 }
 
-export type DockItem = { key: string; label: string; href: string; icon: ReactNode; active?: boolean };
+export type DockItem = { key: string; label: string; href: string; icon: DockIcon; title?: string; active?: boolean; fresh?: boolean; divider?: boolean };
 
-/** The dock: a slim bar at the bottom with the hub's own sections (Home, Agents, Builders), the open one marked. */
+/** The dock: a labeled launcher that goes anywhere (home, your spaces, the projects you were in, settings, the guide). */
+
+// xo-swarm's liquid glass: the backdrop is bent through fractal noise, blurred
+// into a soft displacement map, under a frosted tint and a shine on the edge.
+// Rendered once; every distorted pane of glass points at it.
+export function GlassFilter() {
+  return <svg className="glass-filter" aria-hidden="true">
+    <filter id="glass-distortion" x="0%" y="0%" width="100%" height="100%" filterUnits="objectBoundingBox">
+      <feTurbulence type="fractalNoise" baseFrequency="0.01 0.01" numOctaves={1} seed={5} result="turbulence" />
+      <feGaussianBlur in="turbulence" stdDeviation={3} result="softMap" />
+      <feDisplacementMap in="SourceGraphic" in2="softMap" scale={150} xChannelSelector="R" yChannelSelector="G" />
+    </filter>
+  </svg>;
+}
+
+// macOS's dock magnification: an icon grows and lifts the nearer the pointer
+// is, along a cosine over `REACH` pixels each way.
+const REACH = 140;
+
+/** The places inside where you are, as app icons on a glass dock: they magnify under the pointer, bounce when opened, and show their name above. */
 export function Dock({ places }: { places: DockItem[] }) {
+  const row = useRef<HTMLDivElement>(null);
+  const magnify = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const box = row.current;
+    if (!box || event.pointerType !== "mouse" || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const x = event.clientX - box.getBoundingClientRect().left + box.scrollLeft;
+    for (const item of Array.from(box.children) as HTMLElement[]) {
+      // Layout positions, which the magnification itself does not move.
+      const distance = Math.abs(x - (item.offsetLeft + item.offsetWidth / 2));
+      item.style.setProperty("--lift", distance < REACH ? ((Math.cos((distance / REACH) * Math.PI) + 1) / 2).toFixed(3) : "0");
+    }
+  };
+  const settle = () => { for (const item of Array.from(row.current?.children ?? []) as HTMLElement[]) item.style.removeProperty("--lift"); };
+  const open = (event: ReactMouseEvent<HTMLAnchorElement>) => {
+    const item = event.currentTarget;
+    item.classList.remove("opening");
+    void item.offsetWidth;
+    item.classList.add("opening");
+    onLink(event);
+  };
   if (!places.length) return null;
-  return <nav className="dock" aria-label="Hub">
-    <Glass />
-    <div className="dock-items">
-      {places.map(entry => <a key={entry.key} className={`dock-item${entry.active ? " active" : ""}`} href={entry.href} onClick={onLink} aria-current={entry.active ? "page" : undefined}>
-        {entry.icon}<span className="dock-name">{entry.label}</span>
-      </a>)}
+  return <nav className="dock" aria-label="Dock">
+    <Glass distort />
+    <div className="dock-items" ref={row} onPointerMove={magnify} onPointerLeave={settle}>
+      {places.map(entry => <Fragment key={entry.key}>
+        {entry.divider && <span className="dock-divider" aria-hidden="true" />}
+        <a className={`dock-item${entry.active ? " active" : ""}`} href={entry.href} onClick={open} onAnimationEnd={event => event.currentTarget.classList.remove("opening")} title={entry.title} aria-current={entry.active ? "page" : undefined}>
+          <span className="dock-pic"><AppIcon icon={entry.icon} />{entry.fresh && <span className="dock-fresh" title="Changed since you last looked" />}</span>
+          <span className="dock-name">{entry.label}</span>
+        </a>
+      </Fragment>)}
     </div>
   </nav>;
 }
 
-/** The right-hand panel, sliding over the page like your places panel on the left. `note` says whose it is. */
+/** The right-hand glass panel, sliding over the page like your places panel on the left. `note` says whose it is. */
 export function Inspector({ title, note, onClose, children }: { title: string; note?: string; onClose: () => void; children: ReactNode }) {
   useEffect(() => {
     const close = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
@@ -205,6 +258,7 @@ export function Inspector({ title, note, onClose, children }: { title: string; n
   }, [onClose]);
   return <>
     <aside className="inspector" aria-label={note ? `${title} in ${note}` : title}>
+      <Glass />
       <div className="inspector-scroll">
         <div className="inspector-head"><h2>{title}{note && <span className="inspector-note" title={note}>{note}</span>}</h2><button className="bar-button" type="button" aria-label={`Close ${title}`} title="Close" onClick={onClose}><X size={16} /></button></div>
         {children}
