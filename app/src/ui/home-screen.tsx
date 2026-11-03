@@ -17,12 +17,12 @@ export function HomeScreen({ label, children }: { label: string; children: React
   return <div className="home" aria-label={label}>{children}</div>;
 }
 
-/** Widgets in a grid: a large one (two by two) beside small ones, wide ones across two columns. */
+/** Small widgets in one row: a place at a glance. */
 export function Widgets({ children }: { children: ReactNode }) {
   return <div className="widgets">{children}</div>;
 }
 
-export type WidgetSize = "small" | "wide" | "large" | "full";
+export type WidgetSize = "small" | "full";
 
 /** A widget: a pane of glass with a title, the time or a meter on its right, and what it shows. A link when it leads somewhere. */
 export function Widget({ title, icon, aside, href, size = "small", className, children }: {

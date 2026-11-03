@@ -1,26 +1,79 @@
-import { useState, type CSSProperties, type ReactNode } from "react";
-import { ChevronLeft, History, Users } from "lucide-react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { History, Users } from "lucide-react";
 import { activityLine, groupActivity, placeUrl, pushedFiles, type ActivityItem, type AgentInfo, type Here, type Meta } from "@/api";
 import { hashOf, onLink } from "@/router";
 import { Ago, Avatar, AvatarStack, Empty, PersonLink, SkeletonRows } from "@/ui/primitives";
 import { dayOf, FILTERS, keepActivity, liveRows, MODES, type ActivityFilter } from "@/lib/activity";
 import { Browser } from "@/ui/cards";
-import { Glass } from "@/ui/home-screen";
+import { Glass, Widget } from "@/ui/home-screen";
 
-/** An app window's header: a glass back button to where it opened from, its large title, and its actions. */
-export function PageHeader({ back, title, subtitle, leading, actions, children }: {
-  back?: { label: string; href: string }; title?: ReactNode; subtitle?: ReactNode; leading?: ReactNode; actions?: ReactNode; children?: ReactNode;
+export function PageHeader({ crumbs, title, subtitle, leading, actions, children }: {
+  crumbs?: { label: string; href: string }[]; title: ReactNode; subtitle?: ReactNode; leading?: ReactNode; actions?: ReactNode; children?: ReactNode;
 }) {
   return <header className="page-header">
-    {back && <a className="back-button" href={back.href} onClick={onLink} aria-label={`Back to ${back.label}`}><Glass /><ChevronLeft size={18} strokeWidth={2.5} /><span>{back.label}</span></a>}
-    {/* Without a title the content names itself (a channel, a conversation). */}
-    {title !== undefined && <div className="page-title-row">
+    {crumbs && crumbs.length > 0 && <nav className="crumbs" aria-label="Breadcrumb">{crumbs.map((crumb, i) => <span key={i}>{i > 0 && <span className="crumb-sep">/</span>}<a href={crumb.href} onClick={onLink}>{crumb.label}</a></span>)}</nav>}
+    <div className="page-title-row">
       {leading}
       <div className="page-title"><h1>{title}</h1>{subtitle && <p>{subtitle}</p>}</div>
       {actions && <div className="page-actions">{actions}</div>}
-    </div>}
+    </div>
     {children}
   </header>;
+}
+
+export type Tab = { key: string; label: string; href: string; count?: number };
+
+/** A place's sections. When they do not fit (a phone), they scroll sideways, fade at the edge that has more, and keep the active one in view. */
+export function Tabs({ tabs, active }: { tabs: Tab[]; active: string }) {
+  const bar = useRef<HTMLElement>(null);
+  const [edges, setEdges] = useState({ left: false, right: false });
+  useEffect(() => {
+    const el = bar.current;
+    if (!el) return;
+    const update = () => setEdges(current => {
+      const next = { left: el.scrollLeft > 2, right: el.scrollLeft + el.clientWidth < el.scrollWidth - 2 };
+      return next.left === current.left && next.right === current.right ? current : next;
+    });
+    // Scrolls only the bar, never the page.
+    const on = el.querySelector<HTMLElement>(".tab.active");
+    if (on && (on.offsetLeft < el.scrollLeft || on.offsetLeft + on.offsetWidth > el.scrollLeft + el.clientWidth)) el.scrollLeft = on.offsetLeft - 24;
+    update();
+    el.addEventListener("scroll", update, { passive: true });
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => { el.removeEventListener("scroll", update); observer.disconnect(); };
+  }, [active, tabs.map(tab => `${tab.key}:${tab.count ?? ""}`).join(" ")]);
+  return <div className={`tabs-wrap${edges.left ? " fade-left" : ""}${edges.right ? " fade-right" : ""}`}><nav className="tabs" aria-label="Sections" ref={bar}>{tabs.map(tab => <a key={tab.key} href={tab.href} onClick={onLink} className={tab.key === active ? "tab active" : "tab"} aria-current={tab.key === active ? "page" : undefined}>
+    {tab.label}{tab.count !== undefined && <span className="tab-count">{tab.count}</span>}
+  </a>)}</nav></div>;
+}
+
+/**
+ * A place's own bar under the top bar: who or what it is, its actions, and
+ * its sections as tabs. It stays the same on every section of the place, so
+ * you always see where you are and where you can go next.
+ */
+export function PlaceBar({ icon, title, badge, subtitle, actions, tabs, active, children }: {
+  icon: ReactNode; title: ReactNode; badge?: ReactNode; subtitle?: ReactNode; actions?: ReactNode; tabs: Tab[]; active: string; children?: ReactNode;
+}) {
+  return <header className="place-bar">
+    <Glass />
+    <div className="place-id">
+      <span className="place-icon">{icon}</span>
+      <div className="place-name"><h1>{title}{badge}</h1>{subtitle && <p>{subtitle}</p>}</div>
+      {actions && <div className="page-actions">{actions}</div>}
+    </div>
+    {children}
+    <Tabs tabs={tabs} active={active} />
+  </header>;
+}
+
+/** The newest few things that happened here, on a home screen, with a way to the rest. */
+export function RecentActivity({ items, href }: { items: ActivityItem[]; href?: string }) {
+  if (!items.length) return null;
+  return <Widget size="full" className="recent-widget" title="Recent activity" icon={<History size={13} />} aside={href && <a href={href} onClick={onLink}>See all</a>}>
+    <ActivityList items={items.slice(0, 6)} compact />
+  </Widget>;
 }
 
 export function ActivityList({ items, empty = "Nothing has happened here yet.", compact = false }: { items: ActivityItem[]; empty?: string; compact?: boolean }) {

@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, File, Folder, FolderGit2, LayoutGrid } from "lucide-react";
+import { Check, ChevronDown, File, Folder, FolderGit2 } from "lucide-react";
 import { placeUrl, viewUrl, type Place, type View } from "@/api";
 import { hashOf, onLink } from "@/router";
 import { Avatar } from "@/ui/primitives";
 
-type Option = { key: string; label: string; href: string; kind: "space" | "project" | "folder" | "file" | "app"; spaceKind?: string };
+type Option = { key: string; label: string; href: string; kind: "space" | "project" | "folder" | "file"; spaceKind?: string };
 type Segment = { key: string; label: string; href: string; current: boolean; load: () => Promise<Option[]> };
 
 const MAX = 60;
@@ -58,7 +58,7 @@ function SegmentMenu({ segment }: { segment: Segment }) {
     return () => { live = false; removeEventListener("mousedown", close); removeEventListener("keydown", close); };
   }, [open, segment.href]);
   const icon = (option: Option) => option.kind === "space" ? <Avatar name={option.label} size={18} kind={option.spaceKind} />
-    : option.kind === "project" ? <FolderGit2 size={15} /> : option.kind === "folder" ? <Folder size={15} /> : option.kind === "app" ? <LayoutGrid size={15} /> : <File size={15} />;
+    : option.kind === "project" ? <FolderGit2 size={15} /> : option.kind === "folder" ? <Folder size={15} /> : <File size={15} />;
   return <span className="path-seg" ref={box}>
     <a href={segment.href} onClick={onLink} aria-current={segment.current ? "page" : undefined} className={segment.current ? "current" : undefined}>{segment.label}</a>
     <button type="button" className="path-more" aria-haspopup="menu" aria-expanded={open} aria-label={`Places beside ${segment.label}`} title="Jump to a place beside this one" onClick={() => setOpen(value => !value)}><ChevronDown size={13} /></button>
@@ -72,22 +72,13 @@ function SegmentMenu({ segment }: { segment: Segment }) {
   </span>;
 }
 
-export type PathApp = { key: string; label: string; href: string };
-
 /**
  * Where you are, in the top bar after the hub's name: the space, the
- * project and each folder, then the app you have open in it. A segment
- * goes up to that place; its arrow opens the places beside it (the app's,
- * the other apps of the place), so moving across never needs a trip back up.
+ * project and each folder. A segment goes up to that place; its arrow opens
+ * the places beside it, so moving across never needs a trip back up.
  */
-export function PathBar({ place, path, app, apps = [] }: { place: Place; path: string; app?: string; apps?: PathApp[] }) {
-  const segments = segmentsOf(place, path);
-  if (app) {
-    for (const segment of segments) segment.current = false;
-    const here = apps.find(option => option.label === app);
-    segments.push({ key: "app", label: app, href: here?.href ?? location.pathname + location.hash, current: true, load: async () => apps.map(option => ({ ...option, kind: "app" as const })) });
-  }
+export function PathBar({ place, path }: { place: Place; path: string }) {
   return <span className="path-bar">
-    {segments.map(segment => <span key={segment.key} className="path-item"><span className="crumb-sep" aria-hidden="true">›</span><SegmentMenu segment={segment} /></span>)}
+    {segmentsOf(place, path).map(segment => <span key={segment.key} className="path-item"><span className="crumb-sep" aria-hidden="true">›</span><SegmentMenu segment={segment} /></span>)}
   </span>;
 }

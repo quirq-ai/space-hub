@@ -1,75 +1,72 @@
 import { useEffect, useRef } from "react";
-import { BookOpen, Bot, Boxes, Download, FolderOpen, GitBranch, GitCommitHorizontal, HardDrive, Target, Users } from "lucide-react";
+import { BookOpen, Bot, Boxes, Download, GitBranch, GitCommitHorizontal, HardDrive, Users } from "lucide-react";
 import { placeUrl, rawUrl, size, type Place, type ProjectMeta, type View } from "@/api";
 import { hashOf, navigate, onLink, type Route } from "@/router";
 import { Ago, Avatar, AvatarStack, CommandTabs, Empty, ErrorNote, Popover, Skeleton } from "@/ui/primitives";
-import { ActivityStream, HereNow, PageHeader, People } from "./common";
+import { ActivityStream, HereNow, People, PlaceBar, RecentActivity } from "./common";
 import { ChatSection } from "./chat-section";
 import { BranchesTab, CodeTab, CommitTab, CommitsTab } from "./code";
 import { DepsTab } from "./deps";
 import { FilesTab, isChannel, SECTION_ICONS, SECTION_ORDER } from "./files";
-import { GoalPanel, Meter } from "./goal";
+import { GoalPanel } from "./goal";
 import { Markdown, RawFiles } from "@/components/content-view";
 import { AppIcon } from "@/ui/app-icon";
 import { AppGrid, HomeScreen, Widget, Widgets } from "@/ui/home-screen";
-import { APP_ICONS, folderIcon, projectIcon, type DockIcon } from "@/shell/dock-icons";
+import { folderIcon, projectIcon } from "@/shell/dock-icons";
 
 type ProjectRoute = Extract<Route, { page: "project" }>;
 
-/** An app window's title, its icon, and where its back button goes. */
-function windowOf(route: ProjectRoute): { title: string; icon: DockIcon; back: { label: string; href: string } } {
-  const { place } = route;
-  const home = { label: place.project, href: placeUrl(place) };
-  const code = { label: "Code", href: placeUrl(place, hashOf("code")) };
-  switch (route.tab) {
-    case "files": {
-      const parts = route.path.split("/").filter(Boolean);
-      if (!parts.length) return { title: "Files", icon: APP_ICONS.files, back: home };
-      const parent = parts.slice(0, -1).join("/");
-      return { title: parts[parts.length - 1], icon: folderIcon(parts[0]), back: parent ? { label: parts[parts.length - 2], href: placeUrl(place, hashOf("files", { path: parent })) } : home };
-    }
-    case "code": return { title: "Code", icon: APP_ICONS.code, back: home };
-    case "commits": return { title: "History", icon: APP_ICONS.code, back: code };
-    case "commit": return { title: "Commit", icon: APP_ICONS.code, back: { label: "History", href: placeUrl(place, hashOf("commits")) } };
-    case "branches": return { title: "Branches", icon: APP_ICONS.code, back: code };
-    case "deps": return { title: "Dependencies", icon: APP_ICONS.deps, back: home };
-    case "chat": return { title: "Chat", icon: APP_ICONS.chat, back: home };
-    case "activity": return { title: "Activity", icon: APP_ICONS.activity, back: home };
-    case "people": return { title: "Contributors", icon: APP_ICONS.people, back: home };
-  }
-}
+const filesHref = (place: Place, path: string) => placeUrl(place, hashOf("files", { path }));
 
-/** A project: its home screen (the project at a glance, its goal, its folders as apps, its README), and its apps in windows. */
+/** A project: its bar (what it is, its sections), then the section open: its overview, or the files, code, chat, activity or contributors in a panel. */
 export function ProjectPage({ route, view, error, me, signIn, refresh }: { route: ProjectRoute; view: View<ProjectMeta> | undefined; error: string; me: string | null; signIn: string; refresh: () => void }) {
   const { place } = route;
   const meta = view?.meta;
+  const base = placeUrl(place);
   const raw = meta ? (file: string) => rawUrl(place, meta.defaultBranch, file) : undefined;
-  if (route.tab === "files" && !route.path && route.as !== "folder") return <RawFiles.Provider value={raw}><ProjectHome place={place} view={view} error={error} refresh={refresh} /></RawFiles.Provider>;
-  const win = windowOf(route);
+  // The Chat folder's channels are the project's chat, when it has them; otherwise its one chat (Chat/chat.json).
+  const chatRoot = view?.snapshot.roots.find(root => root.name.toLowerCase() === "chat")?.path;
+  const path = route.tab === "files" ? route.path : "";
+  const inChat = !!chatRoot && (path === chatRoot || path.startsWith(chatRoot + "/"));
+  const overview = route.tab === "files" && !path && route.as !== "folder";
+  const tab = overview ? "overview" : route.tab === "files" ? (inChat ? "chat" : "files") : route.tab === "commit" || route.tab === "commits" || route.tab === "branches" ? "code" : route.tab;
+  const people = meta ? new Set([...meta.owners, ...meta.members, ...meta.collaborators, ...meta.agents]).size : undefined;
   const chatty = route.tab === "files" && view && (view.snapshot.file?.format === "json" || (!view.snapshot.file && route.as !== "folder" && isChannel(view.snapshot)));
-  return <RawFiles.Provider value={raw}><div className={`page${chatty || route.tab === "chat" ? " page-chat" : ""}`}>
-    {chatty ? <PageHeader back={win.back} /> : <PageHeader back={win.back} leading={<span className="window-icon"><AppIcon icon={win.icon} size={44} /></span>} title={win.title} subtitle={`${place.space}/${place.project}`}
-      actions={meta && route.tab !== "files" ? <Popover label="Clone" icon={<Download size={15} />}><CloneProject place={place} /></Popover> : undefined} />}
-    {!meta && error && <ErrorNote message={error} retry={refresh} />}
-    {route.tab === "files" && <FilesTab place={place} path={route.path} as={route.as} view={view} error={error} me={me} signIn={signIn} refresh={refresh} />}
-    {meta && route.tab === "code" && <CodeTab place={place} ref={route.ref} path={route.path} defaultBranch={meta.defaultBranch} />}
-    {meta && route.tab === "commits" && <CommitsTab place={place} ref={route.ref} path={route.path} num={route.num} defaultBranch={meta.defaultBranch} />}
-    {route.tab === "commit" && <CommitTab place={place} oid={route.oid} />}
-    {route.tab === "deps" && <DepsTab place={place} />}
-    {route.tab === "branches" && <BranchesTab place={place} />}
-    {meta && route.tab === "chat" && <ChatSection place={place} me={me} signIn={signIn} canStart={!!me && meta.canWrite} />}
-    {meta && route.tab === "activity" && <ActivityStream items={meta.activity} agents={meta.agents} />}
-    {meta && route.tab === "people" && <>
-      {meta.here.length > 0 && <><h2 className="section-title">Here now</h2><HereNow here={meta.here} /></>}
-      <Contributors place={place} meta={meta} />
-    </>}
+  return <RawFiles.Provider value={raw}><div className={`place${chatty || route.tab === "chat" ? " place-chat" : ""}`}>
+    <PlaceBar icon={<AppIcon icon={projectIcon(place.project)} size={52} />} title={place.project}
+      subtitle={meta ? meta.description || `A project of ${place.space}` : error ? undefined : <Skeleton width={220} />}
+      actions={meta ? <Popover label="Clone" icon={<Download size={15} />}><CloneProject place={place} /></Popover> : undefined}
+      active={tab} tabs={[
+        { key: "overview", label: "Overview", href: base },
+        { key: "files", label: "Files", href: placeUrl(place, hashOf("files", { as: "folder" })) },
+        { key: "code", label: "Code", href: placeUrl(place, hashOf("code")) },
+        { key: "chat", label: "Chat", href: chatRoot ? filesHref(place, chatRoot) : placeUrl(place, hashOf("chat")) },
+        { key: "activity", label: "Activity", href: placeUrl(place, hashOf("activity")), count: meta?.activity.length || undefined },
+        { key: "people", label: "Contributors", href: placeUrl(place, hashOf("people")), count: people },
+        ...(meta?.deps || route.tab === "deps" ? [{ key: "deps", label: "Dependencies", href: placeUrl(place, hashOf("deps")), count: meta?.deps || undefined }] : []),
+      ]}>
+      {meta && <ProjectStrip place={place} meta={meta} />}
+    </PlaceBar>
+    {!meta && error && <div className="window"><ErrorNote message={error} retry={refresh} /></div>}
+    {overview ? <ProjectOverview place={place} view={view} chatRoot={chatRoot} /> : <div className="window">
+      {route.tab === "files" && <FilesTab place={place} path={route.path} as={route.as} view={view} error={error} me={me} signIn={signIn} refresh={refresh} />}
+      {meta && route.tab === "code" && <CodeTab place={place} ref={route.ref} path={route.path} defaultBranch={meta.defaultBranch} />}
+      {meta && route.tab === "commits" && <CommitsTab place={place} ref={route.ref} path={route.path} num={route.num} defaultBranch={meta.defaultBranch} />}
+      {route.tab === "commit" && <CommitTab place={place} oid={route.oid} />}
+      {route.tab === "deps" && <DepsTab place={place} />}
+      {route.tab === "branches" && <BranchesTab place={place} />}
+      {meta && route.tab === "chat" && <ChatSection place={place} me={me} signIn={signIn} canStart={!!me && meta.canWrite} />}
+      {meta && route.tab === "activity" && <ActivityStream items={meta.activity} agents={meta.agents} />}
+      {meta && route.tab === "people" && <>
+        {meta.here.length > 0 && <><h2 className="section-title">Here now</h2><HereNow here={meta.here} /></>}
+        <Contributors place={place} meta={meta} />
+      </>}
+    </div>}
   </div></RawFiles.Provider>;
 }
 
-const filesHref = (place: Place, path: string) => placeUrl(place, hashOf("files", { path }));
-
-/** A project's home screen: the project and who is at work in widgets, its goal, its top folders as apps, and its README. */
-function ProjectHome({ place, view, error, refresh }: { place: Place; view: View<ProjectMeta> | undefined; error: string; refresh: () => void }) {
+/** A project's overview: a row of stats, its goal, its folders as apps (Chat has its own section), what happened lately, and its README. */
+function ProjectOverview({ place, view, chatRoot }: { place: Place; view: View<ProjectMeta> | undefined; chatRoot?: string }) {
   const first = useRef(true);
   const index = view?.snapshot.directory.entries.find(entry => entry.kind === "file" && entry.name === "index.json");
   // A saved home view opens by itself the first time, unless a link says otherwise.
@@ -79,11 +76,8 @@ function ProjectHome({ place, view, error, refresh }: { place: Place; view: View
     if (!location.hash && index) navigate(filesHref(place, index.path));
   }, [view, index, place]);
   const meta = view?.meta;
-  const icon = projectIcon(place.project);
-  if (!view || !meta) return <HomeScreen label={place.project}>
-    <Widgets><Widget size="wide" className="profile-widget"><span className="profile-top"><AppIcon icon={icon} size={64} /><span className="profile-name"><h1>{place.project}</h1>{error ? <ErrorNote message={error} retry={refresh} /> : <Skeleton width={220} />}</span></span></Widget></Widgets>
-  </HomeScreen>;
-  const dirs = view.snapshot.directory.entries.filter(entry => entry.kind === "directory");
+  if (!view || !meta) return <HomeScreen label={place.project}><Widgets><Widget><Skeleton width={120} /></Widget><Widget><Skeleton width={120} /></Widget><Widget><Skeleton width={120} /></Widget><Widget><Skeleton width={120} /></Widget></Widgets></HomeScreen>;
+  const dirs = view.snapshot.directory.entries.filter(entry => entry.kind === "directory" && entry.path !== chatRoot);
   const isSection = (name: string) => SECTION_ICONS.has(name.toLowerCase());
   const sections = dirs.filter(entry => isSection(entry.name)).sort((a, b) => SECTION_ORDER.indexOf(a.name.toLowerCase()) - SECTION_ORDER.indexOf(b.name.toLowerCase()));
   const folders = dirs.filter(entry => !isSection(entry.name)).sort((a, b) => a.name.localeCompare(b.name));
@@ -91,26 +85,11 @@ function ProjectHome({ place, view, error, refresh }: { place: Place; view: View
   const readme = view.snapshot.directory.docs?.find(doc => /^readme/i.test(doc.name));
   const people = [...new Set([...meta.owners, ...meta.members, ...meta.collaborators])];
   const here = [...new Set(meta.here.map(who => who.agent))];
-  const goal = meta.goal && meta.goal.template === null ? meta.goal : undefined;
-  const done = goal ? goal.outcomes.filter(outcome => outcome.done).length : 0;
   return <HomeScreen label={place.project}>
     <Widgets>
-      <Widget size="large" className="profile-widget">
-        <span className="profile-top">
-          <AppIcon icon={icon} size={64} />
-          <span className="profile-name"><h1>{place.project}</h1><p>{meta.description || `A project of ${place.space}`}</p></span>
-        </span>
-        <ProjectStrip place={place} meta={meta} />
-        <span className="widget-actions">
-          <Popover label="Clone" icon={<Download size={15} />}><CloneProject place={place} /></Popover>
-          <a className="button" href={placeUrl(place, hashOf("files", { as: "folder" }))} onClick={onLink}><FolderOpen size={15} />Browse files</a>
-        </span>
+      <Widget title="Code" icon={<HardDrive size={13} />} href={placeUrl(place, hashOf("code"))}>
+        <span className="widget-value">{size(meta.bytes)}</span><span className="widget-note">on {meta.defaultBranch}{meta.deps ? ` · ${meta.deps} pinned ${meta.deps === 1 ? "repo" : "repos"}` : ""}</span>
       </Widget>
-      {goal ? <Widget title="Goal" icon={<Target size={13} />} aside={<Meter done={done} total={goal.outcomes.length} size="small" />} href={placeUrl(place, hashOf("files", { path: "SPACE.md" }))}>
-        <span className="widget-value">{done} of {goal.outcomes.length}</span><span className="widget-note">outcomes done</span>
-      </Widget> : <Widget title="Stored" icon={<HardDrive size={13} />} href={placeUrl(place, hashOf("code"))}>
-        <span className="widget-value">{size(meta.bytes)}</span><span className="widget-note">on {meta.defaultBranch}</span>
-      </Widget>}
       <Widget title="Here now" icon={<Users size={13} />} href={placeUrl(place, hashOf("people"))}>
         <span className="widget-value">{here.length ? <><AvatarStack names={here} max={4} size={22} /><span>{here.length}</span></> : "Nobody"}</span>
         <span className="widget-note">{here.length ? "connected now" : "is connected right now"}</span>
@@ -128,6 +107,7 @@ function ProjectHome({ place, view, error, refresh }: { place: Place; view: View
     <AppGrid title="Sections" apps={sections.map(app)} />
     <AppGrid title="Folders" apps={folders.map(app)} />
     {index && <a className="callout glass-callout" href={filesHref(place, index.path)} onClick={onLink}><BookOpen size={18} /><span><strong>Open the saved view</strong><span>index.json</span></span></a>}
+    <RecentActivity items={meta.activity} href={placeUrl(place, hashOf("activity"))} />
     {readme && <Widget size="full" className="readme-widget" title={readme.name} icon={<BookOpen size={13} />} aside={<a href={filesHref(place, readme.path)} onClick={onLink}>Open</a>}>
       <Markdown content={readme.content} filePath={readme.path} navigate={next => navigate(filesHref(place, next))} />
     </Widget>}

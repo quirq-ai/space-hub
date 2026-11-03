@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { Activity, BookOpen, Check, ChevronDown, ChevronRight, ChevronsUpDown, Home, LogIn, LogOut, PanelLeft, Plus, Search, User, Wifi, WifiOff, X } from "lucide-react";
 import { ThemePicker } from "@/components/theme-picker";
 import { useLoading } from "@/hooks/use-live";
@@ -78,8 +78,8 @@ export function TopBar({ me, signIn, live, onSearch, onMenu, activity, crumbs, r
     <span className="topbar-spacer" />
     {!recoveryOnly && <button className="search-trigger" type="button" onClick={onSearch} aria-label="Search spaces, projects and files" title="Search (⌘K)"><Search size={15} /><span>Search</span><kbd>⌘K</kbd></button>}
     {activity && <button className={`bar-button${activity.open ? " active" : ""}`} type="button" aria-pressed={activity.open} aria-label="Activity" title={activity.open ? "Hide activity" : "Show activity"} onClick={activity.onToggle}><Activity size={17} /></button>}
-    <span className={`status ${live}`} title={live === "offline" ? recoveryOnly ? "Reconnecting to recovery" : "Reconnecting to the hub" : recoveryOnly ? "Full-instance recovery connection" : "Live: changes appear as they happen"}>
-      {live === "offline" ? <WifiOff size={15} /> : <Wifi size={15} />}<span className="status-text">{live === "offline" ? "Reconnecting" : "Live"}</span><Clock />
+    <span className={`conn ${live}`} title={live === "offline" ? recoveryOnly ? "Reconnecting to recovery" : "Reconnecting to the hub" : recoveryOnly ? "Full-instance recovery connection" : "Live: changes appear as they happen"}>
+      {live === "offline" ? <WifiOff size={15} /> : <Wifi size={15} />}<span className="conn-text">{live === "offline" ? "Reconnecting" : "Live"}</span><Clock />
     </span>
     {recoveryOnly ? <span className="label">Local recovery</span> : !me.checked ? <span className="user-placeholder" aria-hidden="true" /> : me.name ? <UserMenu name={me.name} /> : <a className="button primary" href={signIn}><LogIn size={15} />Sign in</a>}
   </header>;
@@ -192,9 +192,9 @@ export function Sidebar({ switcher, primary, sections, footer, open, onClose, on
   </>;
 }
 
-export type DockItem = { key: string; label: string; href: string; icon: DockIcon; active?: boolean; fresh?: boolean };
+export type DockItem = { key: string; label: string; href: string; icon: DockIcon; title?: string; active?: boolean; fresh?: boolean; divider?: boolean };
 
-/** The dock: the apps of where you are (a place's home, what it holds and the ways to look at it). */
+/** The dock: a labeled launcher that goes anywhere (home, your spaces, the projects you were in, settings, the guide). */
 
 // xo-swarm's liquid glass: the backdrop is bent through fractal noise, blurred
 // into a soft displacement map, under a frosted tint and a shine on the edge.
@@ -238,16 +238,24 @@ export function Dock({ places }: { places: DockItem[] }) {
   return <nav className="dock" aria-label="Dock">
     <Glass distort />
     <div className="dock-items" ref={row} onPointerMove={magnify} onPointerLeave={settle}>
-      {places.map(entry => <a key={entry.key} className={`dock-item${entry.active ? " active" : ""}`} href={entry.href} onClick={open} onAnimationEnd={event => event.currentTarget.classList.remove("opening")} aria-label={entry.label} aria-current={entry.active ? "page" : undefined}>
-        <span className="dock-pic"><AppIcon icon={entry.icon} />{entry.fresh && <span className="dock-fresh" title="Changed since you last looked" />}</span>
-        <span className="dock-name" aria-hidden="true">{entry.label}</span>
-      </a>)}
+      {places.map(entry => <Fragment key={entry.key}>
+        {entry.divider && <span className="dock-divider" aria-hidden="true" />}
+        <a className={`dock-item${entry.active ? " active" : ""}`} href={entry.href} onClick={open} onAnimationEnd={event => event.currentTarget.classList.remove("opening")} title={entry.title} aria-current={entry.active ? "page" : undefined}>
+          <span className="dock-pic"><AppIcon icon={entry.icon} />{entry.fresh && <span className="dock-fresh" title="Changed since you last looked" />}</span>
+          <span className="dock-name">{entry.label}</span>
+        </a>
+      </Fragment>)}
     </div>
   </nav>;
 }
 
-/** The right-hand glass panel: beside the page on wide windows, over it with a scrim on narrower ones. `note` says whose it is. */
+/** The right-hand glass panel, sliding over the page like your places panel on the left. `note` says whose it is. */
 export function Inspector({ title, note, onClose, children }: { title: string; note?: string; onClose: () => void; children: ReactNode }) {
+  useEffect(() => {
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    addEventListener("keydown", close);
+    return () => removeEventListener("keydown", close);
+  }, [onClose]);
   return <>
     <aside className="inspector" aria-label={note ? `${title} in ${note}` : title}>
       <Glass />
@@ -256,6 +264,6 @@ export function Inspector({ title, note, onClose, children }: { title: string; n
         {children}
       </div>
     </aside>
-    <button className="scrim only-medium" type="button" aria-label={`Close ${title}`} onClick={onClose} />
+    <button className="scrim" type="button" aria-label={`Close ${title}`} onClick={onClose} />
   </>;
 }
