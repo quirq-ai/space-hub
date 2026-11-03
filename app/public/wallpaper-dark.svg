@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice">
 <defs>
-<radialGradient id="bg" cx="62%" cy="38%" r="85%"><stop offset="0" stop-color="#060b1d"/><stop offset=".5" stop-color="#03060f"/><stop offset="1" stop-color="#010206"/></radialGradient>
+<radialGradient id="bg" cx="62%" cy="38%" r="85%"><stop offset="0" stop-color="#040406"/><stop offset=".5" stop-color="#010102"/><stop offset="1" stop-color="#000000"/></radialGradient>
 <radialGradient id="vig" cx="50%" cy="50%" r="75%"><stop offset=".5" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".7"/></radialGradient>
 <radialGradient id="glint" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#dbe7ff" stop-opacity=".9"/><stop offset=".25" stop-color="#9dbaff" stop-opacity=".25"/><stop offset="1" stop-color="#9dbaff" stop-opacity="0"/></radialGradient>
 <filter id="cloud" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="70"/></filter>
@@ -8,13 +8,13 @@
 <filter id="smudge" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="5"/></filter>
 </defs>
 <rect width="1600" height="1000" fill="url(#bg)"/>
-<ellipse cx="1180" cy="300" rx="560" ry="260" transform="rotate(-20 1180 300)" fill="#163c9c" opacity="0.15" filter="url(#cloud)"/>
-<ellipse cx="380" cy="740" rx="600" ry="250" transform="rotate(-15 380 740)" fill="#281d7e" opacity="0.13" filter="url(#cloud)"/>
-<ellipse cx="860" cy="520" rx="420" ry="150" transform="rotate(-24 860 520)" fill="#1a58a6" opacity="0.07" filter="url(#cloud)"/>
-<ellipse cx="1380" cy="840" rx="320" ry="210" transform="rotate(10 1380 840)" fill="#33206f" opacity="0.09" filter="url(#cloud)"/>
-<ellipse cx="200" cy="180" rx="360" ry="220" transform="rotate(25 200 180)" fill="#0d2a6a" opacity="0.1" filter="url(#cloud)"/>
-<ellipse cx="800" cy="500" rx="980" ry="110" transform="rotate(-22 800 500)" fill="#7fa2f0" opacity="0.04" filter="url(#haze)"/>
-<ellipse cx="840" cy="480" rx="620" ry="46" transform="rotate(-22 840 480)" fill="#7fa2f0" opacity="0.035" filter="url(#haze)"/>
+<ellipse cx="1180" cy="300" rx="560" ry="260" transform="rotate(-20 1180 300)" fill="#163c9c" opacity="0.07" filter="url(#cloud)"/>
+<ellipse cx="380" cy="740" rx="600" ry="250" transform="rotate(-15 380 740)" fill="#281d7e" opacity="0.06" filter="url(#cloud)"/>
+<ellipse cx="860" cy="520" rx="420" ry="150" transform="rotate(-24 860 520)" fill="#1a58a6" opacity="0.03" filter="url(#cloud)"/>
+<ellipse cx="1380" cy="840" rx="320" ry="210" transform="rotate(10 1380 840)" fill="#33206f" opacity="0.04" filter="url(#cloud)"/>
+<ellipse cx="200" cy="180" rx="360" ry="220" transform="rotate(25 200 180)" fill="#0d2a6a" opacity="0.04" filter="url(#cloud)"/>
+<ellipse cx="800" cy="500" rx="980" ry="110" transform="rotate(-22 800 500)" fill="#7fa2f0" opacity="0.025" filter="url(#haze)"/>
+<ellipse cx="840" cy="480" rx="620" ry="46" transform="rotate(-22 840 480)" fill="#7fa2f0" opacity="0.02" filter="url(#haze)"/>
 <ellipse cx="1290" cy="170" rx="30" ry="9" transform="rotate(-32 1290 170)" fill="#c9d8ff" opacity="0.35" filter="url(#smudge)"/>
 <circle cx="723.8" cy="559.8" r="0.48" fill="#ffffff" opacity="0.32"/>
 <circle cx="1478.7" cy="465.7" r="0.45" fill="#fff1d6" opacity="0.30"/>
