@@ -7,12 +7,11 @@ import { ActivityStream, HereNow, People, PlaceBar, RecentActivity } from "./com
 import { ChatSection } from "./chat-section";
 import { BranchesTab, CodeTab, CommitTab, CommitsTab } from "./code";
 import { DepsTab } from "./deps";
-import { FilesTab, isChannel, SECTION_ICONS, SECTION_ORDER } from "./files";
+import { entryIcon, FilesTab, isChannel, SECTION_ICONS, SECTION_ORDER } from "./files";
 import { GoalPanel } from "./goal";
 import { Markdown, RawFiles } from "@/components/content-view";
-import { AppIcon } from "@/ui/app-icon";
-import { AppGrid, HomeScreen, Widget, Widgets } from "@/ui/home-screen";
-import { folderIcon, projectIcon } from "@/shell/dock-icons";
+import { CardGroup, Glyph } from "@/ui/cards";
+import { Overview, Panel, ProjectMark, Stat, Stats } from "@/ui/overview";
 
 type ProjectRoute = Extract<Route, { page: "project" }>;
 
@@ -33,7 +32,7 @@ export function ProjectPage({ route, view, error, me, signIn, refresh }: { route
   const people = meta ? new Set([...meta.owners, ...meta.members, ...meta.collaborators, ...meta.agents]).size : undefined;
   const chatty = route.tab === "files" && view && (view.snapshot.file?.format === "json" || (!view.snapshot.file && route.as !== "folder" && isChannel(view.snapshot)));
   return <RawFiles.Provider value={raw}><div className={`place${chatty || route.tab === "chat" ? " place-chat" : ""}`}>
-    <PlaceBar icon={<AppIcon icon={projectIcon(place.project)} size={52} />} title={place.project}
+    <PlaceBar icon={<ProjectMark name={place.project} size={40} />} title={place.project}
       subtitle={meta ? meta.description || `A project of ${place.space}` : error ? undefined : <Skeleton width={220} />}
       actions={meta ? <Popover label="Clone" icon={<Download size={15} />}><CloneProject place={place} /></Popover> : undefined}
       active={tab} tabs={[
@@ -65,7 +64,7 @@ export function ProjectPage({ route, view, error, me, signIn, refresh }: { route
   </div></RawFiles.Provider>;
 }
 
-/** A project's overview: a row of stats, its goal, its folders as apps (Chat has its own section), what happened lately, and its README. */
+/** A project's overview: one row of stats, its goal, its folders (Chat has its own tab) and its README, and beside them what happened lately. */
 function ProjectOverview({ place, view, chatRoot }: { place: Place; view: View<ProjectMeta> | undefined; chatRoot?: string }) {
   const first = useRef(true);
   const index = view?.snapshot.directory.entries.find(entry => entry.kind === "file" && entry.name === "index.json");
@@ -76,43 +75,45 @@ function ProjectOverview({ place, view, chatRoot }: { place: Place; view: View<P
     if (!location.hash && index) navigate(filesHref(place, index.path));
   }, [view, index, place]);
   const meta = view?.meta;
-  if (!view || !meta) return <HomeScreen label={place.project}><Widgets><Widget><Skeleton width={120} /></Widget><Widget><Skeleton width={120} /></Widget><Widget><Skeleton width={120} /></Widget><Widget><Skeleton width={120} /></Widget></Widgets></HomeScreen>;
+  if (!view || !meta) return <Overview label={place.project}><Stats>{["Code", "Here now", "Latest change", "Contributors"].map(title => <Stat key={title} title={title}><Skeleton width={120} /></Stat>)}</Stats></Overview>;
   const dirs = view.snapshot.directory.entries.filter(entry => entry.kind === "directory" && entry.path !== chatRoot);
   const isSection = (name: string) => SECTION_ICONS.has(name.toLowerCase());
   const sections = dirs.filter(entry => isSection(entry.name)).sort((a, b) => SECTION_ORDER.indexOf(a.name.toLowerCase()) - SECTION_ORDER.indexOf(b.name.toLowerCase()));
   const folders = dirs.filter(entry => !isSection(entry.name)).sort((a, b) => a.name.localeCompare(b.name));
-  const app = (entry: typeof dirs[number]) => ({ key: entry.path, label: entry.name, href: filesHref(place, entry.path), icon: folderIcon(entry.name), title: [entry.name, entry.detail].filter(Boolean).join(": ") });
+  const card = (entry: typeof dirs[number]) => {
+    const Icon = entryIcon(entry);
+    return { key: entry.path, name: entry.name, href: filesHref(place, entry.path), icon: <Glyph tone={isSection(entry.name) ? "accent" : undefined}><Icon size={16} /></Glyph>, title: entry.name, detail: entry.detail || undefined, time: entry.modifiedAt };
+  };
   const readme = view.snapshot.directory.docs?.find(doc => /^readme/i.test(doc.name));
   const people = [...new Set([...meta.owners, ...meta.members, ...meta.collaborators])];
   const here = [...new Set(meta.here.map(who => who.agent))];
-  return <HomeScreen label={place.project}>
-    <Widgets>
-      <Widget title="Code" icon={<HardDrive size={13} />} href={placeUrl(place, hashOf("code"))}>
-        <span className="widget-value">{size(meta.bytes)}</span><span className="widget-note">on {meta.defaultBranch}{meta.deps ? ` · ${meta.deps} pinned ${meta.deps === 1 ? "repo" : "repos"}` : ""}</span>
-      </Widget>
-      <Widget title="Here now" icon={<Users size={13} />} href={placeUrl(place, hashOf("people"))}>
-        <span className="widget-value">{here.length ? <><AvatarStack names={here} max={4} size={22} /><span>{here.length}</span></> : "Nobody"}</span>
-        <span className="widget-note">{here.length ? "connected now" : "is connected right now"}</span>
-      </Widget>
-      {meta.head ? <Widget title="Latest change" icon={<GitCommitHorizontal size={13} />} aside={<Ago iso={meta.head.time} />} href={placeUrl(place, hashOf("commit", { oid: meta.head.oid }))}>
-        <span className="widget-value"><Avatar name={meta.head.author} size={20} /><span className="widget-clip">{meta.head.author}</span></span>
-        <span className="widget-note">{meta.head.subject}</span>
-      </Widget> : <Widget title="Latest change" icon={<GitCommitHorizontal size={13} />}><span className="widget-value">Nothing yet</span><span className="widget-note">Push the first files</span></Widget>}
-      <Widget title="Contributors" icon={<Bot size={13} />} href={placeUrl(place, hashOf("people"))}>
-        <span className="widget-value">{people.length ? <><AvatarStack names={people} max={4} size={22} /><span>{people.length}</span></> : "None yet"}</span>
-        <span className="widget-note">{meta.agents.length} {meta.agents.length === 1 ? "agent" : "agents"} connected</span>
-      </Widget>
-    </Widgets>
-    {meta.goal && <Widget size="full" className="goal-widget"><GoalPanel place={place} goal={meta.goal} canWrite={meta.canWrite} /></Widget>}
-    <AppGrid title="Sections" apps={sections.map(app)} />
-    <AppGrid title="Folders" apps={folders.map(app)} />
-    {index && <a className="callout glass-callout" href={filesHref(place, index.path)} onClick={onLink}><BookOpen size={18} /><span><strong>Open the saved view</strong><span>index.json</span></span></a>}
-    <RecentActivity items={meta.activity} href={placeUrl(place, hashOf("activity"))} />
-    {readme && <Widget size="full" className="readme-widget" title={readme.name} icon={<BookOpen size={13} />} aside={<a href={filesHref(place, readme.path)} onClick={onLink}>Open</a>}>
+  return <Overview label={place.project} side={<RecentActivity items={meta.activity} href={placeUrl(place, hashOf("activity"))} />}>
+    <Stats>
+      <Stat title="Code" icon={<HardDrive size={14} />} href={placeUrl(place, hashOf("code"))}>
+        <span className="stat-value">{size(meta.bytes)}</span><span className="stat-note">on {meta.defaultBranch}{meta.deps ? ` · ${meta.deps} pinned ${meta.deps === 1 ? "repo" : "repos"}` : ""}</span>
+      </Stat>
+      <Stat title="Here now" icon={<Users size={14} />} href={placeUrl(place, hashOf("people"))}>
+        <span className="stat-value">{here.length ? <><AvatarStack names={here} max={4} size={20} /><span>{here.length}</span></> : "Nobody"}</span>
+        <span className="stat-note">{here.length ? "connected now" : "is connected right now"}</span>
+      </Stat>
+      {meta.head ? <Stat title="Latest change" icon={<GitCommitHorizontal size={14} />} aside={<Ago iso={meta.head.time} />} href={placeUrl(place, hashOf("commit", { oid: meta.head.oid }))}>
+        <span className="stat-value"><Avatar name={meta.head.author} size={20} /><span className="stat-clip">{meta.head.author}</span></span>
+        <span className="stat-note">{meta.head.subject}</span>
+      </Stat> : <Stat title="Latest change" icon={<GitCommitHorizontal size={14} />}><span className="stat-value">Nothing yet</span><span className="stat-note">Push the first files</span></Stat>}
+      <Stat title="Contributors" icon={<Bot size={14} />} href={placeUrl(place, hashOf("people"))}>
+        <span className="stat-value">{people.length ? <><AvatarStack names={people} max={4} size={20} /><span>{people.length}</span></> : "None yet"}</span>
+        <span className="stat-note">{meta.agents.length} {meta.agents.length === 1 ? "agent" : "agents"} connected</span>
+      </Stat>
+    </Stats>
+    {meta.goal && <Panel className="goal-block"><GoalPanel place={place} goal={meta.goal} canWrite={meta.canWrite} /></Panel>}
+    {index && <a className="callout" href={filesHref(place, index.path)} onClick={onLink}><BookOpen size={18} /><span><strong>Open the saved view</strong><span>index.json</span></span></a>}
+    <CardGroup title="Sections" list cards={sections.map(card)} />
+    <CardGroup title="Folders" list cards={folders.map(card)} />
+    {readme && <Panel className="readme-block" title={readme.name} icon={<BookOpen size={14} />} aside={<a href={filesHref(place, readme.path)} onClick={onLink}>Open</a>}>
       <Markdown content={readme.content} filePath={readme.path} navigate={next => navigate(filesHref(place, next))} />
-    </Widget>}
-    {!meta.head && <Widget size="full" className="empty-widget"><Empty icon={<Boxes size={20} />} title="Nothing pushed yet"><p>Clone it and push the first files:</p><code>spacehub project clone {place.space}/{place.project}</code></Empty></Widget>}
-  </HomeScreen>;
+    </Panel>}
+    {!meta.head && <Panel><Empty icon={<Boxes size={20} />} title="Nothing pushed yet"><p>Clone it and push the first files:</p><code>spacehub project clone {place.space}/{place.project}</code></Empty></Panel>}
+  </Overview>;
 }
 
 /** Everyone who may push here, humans and agents, each saying why. */
