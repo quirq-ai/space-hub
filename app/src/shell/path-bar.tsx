@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, File, Folder, FolderGit2 } from "lucide-react";
+import { Check, ChevronDown, File, Folder, FolderGit2, Home } from "lucide-react";
 import { placeUrl, viewUrl, type Place, type View } from "@/api";
 import { hashOf, onLink } from "@/router";
 import { Avatar } from "@/ui/primitives";
@@ -17,14 +17,13 @@ const spaceKind = (detail = "") => detail.startsWith("org") ? "org" : detail.sta
 
 /** The segments for where you are: each space, project and folder, with the places beside it one click away. */
 function segmentsOf(place: Place, path: string): Segment[] {
-  if (!place.space) return [];
   const segments: Segment[] = [{
     key: "space", label: place.space, href: placeUrl({ space: place.space, project: "" }), current: !place.project,
     load: async () => (await listing(viewUrl({ space: "", project: "" })))?.snapshot.directory.entries.map(entry => ({ key: entry.name, label: entry.name, href: placeUrl({ space: entry.name, project: "" }), kind: "space" as const, spaceKind: spaceKind(entry.detail) })) ?? [],
   }];
   if (!place.project) return segments;
   segments.push({
-    key: "project", label: place.project, href: placeUrl(place), current: !path,
+    key: "project", label: place.project, href: placeUrl(place, hashOf("files")), current: !path,
     load: async () => (await listing(viewUrl({ space: place.space, project: "" })))?.snapshot.directory.entries.map(entry => ({ key: entry.name, label: entry.name, href: placeUrl({ space: place.space, project: entry.name }), kind: "project" as const })) ?? [],
   });
   const parts = path.split("/").filter(Boolean);
@@ -73,12 +72,15 @@ function SegmentMenu({ segment }: { segment: Segment }) {
 }
 
 /**
- * Where you are, in the top bar after the hub's name: the space, the
- * project and each folder. A segment goes up to that place; its arrow opens
- * the places beside it, so moving across never needs a trip back up.
+ * Where you are, as one line at the top of every space and project page:
+ * home, then the space, the project and each folder. A segment goes up to
+ * that place; its arrow opens the places beside it, so moving across never
+ * needs a trip back up.
  */
 export function PathBar({ place, path }: { place: Place; path: string }) {
-  return <span className="path-bar">
-    {segmentsOf(place, path).map(segment => <span key={segment.key} className="path-item"><span className="crumb-sep" aria-hidden="true">›</span><SegmentMenu segment={segment} /></span>)}
-  </span>;
+  const segments = segmentsOf(place, path);
+  return <nav className="path-bar" aria-label="Where you are">
+    <a className="path-home" href="/" onClick={onLink} aria-label="All spaces" title="All spaces"><Home size={14} /></a>
+    {segments.map(segment => <span key={segment.key} className="path-item"><span className="crumb-sep">/</span><SegmentMenu segment={segment} /></span>)}
+  </nav>;
 }

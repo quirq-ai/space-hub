@@ -1,82 +1,77 @@
-import { Bot, Building2, FolderGit2, GitCommitHorizontal, Plus, Radio, Rocket, Users } from "lucide-react";
-import { activeBy, activityLine, avatarUrl, count, latestOf, newestBy, placeUrl, size, type HubMeta, type View } from "@/api";
+import { Fragment } from "react";
+import { Building2, FolderGit2, Plus, Rocket, Users } from "lucide-react";
+import { activeBy, count, kindLabel, latestOf, newestBy, placeUrl, size, type HubMeta, type View } from "@/api";
 import type { Entry } from "@/lib/types";
-import { hashOf } from "@/router";
-import { Browser } from "@/ui/cards";
-import { Ago, Avatar, AvatarStack, CommandTabs, Empty, Popover, QuirqMark, SkeletonRows } from "@/ui/primitives";
-import { HomeScreen, Launchpad, Widget, Widgets } from "@/ui/home-screen";
-import { projectIcon, spaceIcon } from "@/shell/dock-icons";
-import { PlaceBar } from "./common";
+import { hashOf, onLink } from "@/router";
+import { Browser, Glyph } from "@/ui/cards";
+import { Avatar, CommandTabs, Empty, Popover, SkeletonRows } from "@/ui/primitives";
+import { LiveNow, PageHeader } from "./common";
 import { AgentList } from "./space";
 
 const kindOf = (detail = "") => detail.startsWith("org") ? "org" : detail.startsWith("agent") ? "agent" : "personal";
 
+/** Home keeps the places to go: your spaces, the orgs, and where work lands. Builders and agents have their own tabs. */
+const GROUPS: { key: string; title: string; note: string; keep: (space: Entry, mine: Set<string>) => boolean }[] = [
+  { key: "mine", title: "Your spaces", note: "Your own space and the orgs you belong to.", keep: (space, mine) => mine.has(space.name) },
+  { key: "org", title: "Orgs", note: "Teams: their members push to every project they hold.", keep: (space, mine) => !mine.has(space.name) && kindOf(space.detail) === "org" },
+];
+
 type HomeProps = { tab: "home" | "agents" | "builders"; view: View<HubMeta> | undefined; me: string | null; mySpaces: string[]; seen: Record<string, string> };
 
-/** The hub's front page: its bar (the hub at a glance), then Home (its spaces and newest projects as apps, what happened lately), Agents or Builders, picked in the dock. */
+/** The hub's front page, in three tabs the dock switches between: Home, Agents and Builders. */
 export function HomePage({ tab, view, me, mySpaces, seen }: HomeProps) {
-  const meta = view?.meta;
-  const orgs = meta ? meta.spaces - meta.humans - meta.agents : 0;
+  const title = tab === "agents" ? "Agents" : tab === "builders" ? "Builders" : "spacehub";
+  if (!view) return <div className="page"><PageHeader title={title} subtitle="Loading the hub…" /><SkeletonRows rows={6} /></div>;
+  if (tab === "agents") return <div className="page">
+    <PageHeader title="Agents" subtitle="Every agent on this hub. Each is a space of its own, owned by a builder or an org." />
+    <AgentList space="" kind="hub" agents={view.meta.agentList} canManage={!!me} />
+  </div>;
+  if (tab === "builders") return <BuildersTab view={view} me={me} seen={seen} />;
+
+  const spaces = [...view.snapshot.directory.entries].sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
+  const recent = view.meta.allProjects.slice(0, 8);
+  const mine = new Set(mySpaces);
+  const bySpace = newestBy(view.meta.activity, item => item.path.split("/")[0]);
+  const byProject = newestBy(view.meta.activity, item => item.path.includes("/") ? item.path : "");
+  const peopleBySpace = activeBy(view.meta.activity, item => item.path.split("/")[0]);
+  const peopleByProject = activeBy(view.meta.activity, item => item.path.includes("/") ? item.path : "");
+  const groups = GROUPS.map(group => ({ key: group.key, title: group.title, note: group.note, cards: spaces.filter(space => group.keep(space, mine)).map(space => {
+    const kind = kindOf(space.detail);
+    return {
+      key: space.name, name: space.name, search: `${kindLabel(kind)} ${space.detail ?? ""}`, people: peopleBySpace.get(space.name), href: placeUrl({ space: space.name, project: "" }), time: space.modifiedAt,
+      icon: <Avatar name={space.name} size={34} kind={kind} />, title: space.name, labels: <span className="label quiet-label">{kindLabel(kind)}</span>,
+      detail: space.detail?.replace(/^\w+ · /, ""), latest: latestOf(bySpace.get(space.name)), fresh: !!seen[space.name] && space.modifiedAt > seen[space.name],
+    };
+  }) }));
+  const shownSpaces = groups.reduce((sum, group) => sum + group.cards.length, 0);
   // Who builds here, by kind (agents and builders are spaces too, so "7 spaces" said little), then what they made.
-  const stats = meta ? [count(meta.humans, "builder"), ...(orgs > 0 ? [count(orgs, "org")] : []), ...(meta.agents ? [count(meta.agents, "agent")] : []), count(meta.projects, "project"), `${size(meta.bytes)} stored`].join(" · ") : "Loading the hub…";
-  return <div className="place">
-    <PlaceBar icon={<QuirqMark size={52} />} title="spacehub" subtitle={stats}
-      actions={me ? <a className="button primary" href="/-/new"><Plus size={15} />New project</a> : <Popover label="Get started" icon={<Rocket size={15} />} primary>
+  const orgs = view.meta.spaces - view.meta.humans - view.meta.agents;
+  const stats: { text: string; href?: string }[] = [
+    { text: count(view.meta.humans, "builder"), href: "/#" + hashOf("builders") },
+    ...(orgs > 0 ? [{ text: count(orgs, "org") }] : []),
+    ...(view.meta.agents > 0 ? [{ text: count(view.meta.agents, "agent"), href: "/#" + hashOf("agents") }] : []),
+    { text: count(view.meta.projects, "project") },
+    { text: `${size(view.meta.bytes)} stored` },
+  ];
+  return <div className="page">
+    <PageHeader title="spacehub" subtitle={stats.map((stat, i) => <Fragment key={stat.text}>{i > 0 && " "}<span className="stat">{i > 0 && "· "}{stat.href ? <a className="stat-link" href={stat.href} onClick={onLink}>{stat.text}</a> : stat.text}</span></Fragment>)}
+      actions={<>{me ? <a className="button" href="/-/new"><Plus size={15} />New project</a> : <Popover label="Get started" icon={<Rocket size={15} />}>
         <div className="popover-title">Push your first project</div>
         <CommandTabs tabs={[
           { label: "spacehub", lines: ["spacehub auth login", "spacehub project create notes --source . --push"] },
           { label: "xo", lines: ['pip install "quirq-xo @ git+https://github.com/quirq-ai/xo"', "xo login", "spacehub project create notes --source . --push"] },
         ]} note={<>Both need the hub's CLI: <code>scripts/install-cli.sh</code> from quirq-ai/space-hub. xo is XO's command line; <code>xo login</code> signs you in to XO and this hub. <a href="/-/guide">Read the guide</a>.</>} />
-      </Popover>} />
-    {!view ? (tab === "home" ? <HomeScreen label="spacehub"><Widgets><Widget><SkeletonRows rows={1} avatar={false} /></Widget></Widgets></HomeScreen> : <div className="window"><SkeletonRows rows={6} /></div>)
-      : tab === "agents" ? <div className="window"><p className="window-note">Every agent on this hub. Each is a space of its own, owned by a builder or an org.</p><AgentList space="" kind="hub" agents={view.meta.agentList} canManage={!!me} /></div>
-      : tab === "builders" ? <BuildersTab view={view} me={me} seen={seen} />
-      : <HubOverview view={view} mySpaces={mySpaces} seen={seen} />}
-  </div>;
-}
-
-/** The hub at a glance in a row of stats, then its spaces and newest projects as apps. */
-function HubOverview({ view, mySpaces, seen }: { view: View<HubMeta>; mySpaces: string[]; seen: Record<string, string> }) {
-  const spaces = [...view.snapshot.directory.entries].sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
-  const recent = view.meta.allProjects.slice(0, 8);
-  const mine = new Set(mySpaces);
-  const running = view.meta.agentList.filter(agent => agent.running.length);
-  const here = [...new Set(view.meta.here.map(who => who.agent))];
-  const push = view.meta.activity.find(item => item.kind.startsWith("ref_"));
-  const pushed = push && activityLine(push);
-  const spaceApp = (space: Entry) => ({
-    key: space.name, label: space.name, href: placeUrl({ space: space.name, project: "" }), icon: spaceIcon(avatarUrl(space.name)),
-    title: [space.name, space.detail?.replace(/^\w+ · /, "")].filter(Boolean).join(": "), badge: !!seen[space.name] && space.modifiedAt > seen[space.name],
-  });
-  return <HomeScreen label="spacehub">
-    <Widgets>
-      <Widget title="Live now" icon={<Radio size={13} />}>
-        <span className="widget-value">{here.length ? <><AvatarStack names={here} max={4} size={22} /><span>{here.length}</span></> : "Nobody"}</span>
-        <span className="widget-note">{here.length ? "connected to the hub" : "is connected right now"}</span>
-      </Widget>
-      <Widget title="Agents" icon={<Bot size={13} />} href={"/#" + hashOf("agents")}>
-        <span className="widget-value">{running.length ? <><i className="online-dot" />{running.length} running</> : "None running"}</span>
-        <span className="widget-note">{running.length ? running.map(agent => agent.name).join(", ") : `${view.meta.agents} on the hub`}</span>
-      </Widget>
-      {push && pushed ? <Widget title="Latest push" icon={<GitCommitHorizontal size={13} />} aside={<Ago iso={push.at} />} href={pushed.commit || pushed.href || undefined}>
-        <span className="widget-value"><Avatar name={push.agent || "hub"} size={20} /><span className="widget-clip">{push.agent || "someone"}</span></span>
-        <span className="widget-note">{push.path}{push.text ? `: ${push.text}` : ""}</span>
-      </Widget> : <Widget title="Latest push" icon={<GitCommitHorizontal size={13} />}><span className="widget-value">Nothing yet</span><span className="widget-note">Push the first project</span></Widget>}
-      <Widget title="Projects" icon={<FolderGit2 size={13} />}>
-        <span className="widget-value">{view.meta.projects}</span>
-        <span className="widget-note">in {count(view.meta.spaces, "space")}</span>
-      </Widget>
-    </Widgets>
-    <Launchpad label="spacehub" groups={[
-      { title: "Your spaces", apps: spaces.filter(space => mine.has(space.name)).map(spaceApp) },
-      { title: "Orgs", apps: spaces.filter(space => !mine.has(space.name) && kindOf(space.detail) === "org").map(spaceApp) },
-      { title: "Recently pushed", apps: recent.map(project => {
+      </Popover>}</>}>
+      <LiveNow variant="strip" here={view.meta.here} agents={view.meta.agentList} />
+    </PageHeader>
+    <Browser head={<>{count(shownSpaces, "space")} · {recent.length} newest {recent.length === 1 ? "project" : "projects"}</>} groups={[...groups, { key: "recent", title: "Recently pushed", note: "The newest pushes across the hub, wherever they landed.", cards: recent.map(project => {
       const [space, name] = project.fullName.split("/");
-      return { key: project.fullName, label: name, title: [project.fullName, project.description].filter(Boolean).join(": "), href: placeUrl({ space, project: name }), icon: projectIcon(name), badge: !!seen[project.fullName] && project.pushedAt > seen[project.fullName] };
-      }) },
-    ]} />
-    {!view.meta.spaces && <Widget size="full" className="empty-widget"><Empty icon={<Building2 size={20} />} title="No spaces yet"><p>Sign up and push a project to start the first space. <a href="/-/guide">Read the guide</a>.</p></Empty></Widget>}
-  </HomeScreen>;
+      return { key: project.fullName, name: project.fullName, search: project.description, people: peopleByProject.get(project.fullName), href: placeUrl({ space, project: name }), time: project.pushedAt, icon: <Glyph><FolderGit2 size={17} /></Glyph>,
+        title: project.fullName, detail: project.description || undefined, latest: latestOf(byProject.get(project.fullName)), fresh: !!seen[project.fullName] && project.pushedAt > seen[project.fullName] };
+    }) }]} />
+    {!recent.length && <p className="quiet">No projects yet. <a href="/-/guide">Read the guide</a> to push the first one.</p>}
+    {!view.meta.spaces && <p className="quiet"><Building2 size={14} /> Sign up and push a project to start the first space.</p>}
+  </div>;
 }
 
 /** Every builder on the hub: who is connected now first, each with their projects, agents and latest change. */
@@ -98,8 +93,8 @@ function BuildersTab({ view, me, seen }: { view: View<HubMeta>; me: string | nul
     };
   };
   const connected = builders.filter(space => here.has(space.name)).length;
-  return <div className="window">
-    <p className="window-note">People on this hub. Each has a space named after them for their projects and agents.</p>
+  return <div className="page">
+    <PageHeader title="Builders" subtitle="People on this hub. Each has a space named after them for their projects and agents." />
     {builders.length ? <Browser head={<>{count(builders.length, "builder")}{connected ? <> · <span className="strip-here"><i className="online-dot" />{connected} connected now</span></> : null}</>} groups={[
       { key: "here", title: "Connected now", note: "Working from a clone, autosync or the app right now.", cards: builders.filter(space => here.has(space.name)).map(card) },
       { key: "builders", title: connected ? "Everyone else" : "Builders", note: "Newest change first; filter to find someone.", cards: builders.filter(space => !here.has(space.name)).map(card) },
