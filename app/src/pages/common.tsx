@@ -78,7 +78,7 @@ export function ActivityList({ items, empty = "Nothing has happened here yet.", 
   </section>)}</div>;
 }
 
-const NONE: Record<ActivityFilter, string> = { all: "", pushes: "No pushes here yet.", agents: "No agent has done anything here yet.", people: "No builder has done anything here yet." };
+const NONE: Record<ActivityFilter, string> = { all: "", humans: "No builder has done anything here yet.", agents: "No agent has done anything here yet." };
 
 /** A place's activity with a filter (lib/activity.ts); `agents` names the agents, since an activity row only says who. */
 export function ActivityStream({ items, agents, compact = false, empty }: { items: ActivityItem[]; agents: string[]; compact?: boolean; empty?: string }) {
@@ -165,14 +165,14 @@ export function HereNow({ here }: { here: Here[] }) {
   return <ul className="people-list">{here.map((who, index) => <li key={index}><PersonLink name={who.agent} /><span className="quiet">{MODES[who.mode] ?? who.mode}{who.project ? ` · ${who.project}` : ""}</span><span className="online-dot" title="Connected now" /></li>)}</ul>;
 }
 
-/** People and agents as cards, grouped by what they may do, with who is connected right now. */
-export function People({ groups, here = [], agents = [] }: { groups: { title: string; names: string[]; note?: string }[]; here?: Here[]; agents?: string[] }) {
+/** People and agents as cards, grouped by what they may do (each card can say why), with who is connected right now. */
+export function People({ groups, here = [], agents = [], counted = n => `${n} ${n === 1 ? "person" : "people and agents"}` }: { groups: { title: string; names: string[]; note?: string; detail?: (name: string) => string }[]; here?: Here[]; agents?: string[]; counted?: (n: number) => string }) {
   const shown = groups.filter(group => group.names.length);
   if (!shown.length) return <Empty icon={<Users size={20} />} title="No people yet" />;
   const online = new Set(here.map(who => who.agent));
   const total = new Set(shown.flatMap(group => group.names)).size;
-  return <Browser head={<>{total} {total === 1 ? "person" : "people and agents"}{online.size ? <> · <span className="strip-here"><i className="online-dot" />{online.size} here now</span></> : null}</>} groups={shown.map(group => ({ key: group.title, title: group.title, note: group.note, compact: true, cards: group.names.map(name => ({
-    key: name, name, search: group.title, href: "/" + encodeURIComponent(name), title: name,
+  return <Browser head={<>{counted(total)}{online.size ? <> · <span className="strip-here"><i className="online-dot" />{online.size} here now</span></> : null}</>} groups={shown.map(group => ({ key: group.title, title: group.title, note: group.note, compact: true, cards: group.names.map(name => ({
+    key: name, name, search: group.title, href: "/" + encodeURIComponent(name), title: name, detail: group.detail?.(name),
     icon: <Avatar name={name} size={28} kind={agents.includes(name) ? "agent" : undefined} />,
     labels: online.has(name) ? <span className="label done" title="Connected now"><i className="online-dot" />Here now</span> : undefined,
   })) }))} />;

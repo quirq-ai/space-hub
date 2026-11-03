@@ -12,7 +12,7 @@ import { Browser, Glyph, type PlaceCard } from "@/ui/cards";
 import { useFolderSummaries } from "@/hooks/use-folders";
 import { ChatView } from "./chat";
 import { ChannelList, ChannelPage } from "./channels";
-import { channelConversation, intro, listsChannels } from "@/lib/channels";
+import { channelConversation, listsChannels } from "@/lib/channels";
 import type { WorkspaceSnapshot } from "@/lib/types";
 
 export const SECTION_ICONS = new Map<string, LucideIcon>([
@@ -93,7 +93,6 @@ export function FilesTab({ place, path, as, view, error, me, signIn, refresh }: 
   const files = entries.filter(entry => entry.kind === "file");
   const atRoot = !snapshot.directory.path;
   const isSection = (entry: Entry) => atRoot && SECTION_ICONS.has(entry.name.toLowerCase());
-  const purpose = readme ? intro(readme.content) : "";
   const folderCard = (entry: Entry): PlaceCard => {
     const Icon = entryIcon(entry);
     const summary = summaries[entry.path];
@@ -114,7 +113,7 @@ export function FilesTab({ place, path, as, view, error, me, signIn, refresh }: 
   return <div className="folder">
     {as === "folder" && (channelConversation(snapshot.directory.entries, readme?.content) || listsChannels(snapshot.directory.entries)) && <a className="callout" href={filesHref(place, snapshot.directory.path)} onClick={onLink}><MessageCircle size={18} /><span><strong>Back to the {listsChannels(snapshot.directory.entries) && !channelConversation(snapshot.directory.entries, readme?.content) ? "channels" : "conversation"}</strong><span>You are looking at this folder as files</span></span><ChevronRight size={16} /></a>}
     {index && <a className="callout" href={filesHref(place, index.path)} onClick={onLink}><MessageCircle size={18} /><span><strong>Open the saved view</strong><span>index.json</span></span><ChevronRight size={16} /></a>}
-    {entries.length ? <Browser head={<>{parts} in {atRoot ? place.project : snapshot.directory.name}</>} intro={purpose || undefined} keepOrder={atRoot}
+    {entries.length ? <Browser head={<>{parts} in {atRoot ? place.project : snapshot.directory.name}</>} keepOrder={atRoot}
       actions={<a className="button ghost small" href={placeUrl(place, hashOf("code", { path: snapshot.directory.path }))} onClick={onLink} title="Read these files in the Code tab"><Code2 size={14} />Code</a>}
       groups={[
         { key: "sections", title: "Sections", note: "The places this workspace is made of. Each one opens the way its content reads best.", cards: sections.map(folderCard) },

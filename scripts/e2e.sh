@@ -492,6 +492,28 @@ app_has "one commit behind it" "space=$ALICE&project=chatroom&view=deps" '"statu
 app_has "a profile shows what its builder works on" "space=$WEBUSER" "\"collaborates\":[\"$ALICE/chatroom\"]"
 same "everyone has an avatar" "$(curl -s -o /dev/null -w '%{http_code} %{content_type}' "$WEB/-/avatar/$ALICE")" "200 image/svg+xml"
 
+echo "a place's chat"
+# JSON is built with printf: bash 3.2 brace-expands "{a,b}" inside "$(...)".
+act() { # act <route> <json>: an app change as the web builder -> HTTP status
+  curl -s -o "$WORK/act.json" -w '%{http_code}' -b "$JAR" -H "Origin: $WEB" -H 'content-type: application/json' -d "$2" "$WEB$1"
+}
+start_chat() { act /-/api/start-chat "$(printf '{"space":"%s","project":"%s"}' "$1" "$2")"; }
+same "a collaborator starts the project's chat" "$(start_chat "$ALICE" chatroom)" "200"
+app_has "a conversation in Chat/chat.json" "space=$ALICE&project=chatroom&path=Chat%2Fchat.json" "$WEBUSER started this chat."
+HEAD1="$(as alice git ls-remote "$HUB/$ALICE/chatroom" refs/heads/main | cut -f1)"
+same "starting it again" "$(start_chat "$ALICE" chatroom)" "200"
+same "changes nothing" "$(as alice git ls-remote "$HUB/$ALICE/chatroom" refs/heads/main | cut -f1)" "$HEAD1"
+same "the chat takes messages" "$(act /-/api/chat "$(printf '{"space":"%s","project":"chatroom","conversation":"Chat/chat.json","turns":[{"id":"c1","role":"user","content":"hello chat"}]}' "$ALICE")")" "200"
+app_has "saved beside it" "space=$ALICE&project=chatroom&path=Chat%2Fchat.log.jsonl" "hello chat"
+same "a builder's own space has no chat" "$(start_chat "$WEBUSER" "")" "400"
+CHATS="chats$RUN"
+check "an org" as alice spacehub space create "$CHATS"
+same "only its members start its chat" "$(start_chat "$CHATS" "")" "403"
+check "the web builder joins it" as alice spacehub space member add "$CHATS" "$WEBUSER"
+same "and starts the org's chat" "$(start_chat "$CHATS" "")" "200"
+app_has "a chat project, chat.json at its root" "space=$CHATS&project=chat&path=chat.json" "$WEBUSER started this chat."
+app_has "with a README" "space=$CHATS&project=chat" '"name":"README.md"'
+
 echo "sign up with GitHub"
 if [[ -n "${SPACEHUB_E2E_SERVER:-}" || "${SPACEHUB_E2E_GITHUB:-}" == 1 ]]; then
   # GitHub itself answers: only a refusal can be checked without an account.
@@ -606,11 +628,14 @@ expect_fail "builders outside the org cannot push" "permission denied" \
   bash -c "cd '$T' && echo x >>index.html && git -c user.name=e2e -c user.email=e2e@example.com commit -qam x && SPACEHUB_HOME='$WORK/home-carol' git push quirq main"
 git -C "$T" reset -q --hard HEAD~1
 check "space view shows the org" bash -c "SPACEHUB_HOME='$WORK/home-alice' spacehub space view $ORG | grep -q 'members   $BOB'"
+app_has "the org names its founder, who started it" "space=$ORG" "\"founder\":\"$ALICE\""
+app_has "and the founder's profile says so" "space=$ALICE" "\"space\":\"$ORG\",\"kind\":\"org\",\"role\":\"owner\",\"founder\":true"
 expect_fail "only owners pick an org's GitHub picture" "permission denied" as bob spacehub space edit "$ORG" --github octo-org
 check "the owner picks one" as alice spacehub space edit "$ORG" --github octo-org
 app_has "and the org names it" "space=$ORG" '"githubLogin":"octo-org"'
 expect_fail "a builder's space shows its own account's picture" "is not an org" as alice spacehub space edit "$ALICE" --github octo-org
-same "the app's picture route refuses non-owners" "$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" -H 'content-type: application/json' -d "{\"space\":\"$ORG\",\"login\":\"octo-org\"}" "$WEB/-/api/space-picture")" "403"
+same "the app's picture route refuses non-owners" "$(act /-/api/space-picture "$(printf '{"space":"%s","login":"octo-org"}' "$ORG")")" "403"
+grep -q "permission denied" "$WORK/act.json" && ok "because only owners pick it" || fail "because only owners pick it ($(cat "$WORK/act.json"))"
 check "the owner goes back to the default" as alice spacehub space edit "$ORG" --github ""
 app_has "which names no GitHub organization" "space=$ORG" '"githubLogin":""'
 check "an org's default picture is a building" bash -c "curl -sf '$WEB/-/avatar/$ORG' | grep -q 'M6 22V4'"

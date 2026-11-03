@@ -10,13 +10,13 @@ export type Route =
   | { page: "home"; tab: "home" | "agents" | "builders" | "settings" }
   // A connected sub-hub's storage, read live (/subhub/<name>, #/backup?id= one backup).
   | { page: "subhub"; name: string; backup: string }
-  | { page: "space"; place: Place; tab: "projects" | "agents" | "activity" | "people" }
+  | { page: "space"; place: Place; tab: "projects" | "agents" | "chat" | "activity" | "people" }
   // as=folder shows a folder as files even when it is a channel or a list of channels.
   | { page: "project"; place: Place; tab: "files"; path: string; as: string }
   | { page: "project"; place: Place; tab: "code"; ref: string; path: string }
   | { page: "project"; place: Place; tab: "commits"; ref: string; path: string; num: number }
   | { page: "project"; place: Place; tab: "commit"; oid: string }
-  | { page: "project"; place: Place; tab: "deps" | "branches" | "activity" | "people" };
+  | { page: "project"; place: Place; tab: "deps" | "branches" | "chat" | "activity" | "people" };
 
 function decode(part: string) { try { return decodeURIComponent(part); } catch { return part; } }
 
@@ -28,12 +28,12 @@ export function parseRoute(pathname: string, hash: string): Route {
   if (!project && (tab === "settings" || tab === "subhubs")) return { page: "home", tab: "settings" };
   if (space === "subhub" && project) return { page: "subhub", name: project, backup: tab === "backup" ? params.get("id") ?? "" : "" };
   if (!space) return { page: "home", tab: tab === "agents" || tab === "builders" ? tab : "home" };
-  if (!project) return { page: "space", place, tab: tab === "activity" || tab === "people" || tab === "agents" ? tab : "projects" };
+  if (!project) return { page: "space", place, tab: tab === "activity" || tab === "people" || tab === "agents" || tab === "chat" ? tab : "projects" };
   switch (tab) {
     case "code": return { page: "project", place, tab: "code", ref: params.get("ref") ?? "", path: params.get("path") ?? "" };
     case "commits": return { page: "project", place, tab: "commits", ref: params.get("ref") ?? "", path: params.get("path") ?? "", num: Number(params.get("page") ?? 1) || 1 };
     case "commit": return { page: "project", place, tab: "commit", oid: params.get("oid") ?? "" };
-    case "deps": case "branches": case "activity": case "people": return { page: "project", place, tab };
+    case "deps": case "branches": case "chat": case "activity": case "people": return { page: "project", place, tab };
     default: return { page: "project", place, tab: "files", path: params.get("path") ?? "", as: params.get("as") ?? "" };
   }
 }

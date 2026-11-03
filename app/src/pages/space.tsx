@@ -8,11 +8,12 @@ import { PathBar } from "@/shell/path-bar";
 import { hashOf, onLink } from "@/router";
 import { Ago, Avatar, AvatarStack, CommandTabs, Empty, Popover, SkeletonRows } from "@/ui/primitives";
 import { ActivityStream, HereNow, PageHeader, People, Tabs } from "./common";
+import { ChatSection } from "./chat-section";
 
 const KIND_ICON = { personal: <User size={13} />, org: <Building2 size={13} />, agent: <Bot size={13} /> } as Record<string, React.ReactNode>;
 
 /** A builder's profile, an org, or an agent: who they are, what they work on, what they did. */
-export function SpacePage({ name, tab, view, error, me, seen }: { name: string; tab: "projects" | "agents" | "activity" | "people"; view: View<SpaceMeta> | undefined; error: string; me: string | null; seen: Record<string, string> }) {
+export function SpacePage({ name, tab, view, error, me, signIn, seen }: { name: string; tab: "projects" | "agents" | "chat" | "activity" | "people"; view: View<SpaceMeta> | undefined; error: string; me: string | null; signIn: string; seen: Record<string, string> }) {
   if (!view) return <div className="page">{error ? <Empty icon={<User size={20} />} title={`No space named ${name}`}><p>{error}</p></Empty> : <><div className="profile-skeleton"><span className="skeleton round" style={{ width: 72, height: 72 }} /><SkeletonRows rows={2} avatar={false} /></div><SkeletonRows rows={5} /></>}</div>;
   const meta = view.meta;
   const projects = [...view.snapshot.directory.entries].sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
@@ -22,6 +23,7 @@ export function SpacePage({ name, tab, view, error, me, seen }: { name: string; 
   const hasAgents = meta.kind !== "agent";
   const agentCount = meta.agentList.length;
   const canManage = !!me && meta.owners.includes(me);
+  const hasChat = meta.kind === "org" || meta.kind === "agent";
   const byProject = newestBy(meta.activity, item => item.path);
   const peopleByProject = activeBy(meta.activity, item => item.path);
   return <div className="page">
@@ -46,14 +48,16 @@ export function SpacePage({ name, tab, view, error, me, seen }: { name: string; 
         {meta.here.length > 0 && <a className="strip-here" href={base + "#" + hashOf("people")} onClick={onLink} title={meta.here.map(who => who.agent).join(", ")}><i className="online-dot" />{new Set(meta.here.map(who => who.agent)).size} here now</a>}
       </div>
       {meta.memberOf.length > 0 && <div className="profile-links">
-        {meta.memberOf.map(role => <a key={role.space} className="chip-link" href={placeUrl({ space: role.space, project: "" })} onClick={onLink}><Avatar name={role.space} size={18} kind={role.kind} />{role.space}{role.role === "owner" && <span className="quiet">owner</span>}</a>)}
+        {meta.memberOf.map(role => <a key={role.space} className="chip-link" href={placeUrl({ space: role.space, project: "" })} onClick={onLink}><Avatar name={role.space} size={18} kind={role.kind} />{role.space}{role.founder ? <span className="quiet">founder</span> : role.role === "owner" && <span className="quiet">owner</span>}</a>)}
       </div>}
     </PageHeader>
     <Tabs active={tab} tabs={[
       { key: "projects", label: "Projects", href: base, count: meta.projects },
       ...(hasAgents ? [{ key: "agents", label: "Agents", href: base + "#" + hashOf("agents"), count: agentCount }] : []),
       { key: "people", label: meta.kind === "org" ? "Members" : "People", href: base + "#" + hashOf("people"), count: peopleCount || undefined },
-      { key: "activity", label: "Activity", href: base + "#" + hashOf("activity") },
+      // Orgs and agents have one chat each; a builder's own space has none.
+      ...(hasChat ? [{ key: "chat", label: "Chat", href: base + "#" + hashOf("chat") }] : []),
+      { key: "activity", label: "Activity", href: base + "#" + hashOf("activity"), count: meta.activity.length || undefined },
     ]} />
     {tab === "projects" && <>
       {meta.kind !== "agent" && <SpaceOverview name={name} meta={meta} projects={projects} />}
@@ -71,10 +75,17 @@ export function SpacePage({ name, tab, view, error, me, seen }: { name: string; 
       ]} /> : <Empty icon={<FolderGit2 size={20} />} title="No projects yet"><p>Create one with <code>spacehub project create {name}/&lt;name&gt; --source . --push</code>.</p></Empty>}
     </>}
     {tab === "agents" && hasAgents && <AgentList space={name} kind={meta.kind} agents={meta.agentList} canManage={canManage} />}
+    {/* An agent's owners are its parent's, which this view does not list: the hub decides. */}
+    {tab === "chat" && hasChat && <ChatSection place={{ space: name, project: "" }} kind={meta.kind} me={me} signIn={signIn} canStart={!!me && (meta.kind === "org" ? meta.owners.includes(me) || meta.members.includes(me) : true)} />}
     {tab === "activity" && <ActivityStream items={meta.activity} agents={[...new Set([...meta.agentList.map(agent => agent.name), ...meta.agents])]} />}
     {tab === "people" && <>
       {meta.here.length > 0 && <><h2 className="section-title">Here now</h2><HereNow here={meta.here} /></>}
-      <People here={meta.here} groups={[{ title: "Owners", names: meta.owners, note: `They manage ${name}.` }, { title: "Members", names: meta.members, note: `They push to every project of ${name}.` }]} />
+      <People here={meta.here} groups={[
+        // The builder who started an org is its founder; owners added later manage it with them.
+        { title: "Founder", names: meta.founder ? [meta.founder] : [], note: `They started ${name}.` },
+        { title: "Owners", names: meta.owners.filter(owner => owner !== meta.founder), note: `They manage ${name}.` },
+        { title: "Members", names: meta.members, note: `They push to every project of ${name}.` },
+      ]} />
     </>}
   </div>;
 }

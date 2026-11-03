@@ -36,7 +36,7 @@ import { Sha1, objectHeader } from './sha1';
 import { CHUNK_SIZE, PRESENCE_STALE_SECONDS, commitParents, inSpace, memberKey, objectKey, ownsSpace, projectFor, readObject, refKey, roleKey, spaceFor } from './store';
 import { renderUi } from './ui';
 import { ApiError, parseQuery, renderApi, templateFiles } from './workspace';
-import { appendTurns, type NewObject } from './chat';
+import { addFiles, appendTurns, type NewObject } from './chat';
 import { commitFiles, instantiate } from './space';
 import { BUILTIN_TEMPLATE } from './spacetemplate';
 import { OLDEST_PROTOCOL, PROTOCOL } from './protocol';
@@ -1231,6 +1231,58 @@ export const appendChat = spacetimedb.reducer(
     logActivity(ctx, { projectId: sp.id, path: sp.fullName, kind: 'ref_updated', subject: name, oid: built.commit, count: 1, text: built.subject });
   }
 );
+
+// Where a place's one chat lives (the app's lib/chat-place.ts agrees): an
+// org's in <org>/chat, at its root; an agent's in its home project; a
+// project's in Chat/chat.json, or at the root of a project named chat.
+function chatOf(ctx: Ctx, space: string, project: string) {
+  space = spaceFor(ctx.db, space.trim().toLowerCase());
+  const row = requireSpace(ctx, space);
+  const name = project.trim();
+  if (name) return { space, project: name, path: name === 'chat' ? 'chat.json' : 'Chat/chat.json', where: `${space}/${name}` };
+  if (row.kind === 'org') return { space, project: 'chat', path: 'chat.json', where: space };
+  if (row.kind === 'agent') return { space, project: 'home', path: 'Chat/chat.json', where: space };
+  throw new SenderError('start a chat in an org, an agent or a project');
+}
+
+// Start a place's chat: one conversation file, in a project made for it
+// when an org or an agent has none yet. A chat already there stays as it is.
+export const startChat = spacetimedb.reducer({ space: t.string(), project: t.string() }, (ctx, { space, project }) => {
+  const me = requireActor(ctx);
+  const at = chatOf(ctx, space, project);
+  const fullName = projectFor(ctx.db, `${at.space}/${at.project}`);
+  const fresh = !ctx.db.project.fullName.find(fullName);
+  if (fresh && project.trim()) throw new SenderError(`project "${fullName}" not found`);
+  if (fresh) createProjectIn(ctx, at.space, at.project, at.project === 'chat' ? `The chat of ${at.space}` : '');
+  const sp = requireWritable(ctx, fullName);
+  const files: Record<string, string> = {
+    [at.path]: JSON.stringify({ type: 'conversation', title: `${at.where} chat`, messages: [{ role: 'system', content: `${me} started this chat.` }] }, null, 2) + '\n',
+  };
+  if (fresh && at.project === 'chat') files['README.md'] = `# ${fullName}\n\nThe chat of ${at.space}: \`chat.json\` starts the conversation and \`chat.log.jsonl\` keeps every message, one per line.\n`;
+  const name = `refs/heads/${sp.defaultBranch}`;
+  const current = ctx.db.gitRef.key.find(refKey(sp.id, name));
+  let built: ReturnType<typeof addFiles>;
+  try {
+    built = addFiles({
+      head: current?.oid ?? '',
+      files,
+      author: me,
+      now: Number(ctx.timestamp.microsSinceUnixEpoch / 1_000_000n),
+      message: `Start the chat of ${at.where}`,
+      read: oid => readObject(ctx.db, sp.id, oid),
+    });
+  } catch (err) {
+    throw new SenderError(err instanceof Error ? err.message : String(err));
+  }
+  if (!built.added.includes(at.path)) return;
+  let added = 0n;
+  for (const object of built.objects) added += writeObject(ctx, sp, object);
+  if (current) ctx.db.gitRef.id.update({ ...current, oid: built.commit, updatedAt: ctx.timestamp, updatedBy: ctx.sender });
+  else ctx.db.gitRef.insert({ id: 0n, key: refKey(sp.id, name), projectId: sp.id, name, oid: built.commit, updatedAt: ctx.timestamp, updatedBy: ctx.sender });
+  ctx.db.project.id.update({ ...sp, pushedAt: ctx.timestamp });
+  grow(ctx, sp.id, added);
+  logActivity(ctx, { projectId: sp.id, path: sp.fullName, kind: current ? 'ref_updated' : 'ref_created', subject: name, oid: built.commit, count: 1, text: `Start the chat of ${at.where}` });
+});
 
 // ---------------------------------------------------------------- spaces
 

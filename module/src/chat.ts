@@ -156,3 +156,58 @@ export function appendTurns(input: AppendInput): { commit: string; objects: NewO
   return { commit, objects, log, subject };
 }
 
+export interface AddInput {
+  /** The project's current default-branch commit; "" for its first one. */
+  head: string;
+  /** Text files by path; one already there is kept as it is. */
+  files: Record<string, string>;
+  author: string;
+  /** Seconds since the epoch. */
+  now: number;
+  message: string;
+  read: (oid: string) => { kind: string; data: Uint8Array } | null;
+}
+
+/** Build the blobs, trees and commit that add new files (a chat's conversation); nothing is written here. */
+export function addFiles(input: AddInput): { commit: string; objects: NewObject[]; added: string[] } {
+  const objects = new Map<string, NewObject>();
+  const add = (kind: string, data: Uint8Array) => {
+    const oid = hashObject(kind, data);
+    objects.set(oid, { oid, kind, data });
+    return oid;
+  };
+  // Trees built here are read back before they are stored.
+  const read = (oid: string, kind: string) => {
+    const object = objects.get(oid) ?? input.read(oid);
+    if (!object || object.kind !== kind) throw new ApiError(`The hub is missing a ${kind}.`, 500);
+    return object.data;
+  };
+  const tree = (oid: string) => (oid ? parseTree(read(oid, 'tree')) : []);
+  const exists = (root: string, parts: string[]): boolean => {
+    const entry = tree(root).find(candidate => candidate.name === parts[0]);
+    if (!entry || parts.length === 1) return !!entry;
+    return isDirectoryMode(entry.mode) && exists(entry.oid, parts.slice(1));
+  };
+  const put = (treeOid: string, parts: string[], blob: string): string => {
+    const entries = tree(treeOid);
+    const [name, ...rest] = parts;
+    const current = entries.find(entry => entry.name === name);
+    if (rest.length && current && !isDirectoryMode(current.mode)) throw new ApiError(`${name} is not a folder.`, 409);
+    const entry: TreeEntry = rest.length
+      ? { mode: '40000', name, oid: put(current && isDirectoryMode(current.mode) ? current.oid : '', rest, blob) }
+      : { mode: '100644', name, oid: blob };
+    return add('tree', serializeTree([...entries.filter(other => other.name !== name), entry]));
+  };
+  let root = input.head ? parseCommit(read(input.head, 'commit')).tree : '';
+  const added: string[] = [];
+  for (const [path, text] of Object.entries(input.files)) {
+    const parts = relativePath(path).split('/');
+    if (exists(root, parts)) continue;
+    root = put(root, parts, add('blob', encoder.encode(text)));
+    added.push(path);
+  }
+  if (!added.length) return { commit: '', objects: [], added };
+  const who = `${input.author.replace(/[<>\n]/g, '')} <${input.author.replace(/[<>\n\s]/g, '')}@spacehub> ${Math.floor(input.now)} +0000`;
+  const commit = add('commit', encoder.encode(`tree ${root}\n${input.head ? `parent ${input.head}\n` : ''}author ${who}\ncommitter ${who}\n\n${input.message}\n`));
+  return { commit, objects: [...objects.values()], added };
+}
