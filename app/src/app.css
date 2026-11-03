@@ -499,6 +499,7 @@ a.overview-tile:hover { border-color: var(--line-strong); text-decoration: none;
 .org-picture-row { display: flex; gap: 8px; }
 .org-picture .button.ghost { margin-top: 8px; }
 .org-picture .org-picture-error { margin: 8px 0 0; color: var(--red); }
+.chat-start-error { margin: 10px 0 0; color: var(--red); font-size: 13px; }
 .command-tabs { display: grid; gap: 8px; }
 .segmented { display: inline-flex; justify-self: start; padding: 2px; border-radius: 8px; background: var(--fill); }
 .segmented button { padding: 3px 12px; border: 0; border-radius: 6px; background: none; color: var(--text-2); font-size: 12.5px; cursor: pointer; }

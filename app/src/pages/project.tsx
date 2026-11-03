@@ -3,6 +3,7 @@ import { placeUrl, rawUrl, size, type Place, type ProjectMeta, type View } from 
 import { hashOf, onLink, type Route } from "@/router";
 import { Ago, Avatar, AvatarStack, CommandTabs, ErrorNote, Popover, Skeleton } from "@/ui/primitives";
 import { ActivityStream, HereNow, PageHeader, People, Tabs } from "./common";
+import { ChatSection } from "./chat-section";
 import { BranchesTab, CodeTab, CommitTab, CommitsTab } from "./code";
 import { DepsTab } from "./deps";
 import { FilesTab, isChannel } from "./files";
@@ -35,6 +36,7 @@ export function ProjectPage({ route, view, error, me, signIn, refresh }: { route
       { key: "files", label: "Files", href: base + "#" + hashOf("files") },
       ...(meta?.deps || route.tab === "deps" ? [{ key: "deps", label: "Dependencies", href: base + "#" + hashOf("deps"), count: meta?.deps || undefined }] : []),
       { key: "code", label: "Code", href: base + "#" + hashOf("code") },
+      { key: "chat", label: "Chat", href: base + "#" + hashOf("chat") },
       { key: "activity", label: "Activity", href: base + "#" + hashOf("activity"), count: meta?.activity.length || undefined },
       { key: "people", label: "Contributors", href: base + "#" + hashOf("people"), count: people },
     ]} />
@@ -45,6 +47,7 @@ export function ProjectPage({ route, view, error, me, signIn, refresh }: { route
     {route.tab === "commit" && <CommitTab place={place} oid={route.oid} />}
     {route.tab === "deps" && <DepsTab place={place} />}
     {route.tab === "branches" && <BranchesTab place={place} />}
+    {meta && route.tab === "chat" && <ChatSection place={place} me={me} signIn={signIn} canStart={!!me && meta.canWrite} />}
     {meta && route.tab === "activity" && <ActivityStream items={meta.activity} agents={meta.agents} />}
     {meta && route.tab === "people" && <>
       {meta.here.length > 0 && <><h2 className="section-title">Here now</h2><HereNow here={meta.here} /></>}

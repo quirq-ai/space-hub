@@ -76,11 +76,21 @@ export function avatarUrl(name: string): string {
   return "/-/avatar/" + encodeURIComponent(key) + (version ? `?v=${version}` : "");
 }
 
+/** A change the web service makes as the signed-in builder (cli/src/app.ts ACTIONS); throws the hub's reason when refused. */
+async function act(route: string, body: Record<string, string>, what: string): Promise<void> {
+  const response = await fetch(route, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  if (!response.ok) throw new Error((await response.json().catch(() => null) as { error?: string } | null)?.error ?? `Could not ${what} (${response.status}).`);
+}
+
 /** An org owner picks the GitHub organization whose picture the org shows ("" for the default). */
 export async function setSpacePicture(space: string, login: string): Promise<void> {
-  const response = await fetch("/-/api/space-picture", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ space, login }) });
-  if (!response.ok) throw new Error((await response.json().catch(() => null) as { error?: string } | null)?.error ?? `Could not change the picture (${response.status}).`);
+  await act("/-/api/space-picture", { space, login }, "change the picture");
   pictureVersions.set(space.toLowerCase(), Date.now());
+}
+
+/** Start the one chat of an org, an agent or a project (lib/chat-place.ts says where it goes). */
+export async function startChat(place: Place): Promise<void> {
+  await act("/-/api/start-chat", { space: place.space, project: place.project }, "start the chat");
 }
 
 /** The module's raw view of a file, for image previews and PDFs. */
