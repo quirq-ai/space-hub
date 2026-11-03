@@ -39,7 +39,8 @@ const choices = [
   { value: "system", label: "System", Icon: Monitor }
 ] as const;
 
-export function ThemePicker() {
+/** Light, dark or the device's: an icon button, or (in the sidebar) a row with its name. */
+export function ThemePicker({ variant = "icon" }: { variant?: "icon" | "nav" }) {
   const preference = useSyncExternalStore(subscribe, currentPreference, serverPreference);
   const picker = useRef<HTMLDetailsElement>(null);
   const group = useId();
@@ -67,7 +68,9 @@ export function ThemePicker() {
   }
 
   return <details className="theme-picker" ref={picker}>
-    <summary className="icon-button" aria-label={`Appearance: ${preference}`} title="Appearance"><Icon size={17} strokeWidth={1.8} /></summary>
+    {variant === "nav"
+      ? <summary className="nav-item" aria-label={`Appearance: ${preference}`} title="Appearance"><span className="nav-icon"><Icon size={16} /></span><span className="nav-label">Appearance</span><span className="nav-hint">{choices.find(choice => choice.value === preference)?.label}</span></summary>
+      : <summary className="icon-button" aria-label={`Appearance: ${preference}`} title="Appearance"><Icon size={17} strokeWidth={1.8} /></summary>}
     <fieldset className="theme-menu">
       <legend>Appearance</legend>
       {choices.map(({ value, label, Icon: OptionIcon }) => <label className="theme-option" key={value}>
