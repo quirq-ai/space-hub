@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cardActions, cardHeadline, foldEvents, launchInput, launchNote, launchOf, linkLabel, repoName, runnerLabel, stateNote, toWorkerDetail, webLinksOnly, withoutCredit, toDetail, toEvents, toTasks, type RunnerInfo } from "../src/lib/workers.ts";
+import { cardActions, cardHeadline, connectOutcome, foldEvents, launchInput, launchNote, launchOf, linkLabel, repoName, runnerLabel, stateNote, toWorkerDetail, webLinksOnly, withoutCredit, toDetail, toEvents, toTasks, type RunnerInfo } from "../src/lib/workers.ts";
 
 test("tasks from a list or {tasks}, newest activity first", () => {
   const tasks = toTasks({ tasks: [
@@ -150,4 +150,15 @@ test("the same note twice in a row shows once", () => {
     { seq: 4, kind: "env", state: "connected" },
   ]);
   assert.deepEqual(items.map(i => i.type === "note" ? `note:${i.text}` : i.type), ["note:Sandbox connected.", "agent", "note:Sandbox connected."]);
+});
+
+test("back from Connect: a plain sentence for each outcome, nothing for anything else", () => {
+  assert.deepEqual(connectOutcome("connected"), { ok: true, text: "Runner connected. You can launch workers on it now." });
+  assert.equal(connectOutcome("denied")?.ok, false);
+  assert.match(connectOutcome("denied")!.text, /cancelled/);
+  assert.match(connectOutcome("expired")!.text, /press Connect again/);
+  assert.match(connectOutcome("failed")!.text, /paste a token/);
+  assert.match(connectOutcome("full")!.text, /Agent access/);
+  assert.equal(connectOutcome("<script>"), null);
+  assert.equal(connectOutcome(null), null);
 });

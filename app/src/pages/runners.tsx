@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Bot, Plug, Rocket } from "lucide-react";
 import { useLive } from "@/hooks/use-live";
-import { isRunning, runnerLabel, send, statusLabel, type RunnerInfo } from "@/lib/workers";
+import { connectOutcome, isRunning, runnerLabel, send, statusLabel, type RunnerInfo } from "@/lib/workers";
 import { Ago, Empty, ErrorNote, SkeletonRows } from "@/ui/primitives";
 
 type MyWorker = { taskId: string; runnerId: string; title: string; status: string; space: string; project: string; updatedAt: string };
@@ -10,11 +10,14 @@ type MyWorker = { taskId: string; runnerId: string; title: string; status: strin
  * Settings → Runners: the runners this person connected (each a Worker
  * Protocol address and a token only it can use), and the workers they
  * launched on them. Workers from chats run here, on the launcher's account.
+ * Connect sends the browser to the runner to approve, and back here with
+ * ?runner=<outcome>; a runner without that button takes a pasted token.
  */
 export function RunnersSection() {
   const list = useLive<{ enabled: boolean; runners: RunnerInfo[] }>("/-/api/runners", 0);
   const [url, setUrl] = useState("");
   const [token, setToken] = useState("");
+  const [withToken, setWithToken] = useState(false);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
@@ -22,6 +25,30 @@ export function RunnersSection() {
     setBusy(what); setError(""); setNote("");
     try { await fn(); setNote(done); list.refresh(); } catch (err) { setError(err instanceof Error ? err.message : "That did not work."); } finally { setBusy(""); }
   };
+  // Back from a runner's consent page: say how it went, once, and take the outcome out of the address.
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const outcome = connectOutcome(params.get("runner"));
+    if (!params.has("runner")) return;
+    if (outcome) (outcome.ok ? setNote : setError)(outcome.text);
+    params.delete("runner");
+    const rest = params.toString();
+    history.replaceState(history.state, "", `${location.pathname}${rest ? `?${rest}` : ""}${location.hash}`);
+  }, []);
+  // Connect: to the runner's consent page. A runner that only takes tokens opens the token field instead.
+  const connect = async () => {
+    setBusy("connect"); setError(""); setNote("");
+    try {
+      const { redirect } = await send("POST", "/runners/connect", { url: url.trim() }) as { redirect: string };
+      location.assign(redirect);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "That did not work.";
+      setError(message);
+      if (/paste/i.test(message)) setWithToken(true);
+      setBusy("");
+    }
+  };
+  const paste = () => run("connect", async () => { await send("POST", "/runners", { url: url.trim(), token: token.trim() }); setUrl(""); setToken(""); setWithToken(false); }, "Connected.");
   if (list.status === 401) return null;
   if (list.data && !list.data.enabled) return <section className="subhubs" aria-label="Runners"><header className="subhub-heading"><div><h2><Plug size={20} />Runners</h2><p className="quiet">Connecting runners is not set up on this hub.</p></div></header></section>;
   const runners = list.data?.runners ?? [];
@@ -29,7 +56,7 @@ export function RunnersSection() {
     <header className="subhub-heading"><div><h2><Plug size={20} />Runners</h2><p className="quiet">Where the workers you launch from chats run, on your own account.</p></div></header>
     {list.error && list.status !== 401 && <ErrorNote message={list.error} retry={list.refresh} />}
     {list.loading && !list.data ? <SkeletonRows rows={1} /> : runners.length === 0
-      ? <Empty icon={<Bot size={22} />} title="No runner connected"><p>Connect a runner to launch workers from chats. Make a token on the runner that only sees the tasks it starts (Agents Hub: Settings → Agent access → Only tasks it starts), then paste its address and token here.</p></Empty>
+      ? <Empty icon={<Bot size={22} />} title="No runner connected"><p>Connect a runner to launch workers from chats: enter its address, press Connect and approve on the runner. A runner without that button takes a token instead (Agents Hub: Settings → Agent access → Only tasks it starts).</p></Empty>
       : <ul className="runner-list">{runners.map(r => <li key={r.id} className="runner-row">
         <div><strong>{runnerLabel(r.name, r.kind)}</strong>{r.isDefault && <span className="quiet"> · default</span>}<div className="quiet">{r.url} · checked <Ago iso={r.checkedAt} /></div></div>
         <div className="subhub-actions">
@@ -38,11 +65,12 @@ export function RunnersSection() {
           <button type="button" className="button small danger" disabled={!!busy} onClick={() => { if (confirm(`Disconnect ${r.name}? Its workers keep their results here; connect it again to steer them.`)) void run(`delete:${r.id}`, () => send("DELETE", `/runners/${r.id}`)); }}>Disconnect</button>
         </div>
       </li>)}</ul>}
-    <form className="subhub-form runner-form" onSubmit={event => { event.preventDefault(); void run("connect", async () => { await send("POST", "/runners", { url: url.trim(), token: token.trim() }); setUrl(""); setToken(""); }, "Connected."); }}>
+    <form className="subhub-form runner-form" onSubmit={event => { event.preventDefault(); void (withToken ? paste() : connect()); }}>
       <input aria-label="Runner address" placeholder="https://your-hub.example" value={url} spellCheck={false} autoCapitalize="off" onChange={event => setUrl(event.target.value)} />
-      <input aria-label="Runner token" type="password" placeholder="Token" value={token} autoComplete="off" onChange={event => setToken(event.target.value)} />
-      <button type="submit" className="button primary small" disabled={!url.trim() || !token.trim() || !!busy}>{busy === "connect" ? "Connecting…" : "Connect"}</button>
+      {withToken && <input aria-label="Runner token" type="password" placeholder="Token" value={token} autoComplete="off" onChange={event => setToken(event.target.value)} />}
+      <button type="submit" className="button primary small" disabled={!url.trim() || (withToken && !token.trim()) || !!busy}>{busy === "connect" ? "Connecting…" : "Connect"}</button>
     </form>
+    <button type="button" className="runner-mode" onClick={() => { setWithToken(value => !value); setError(""); }}>{withToken ? "Use the Connect button instead" : "Have a token? Paste it instead"}</button>
     {error && <p className="launch-note is-error">{error}</p>}
     {note && <p className="launch-note">{note}</p>}
     <YourWorkers />

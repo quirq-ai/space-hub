@@ -40,7 +40,7 @@ import { CALLBACK_ROUTE, ConnectGithub, finishSignIn, offerFor, START_ROUTE, sta
 import * as githubWeb from './githubsignin';
 import { appDir, handleApp } from './app';
 import { Reply, select } from './admin';
-import { handleWorkers } from './workers';
+import { CONNECT_CALLBACK, handleWorkers } from './workers';
 import { adminStore } from './runnerstore';
 import { sealKey } from './seal';
 import { InstanceVault } from './instancevault';
@@ -493,7 +493,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   }, req, res, url)) return;
   if (LIVE.handle(req, res, url)) return;
   if (req.method === 'POST' && !sameOrigin(req)) return send(res, 403, page('Forbidden', null, '<h1>Forbidden</h1><p class="desc">This form must be sent from this site.</p>'));
-  if (await handleWorkers(WORKERS, { sessionOf, placesOf, appendChat, sameOrigin }, req, res, url)) return;
+  if (await handleWorkers(WORKERS, { sessionOf, placesOf, appendChat, sameOrigin, callbackUrl: r => callbackOf(r, CONNECT_CALLBACK) }, req, res, url)) return;
   if (await handleApp({ dir: APP_DIR, internalHttp: INTERNAL_HTTP, db: DB, withConn, sessionOf }, req, res, url)) return;
 
   if (route === '/-/login') {

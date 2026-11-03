@@ -122,6 +122,18 @@ export function runnerLabel(name: string, kind: string): string {
   return !name || kind.startsWith(name) ? kind : `${name} · ${kind}`;
 }
 
+/** Back from a runner's consent page (`?runner=<code>`): what to tell the person; null for anything else. */
+export function connectOutcome(code: string | null): { ok: boolean; text: string } | null {
+  switch (code) {
+    case "connected": return { ok: true, text: "Runner connected. You can launch workers on it now." };
+    case "denied": return { ok: false, text: "You cancelled on the runner, so nothing was connected." };
+    case "expired": return { ok: false, text: "That connection took too long or was already used; press Connect again." };
+    case "full": return { ok: false, text: "The runner has no room for another token. Revoke one in its Settings → Agent access, then press Connect again." };
+    case "failed": return { ok: false, text: "The runner could not be connected. Try again, or paste a token instead." };
+    default: return null;
+  }
+}
+
 /** The runner a launch goes to: the default one, else the first. */
 export const defaultRunner = (runners: RunnerInfo[]) => runners.find(r => r.isDefault) ?? runners[0];
 

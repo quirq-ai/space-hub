@@ -1,7 +1,10 @@
 // The Worker Protocol (worker/1): how space-hub reaches a runner, whatever runs the workers behind it
 // (docs/specs/2026-11-03-workers-on-your-own-runners-design.md §5). Nothing here knows a vendor.
 //
-//   GET    /api/worker                  describe: {protocol, name, kind, capabilities}
+//   GET    /api/worker                  describe: {protocol, name, kind, capabilities}; without a token, only
+//                                       {protocol, capabilities} (enough to offer Connect)
+//   POST   /api/connect/token {code, codeVerifier, redirectUri}   Connect: swap the owner's approval for a token
+//   DELETE /api/tokens/self             Disconnect: the token revokes itself
 //   POST   /api/tasks {text, title?, repo?}   start (Idempotency-Key)
 //   GET    /api/tasks/:id               {task, result}
 //   GET    /api/tasks/:id/events?after=N
@@ -55,6 +58,7 @@ export function capabilitiesOf(value: unknown): Capabilities {
   return Object.fromEntries(CAPABILITY_KEYS.map(k => [k, v[k] === true])) as Capabilities;
 }
 
+/** A runner at `url`, called with `token` ("" before there is one: the public description and Connect's swap). */
 export function runner(url: string, token: string, fetchImpl: typeof fetch = fetch) {
   const host = (() => { try { return new URL(url).host; } catch { return 'The runner'; } })();
 
@@ -64,7 +68,7 @@ export function runner(url: string, token: string, fetchImpl: typeof fetch = fet
       response = await fetchImpl(`${url}${path}`, {
         method,
         headers: {
-          authorization: `Bearer ${token}`,
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
           accept: 'application/json',
           ...(body === undefined ? {} : { 'content-type': 'application/json' }),
           ...(key ? { 'idempotency-key': key } : {}),
@@ -111,6 +115,14 @@ export function runner(url: string, token: string, fetchImpl: typeof fetch = fet
     followUp: (id: string, text: string, key: string) => call('POST', `${task(id)}/messages`, { text }, key),
     stop: (id: string) => call('POST', `${task(id)}/stop`),
     teardown: (id: string) => call('DELETE', task(id)),
+    /** Connect: the one-time code from the owner's approval, swapped for a token (called without one). */
+    async exchange(input: { code: string; codeVerifier: string; redirectUri: string }): Promise<string> {
+      const out = (await call('POST', '/api/connect/token', input)) as { token?: unknown };
+      if (typeof out.token !== 'string' || !out.token || out.token.length > 1000) throw new RunnerError(502, `${host} did not send a token.`);
+      return out.token;
+    },
+    /** Disconnect: this token revokes itself on the runner. */
+    revokeSelf: () => call('DELETE', '/api/tokens/self'),
   };
 }
 

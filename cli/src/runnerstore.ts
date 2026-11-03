@@ -2,11 +2,14 @@
 // `runner` and `worker` tables, read over the hub admin's SQL and written through its admin-only reducers
 // (admin.ts), like github_account. A Runner never carries its token; sealedTokenOf is the only way to it.
 // memoryStore is the same behaviour in memory, for tests.
+// How a runner was connected (`via`: a pasted token, or the Connect button) rides in the same JSON column as its
+// capabilities, so Disconnect knows whether the token is space-hub's to revoke, without a schema change.
 import { call, select, type AdminHttp } from './admin.ts';
 import { capabilitiesOf, type Capabilities } from './workerclient.ts';
 
+export type Via = 'paste' | 'connect';
 export type Runner = {
-  id: string; owner: string; name: string; kind: string; url: string; capabilities: Capabilities;
+  id: string; owner: string; name: string; kind: string; url: string; capabilities: Capabilities; via: Via;
   isDefault: boolean; connectedAt: string; checkedAt: string;
 };
 export type WorkerResult = { summary: string | null; links: string[]; error: string | null };
@@ -14,7 +17,7 @@ export type Worker = {
   taskId: string; runnerId: string; runnerUrl: string; launcher: string; space: string; project: string;
   conversation: string; title: string; status: string; result: WorkerResult | null; createdAt: string; updatedAt: string;
 };
-export type NewRunner = { id: string; owner: string; name: string; kind: string; url: string; sealedToken: string; capabilities: Capabilities; isDefault: boolean };
+export type NewRunner = { id: string; owner: string; name: string; kind: string; url: string; sealedToken: string; capabilities: Capabilities; via: Via; isDefault: boolean };
 export type NewWorker = { taskId: string; runnerId: string; runnerUrl: string; launcher: string; space: string; project: string; conversation: string; title: string };
 
 export interface RunnerStore {
@@ -23,7 +26,8 @@ export interface RunnerStore {
   runnerAt(owner: string, url: string): Promise<Runner | null>;
   sealedTokenOf(id: string): Promise<string | null>;
   addRunner(r: NewRunner): Promise<void>;
-  updateRunner(id: string, patch: { name?: string; sealedToken?: string; capabilities?: Capabilities; isDefault?: boolean; checked?: boolean }): Promise<void>;
+  /** New capabilities need `via` too: they are written together. */
+  updateRunner(id: string, patch: { name?: string; sealedToken?: string; capabilities?: Capabilities; via?: Via; isDefault?: boolean; checked?: boolean }): Promise<void>;
   deleteRunner(id: string): Promise<void>;
   listWorkers(filter: { launcher: string }): Promise<Worker[]>;
   getWorker(taskId: string): Promise<Worker | null>;
@@ -64,12 +68,14 @@ function resultOf(raw: unknown): WorkerResult | null {
 }
 
 const RUNNER_COLUMNS = 'id, owner, name, kind, url, capabilities, is_default, connected_at, checked_at';
+const metaOf = (capabilities: Capabilities, via: Via) => JSON.stringify({ ...capabilities, via });
 function toRunner(row: Record<string, unknown>): Runner {
-  let caps: unknown = {};
+  let caps: Record<string, unknown> = {};
   try { caps = JSON.parse(String(row.capabilities ?? '{}')); } catch { /* none */ }
   return {
     id: String(row.id), owner: String(row.owner), name: String(row.name), kind: String(row.kind), url: String(row.url),
-    capabilities: capabilitiesOf(caps), isDefault: row.is_default === true, connectedAt: iso(row.connected_at), checkedAt: iso(row.checked_at),
+    capabilities: capabilitiesOf(caps), via: caps.via === 'connect' ? 'connect' : 'paste',
+    isDefault: row.is_default === true, connectedAt: iso(row.connected_at), checkedAt: iso(row.checked_at),
   };
 }
 function toWorker(row: Record<string, unknown>): Worker {
@@ -94,11 +100,11 @@ export function adminStore(cfg: AdminHttp): RunnerStore {
     },
     async addRunner(r) {
       checked(r.id, RUNNER_ID, 'runner id'); checked(r.owner, USERNAME, 'username'); checked(r.url, URLISH, 'address');
-      await call(cfg, 'runner_add', [r.id, r.owner, r.name, r.kind, r.url, r.sealedToken, JSON.stringify(r.capabilities), r.isDefault]);
+      await call(cfg, 'runner_add', [r.id, r.owner, r.name, r.kind, r.url, r.sealedToken, metaOf(r.capabilities, r.via), r.isDefault]);
     },
     async updateRunner(id, p) {
       await call(cfg, 'runner_update', [checked(id, RUNNER_ID, 'runner id'), p.name ?? '', p.sealedToken ?? '',
-        p.capabilities ? JSON.stringify(p.capabilities) : '', p.isDefault === true, p.checked === true]);
+        p.capabilities ? metaOf(p.capabilities, p.via ?? 'paste') : '', p.isDefault === true, p.checked === true]);
     },
     async deleteRunner(id) { await call(cfg, 'runner_delete', [checked(id, RUNNER_ID, 'runner id')]); },
     listWorkers: async ({ launcher }) =>
@@ -141,7 +147,7 @@ export function memoryStore(): RunnerStore {
       if (p.isDefault) { soleDefault(r.owner, id); r.isDefault = true; }
       if (p.name) r.name = p.name;
       if (p.sealedToken) r.sealedToken = p.sealedToken;
-      if (p.capabilities) r.capabilities = p.capabilities;
+      if (p.capabilities) { r.capabilities = p.capabilities; r.via = p.via ?? 'paste'; }
       if (p.checked) r.checkedAt = now();
     },
     async deleteRunner(id) {

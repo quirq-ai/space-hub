@@ -1236,11 +1236,16 @@ Workers start from a project's chats and run on the launcher's own runner,
 on the launcher's own account. A runner is anything that speaks the Worker
 Protocol (`worker/1`, below); an Agents Hub is the first.
 
-- **Connect a runner** in Settings → Runners: its address and a token. On an
-  Agents Hub, make the token in Settings → Agent access with "Only tasks it
-  starts", so the hub only shows space-hub the workers it launched. Connecting
-  checks the token, then seals it with `SPACEHUB_SECRET_KEY`; it never goes back
-  to a browser. Several runners are fine; one is the default.
+- **Connect a runner** in Settings → Runners: enter its address and press
+  **Connect**. space-hub sends you to the runner, you approve there, and it
+  sends you back connected: the runner gives space-hub's server a token that
+  only sees the workers space-hub starts (an OAuth-style code exchange with
+  PKCE; the token is never in a URL or the browser). A runner without that
+  button takes a pasted token instead: on an Agents Hub, Settings → Agent
+  access, with "Only tasks it starts". Either way the token is sealed with
+  `SPACEHUB_SECRET_KEY` and never goes back to a browser. Several runners are
+  fine; one is the default. **Disconnect** revokes a token space-hub got
+  through Connect; a pasted token is yours, so it is left alone.
 - **Launch.** In a channel, write what the worker should do and press the rocket
   beside Send. The tray picks the runner (when you have more than one) and, if
   the runner works on repositories, asks for `owner/repo` or an issue or pull
@@ -1261,8 +1266,13 @@ Protocol (`worker/1`, below); an Agents Hub is the first.
 
 The Worker Protocol a runner speaks, with `Authorization: Bearer <token>`:
 `GET /api/worker` (`{protocol: "worker/1", name, kind, capabilities: {followUp,
-stop, events, repo, connect}}`), and tasks at `POST /api/tasks`, `GET
-/api/tasks/<id>`, `/events?after=`, `POST /messages`, `POST /stop` and `DELETE`.
+stop, events, repo, connect}}`; without a token only `protocol` and
+`capabilities`), and tasks at `POST /api/tasks`, `GET /api/tasks/<id>`,
+`/events?after=`, `POST /messages`, `POST /stop` and `DELETE`. A runner with
+`connect` also serves `/connect` (the consent page, with `client`,
+`redirect_uri`, `state` and an S256 `code_challenge`), `POST
+/api/connect/token {code, codeVerifier, redirectUri}` and `DELETE
+/api/tokens/self`.
 The browser only talks to `/-/api/runners` and `/-/api/workers` (see
 `cli/src/workers.ts`); only the protocol's fields of a runner's answers reach
 it, and its token is taken out of a worker's steps.

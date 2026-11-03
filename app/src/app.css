@@ -888,3 +888,5 @@ a.overview-tile:hover { border-color: var(--line-strong); text-decoration: none;
 .runner-form { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 .runner-form input { flex: 1 1 200px; min-width: 0; }
 .launch-row select { max-width: 40%; font-size: 12px; }
+.runner-mode { margin-top: 6px; padding: 0; border: 0; background: none; color: var(--accent-text); font-size: 12.5px; cursor: pointer; }
+.runner-mode:hover { text-decoration: underline; }

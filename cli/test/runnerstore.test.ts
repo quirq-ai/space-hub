@@ -6,13 +6,14 @@ import type { AddressInfo } from 'node:net';
 import { adminStore, memoryStore, type RunnerStore } from '../src/runnerstore.ts';
 
 const caps = { followUp: true, stop: true, events: true, repo: true, connect: false };
-const newRunner = (id: string, owner = 'priya') => ({ id, owner, name: `${owner}'s hub`, kind: 'Agents Hub · OpenAI', url: `https://${id}.example`, sealedToken: 'SEALED', capabilities: caps, isDefault: false });
+const newRunner = (id: string, owner = 'priya') => ({ id, owner, name: `${owner}'s hub`, kind: 'Agents Hub · OpenAI', url: `https://${id}.example`, sealedToken: 'SEALED', capabilities: caps, via: 'paste' as const, isDefault: false });
 
 async function behaves(store: RunnerStore) {
   await store.addRunner(newRunner('a1b2c3d4e5f6a7b8'));
   const [r] = await store.listRunners('priya');
   assert.equal(r.id, 'a1b2c3d4e5f6a7b8');
   assert.deepEqual(r.capabilities, caps);
+  assert.equal(r.via, 'paste');
   assert.ok(!('sealedToken' in r), 'a Runner never carries its token');
   assert.equal(await store.sealedTokenOf('a1b2c3d4e5f6a7b8'), 'SEALED');
   assert.equal((await store.runnerAt('priya', 'https://a1b2c3d4e5f6a7b8.example'))?.id, 'a1b2c3d4e5f6a7b8');
@@ -84,7 +85,7 @@ const cfg = { adminToken: 'ADMIN', http: `http://127.0.0.1:${(server.address() a
 
 test('adminStore keeps runners and workers through SQL and the admin reducers', async () => {
   await behaves(adminStore(cfg));
-  assert.deepEqual(calls[0], { reducer: 'runner_add', args: ['a1b2c3d4e5f6a7b8', 'priya', "priya's hub", 'Agents Hub · OpenAI', 'https://a1b2c3d4e5f6a7b8.example', 'SEALED', JSON.stringify(caps), false] });
+  assert.deepEqual(calls[0], { reducer: 'runner_add', args: ['a1b2c3d4e5f6a7b8', 'priya', "priya's hub", 'Agents Hub · OpenAI', 'https://a1b2c3d4e5f6a7b8.example', 'SEALED', JSON.stringify({ ...caps, via: 'paste' }), false] });
   assert.ok(sqlSeen.every(q => !q.includes('SEALED') || /SELECT sealed_token/.test(q)), 'the token is only selected where asked for');
 });
 

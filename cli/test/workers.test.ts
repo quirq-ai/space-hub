@@ -4,17 +4,21 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { handleWorkers, type WorkersDeps } from '../src/workers.ts';
 import { memoryStore } from '../src/runnerstore.ts';
 import { sealKey } from '../src/seal.ts';
 
 // ---------------------------------------------------------------- a stand-in runner
 // Tokens it knows: each sees only the tasks it started (worker/1 §5.2).
-// leak: it echoes the caller's token in its name, task titles and results; fixedId: every task gets this id.
-function fakeRunner(tokens: string[], capabilities: Record<string, boolean> = { followUp: true, stop: true, events: true, repo: true }, opts: { leak?: boolean; fixedId?: string } = {}) {
+// leak: it echoes the caller's token in its name, task titles and results; fixedId: every task gets this id;
+// connect: it offers the Connect button (worker/1 §6.3), with approve() standing in for the owner's consent page;
+// full: Connect hits the runner's token limit; failTasks: tokens it hands out are refused on /api/tasks.
+function fakeRunner(tokens: string[], capabilities: Record<string, boolean> = { followUp: true, stop: true, events: true, repo: true }, opts: { leak?: boolean; fixedId?: string; connect?: boolean; full?: boolean; failTasks?: boolean } = {}) {
   const tasks = new Map<string, { id: string; title: string; status: string; repo: string | null; by: string }>();
   const seen: { method: string; path: string; auth: string }[] = [];
+  const codes = new Map<string, { challenge: string; redirect: string }>();
+  const revoked: string[] = [];
   let next = 1;
   let describeOnly: string | null = null;            // a token valid for /api/worker but refused on /api/tasks
   const server = http.createServer(async (req, res) => {
@@ -25,10 +29,28 @@ function fakeRunner(tokens: string[], capabilities: Record<string, boolean> = { 
     const send = (s: number, v: unknown) => res.writeHead(s, { 'content-type': 'application/json' }).end(JSON.stringify(v));
     const token = auth.replace(/^Bearer /, '');
     const url = new URL(req.url!, 'http://x');
+    if (url.pathname === '/api/worker' && !auth) return send(200, { protocol: 'worker/1', capabilities: { ...capabilities, connect: !!opts.connect } });
+    if (url.pathname === '/api/connect/token' && req.method === 'POST' && opts.connect) {
+      const { code, codeVerifier, redirectUri } = JSON.parse(body);
+      const c = codes.get(code);
+      codes.delete(code);
+      const s256 = createHash('sha256').update(String(codeVerifier)).digest('base64url');
+      if (!c || c.challenge !== s256 || c.redirect !== redirectUri) return send(400, { error: 'This connection expired or was already used; connect again.' });
+      if (opts.full) return send(409, { error: 'You have 10 tokens; revoke one first.' });
+      const made = `cn-${randomBytes(6).toString('hex')}`;
+      tokens.push(made);
+      return send(200, { token: made });
+    }
+    if (url.pathname === '/api/tokens/self' && req.method === 'DELETE' && tokens.includes(token)) {
+      tokens.splice(tokens.indexOf(token), 1);
+      revoked.push(token);
+      return send(200, { revoked: true });
+    }
     if (url.pathname === '/api/worker' && (tokens.includes(token) || token === describeOnly)) {
-      return send(200, { protocol: 'worker/1', name: opts.leak ? `A hub ${token}` : 'A hub', kind: 'Agents Hub · OpenAI', capabilities });
+      return send(200, { protocol: 'worker/1', name: opts.leak ? `A hub ${token}` : 'A hub', kind: 'Agents Hub · OpenAI', capabilities: { ...capabilities, connect: !!opts.connect } });
     }
     if (!tokens.includes(token)) return send(401, { error: `bad token ${token}` });
+    if (opts.failTasks) return send(500, { error: 'tasks are broken' });
     const m = /^\/api\/tasks(?:\/([^/]+)(?:\/([^/]+))?)?$/.exec(url.pathname);
     if (!m) return send(404, { error: 'no' });
     const [, id, action] = m;
@@ -49,7 +71,14 @@ function fakeRunner(tokens: string[], capabilities: Record<string, boolean> = { 
     send(404, { error: 'no' });
   });
   return {
-    server, seen, tasks,
+    server, seen, tasks, tokens, revoked,
+    // The owner pressed Approve on the runner's /connect page for this request.
+    approve: (redirectTo: string) => {
+      const u = new URL(redirectTo);
+      const code = randomBytes(16).toString('hex');
+      codes.set(code, { challenge: u.searchParams.get('code_challenge')!, redirect: u.searchParams.get('redirect_uri')! });
+      return { code, state: u.searchParams.get('state')! };
+    },
     finish: (id: string) => { tasks.get(id)!.status = 'done'; },
     allowDescribeOnly: (token: string) => { describeOnly = token; },
     url: () => `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
@@ -61,7 +90,10 @@ const hubA = fakeRunner(['tok-priya', 'tok-arjun']);         // one Agents Hub, 
 const hubB = fakeRunner(['tok-priya-2'], { followUp: false, stop: false, events: false, repo: false });
 const hubL = fakeRunner(['c-priya-1', 'c-priya-2'], undefined, { leak: true });
 const hubF = fakeRunner(['f-priya', 'f-arjun'], undefined, { fixedId: 'same-1' });
-for (const h of [hubA, hubB, hubL, hubF]) await new Promise<void>(r => h.server.listen(0, '127.0.0.1', r));
+const hubC = fakeRunner([], undefined, { connect: true });      // connects with the button only
+const hubFull = fakeRunner([], undefined, { connect: true, full: true });
+const hubBroken = fakeRunner([], undefined, { connect: true, failTasks: true });
+for (const h of [hubA, hubB, hubL, hubF, hubC, hubFull, hubBroken]) await new Promise<void>(r => h.server.listen(0, '127.0.0.1', r));
 
 const people: Record<string, { spaces: string[]; projects: string[] }> = {
   priya: { spaces: ['priya', 'acme'], projects: [] },
@@ -78,6 +110,7 @@ const deps: WorkersDeps = {
   placesOf: async session => people[session.username],
   appendChat: async (session, input) => { chats.push({ who: session.username, project: input.project, content: input.turns[0].content }); },
   sameOrigin: req => req.headers.origin === 'https://hub.test',
+  callbackUrl: () => 'https://hub.test/-/runners/connect/callback',
 };
 const KEY = sealKey({ SPACEHUB_SECRET_KEY: randomBytes(48).toString('base64') });
 const store = memoryStore();
@@ -86,7 +119,7 @@ const web = http.createServer((req, res) => {
 });
 await new Promise<void>(r => web.listen(0, '127.0.0.1', r));
 const BASE = `http://127.0.0.1:${(web.address() as AddressInfo).port}`;
-after(() => { web.close(); for (const h of [hubA, hubB, hubL, hubF]) h.server.close(); });
+after(() => { web.close(); for (const h of [hubA, hubB, hubL, hubF, hubC, hubFull, hubBroken]) h.server.close(); });
 
 async function as(who: string | null, method: string, path: string, body?: unknown) {
   const r = await fetch(`${BASE}${path}`, {
@@ -292,4 +325,120 @@ test("a runner that reuses another worker's id is refused; the first worker keep
   assert.match(second.json.error, /reused/);
   assert.equal(chats.length, chatsBefore);
   assert.equal((await store.getWorker('same-1'))!.launcher, 'priya');
+});
+
+// ---------------------------------------------------------------- the Connect button (§6.3)
+// The browser's side: space-hub's answer, its Set-Cookie and where it sends the browser next.
+async function browse(who: string | null, method: string, path: string, opts: { body?: unknown; cookie?: string } = {}) {
+  const cookies = [who ? `spacehub_session=${who}` : '', opts.cookie ?? ''].filter(Boolean).join('; ');
+  const r = await fetch(`${BASE}${path}`, {
+    method, redirect: 'manual',
+    headers: { ...(cookies ? { cookie: cookies } : {}), origin: 'https://hub.test', ...(opts.body ? { 'content-type': 'application/json' } : {}) },
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
+  const text = await r.text();
+  return { status: r.status, text, location: r.headers.get('location') ?? '', setCookie: r.headers.get('set-cookie') ?? '', json: (() => { try { return JSON.parse(text); } catch { return null; } })() as any };
+}
+// Press Connect: the URL it sends the browser to on the runner, and the state cookie it set.
+async function pressConnect(who: string, runnerUrl = hubC.url()) {
+  const r = await browse(who, 'POST', '/-/api/runners/connect', { body: { url: runnerUrl } });
+  assert.equal(r.status, 200, r.text);
+  const cookie = /^(spacehub_runner_connect=[^;]+)/.exec(r.setCookie)?.[1] ?? '';
+  return { to: r.json.redirect as string, cookie, setCookie: r.setCookie };
+}
+const callback = (q: Record<string, string>) => `/-/runners/connect/callback?${new URLSearchParams(q)}`;
+
+test('Connect: a runner without the button is told to paste a token', async () => {
+  const r = await browse('priya', 'POST', '/-/api/runners/connect', { body: { url: hubA.url() } });
+  assert.equal(r.status, 400);
+  assert.match(r.json.error, /paste/i);
+  assert.equal((await browse(null, 'POST', '/-/api/runners/connect', { body: { url: hubC.url() } })).status, 401);
+});
+
+test('Connect end to end: to the runner and back, connected, with no token in any URL, cookie or answer', async () => {
+  const { to, cookie, setCookie } = await pressConnect('priya');
+  const u = new URL(to);
+  assert.equal(`${u.origin}${u.pathname}`, `${hubC.url()}/connect`);
+  assert.deepEqual([u.searchParams.get('client'), u.searchParams.get('redirect_uri'), u.searchParams.get('code_challenge_method')],
+    ['https://hub.test', 'https://hub.test/-/runners/connect/callback', 'S256']);
+  assert.match(u.searchParams.get('code_challenge')!, /^[A-Za-z0-9_-]{43}$/);
+  assert.match(setCookie, /HttpOnly/);
+  assert.match(setCookie, /SameSite=Lax/);
+  assert.match(setCookie, /Path=\/-\/runners\/connect/);
+
+  const { code, state } = hubC.approve(to);
+  const back = await browse('priya', 'GET', callback({ code, state }), { cookie });
+  assert.equal(back.status, 303);
+  assert.equal(back.location, '/?runner=connected#/settings');
+  assert.match(back.setCookie, /spacehub_runner_connect=;.*Max-Age=0/);
+  const made = hubC.tokens.at(-1)!;
+  const listed = await as('priya', 'GET', '/-/api/runners');
+  const r = listed.json.runners.find((x: any) => x.url === hubC.url());
+  assert.ok(r, 'the runner is connected');
+  assert.equal(r.name, 'A hub');
+  for (const text of [listed.text, back.location, back.setCookie, back.text, to]) assert.ok(!text.includes(made), 'the token never leaves the server');
+  assert.equal((await launch('priya', { runner: r.id })).status, 201, 'and it launches workers');
+});
+
+test('Connect refuses a callback that is not this browser’s, not this builder’s, used twice or cancelled', async () => {
+  const a = await pressConnect('priya');
+  const ga = hubC.approve(a.to);
+  // Another builder finishing priya's connection.
+  assert.equal((await browse('arjun', 'GET', callback(ga), { cookie: a.cookie })).location, '/?runner=failed#/settings');
+  // The connection is used up by that attempt.
+  assert.equal((await browse('priya', 'GET', callback(ga), { cookie: a.cookie })).location, '/?runner=expired#/settings');
+
+  const b = await pressConnect('priya');
+  const gb = hubC.approve(b.to);
+  // Without this browser's cookie, or with another state.
+  assert.equal((await browse('priya', 'GET', callback(gb))).location, '/?runner=expired#/settings');
+  assert.equal((await browse('priya', 'GET', callback({ code: gb.code, state: 'nope' }), { cookie: b.cookie })).location, '/?runner=expired#/settings');
+
+  const c = await pressConnect('priya');
+  const cancelled = await browse('priya', 'GET', callback({ error: 'access_denied', state: new URL(c.to).searchParams.get('state')! }), { cookie: c.cookie });
+  assert.equal(cancelled.location, '/?runner=denied#/settings');
+  const runners = (await as('priya', 'GET', '/-/api/runners')).json.runners.filter((x: any) => x.url === hubC.url());
+  assert.equal(runners.length, 1, 'only the connection that finished was saved');
+});
+
+test('Connect again to the same runner keeps one runner and gives back the token it replaces', async () => {
+  const first = (await as('priya', 'GET', '/-/api/runners')).json.runners.filter((x: any) => x.url === hubC.url());
+  assert.equal(first.length, 1);
+  const before = hubC.revoked.length;
+  const again = await pressConnect('priya');
+  const back = await browse('priya', 'GET', callback(hubC.approve(again.to)), { cookie: again.cookie });
+  assert.equal(back.location, '/?runner=connected#/settings');
+  const now = (await as('priya', 'GET', '/-/api/runners')).json.runners.filter((x: any) => x.url === hubC.url());
+  assert.deepEqual(now.map((x: any) => x.id), first.map((x: any) => x.id), 'the same runner, not a second one');
+  assert.equal(hubC.revoked.length, before + 1, 'the replaced token was revoked on the runner');
+  assert.equal((await launch('priya', { runner: now[0].id })).status, 201, 'and the new token works');
+});
+
+test('a connection that fails after the runner made a token gives that token back', async () => {
+  const c = await pressConnect('priya', hubBroken.url());
+  const back = await browse('priya', 'GET', callback(hubBroken.approve(c.to)), { cookie: c.cookie });
+  assert.equal(back.location, '/?runner=failed#/settings');
+  assert.equal(hubBroken.revoked.length, 1, 'the token it made was revoked');
+  assert.deepEqual(hubBroken.tokens, []);
+  assert.ok(!(await as('priya', 'GET', '/-/api/runners')).json.runners.some((x: any) => x.url === hubBroken.url()));
+});
+
+test('a runner out of tokens, or a code it no longer knows, each get their own outcome', async () => {
+  const f = await pressConnect('priya', hubFull.url());
+  assert.equal((await browse('priya', 'GET', callback(hubFull.approve(f.to)), { cookie: f.cookie })).location, '/?runner=full#/settings');
+  const e = await pressConnect('priya');
+  const state = new URL(e.to).searchParams.get('state')!;
+  assert.equal((await browse('priya', 'GET', callback({ code: 'not-a-code', state }), { cookie: e.cookie })).location, '/?runner=expired#/settings');
+});
+
+test('Disconnect revokes a token it got through Connect, and leaves a pasted one alone', async () => {
+  const connected = (await as('priya', 'GET', '/-/api/runners')).json.runners.find((x: any) => x.url === hubC.url());
+  const before = hubC.revoked.length;
+  assert.equal((await as('priya', 'DELETE', `/-/api/runners/${connected.id}`)).status, 200);
+  assert.equal(hubC.revoked.length, before + 1, 'the Connect token was revoked on the runner');
+
+  const pasted = (await as('priya', 'POST', '/-/api/runners', { url: hubB.url(), token: 'tok-priya-2', name: 'Pasted' })).json.runner;
+  assert.equal((await as('priya', 'DELETE', `/-/api/runners/${pasted.id}`)).status, 200);
+  assert.ok(!hubB.seen.some(s => s.path === '/api/tokens/self'), 'a pasted token is not revoked');
+  assert.ok(hubB.tokens.includes('tok-priya-2'));
 });

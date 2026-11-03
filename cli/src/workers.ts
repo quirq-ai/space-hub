@@ -6,7 +6,9 @@
 //   POST   /-/api/runners {url, token, name?}     connect one: checked, sealed, saved
 //   PATCH  /-/api/runners/<id> {name?, default?}
 //   POST   /-/api/runners/<id>/test
-//   DELETE /-/api/runners/<id>                    disconnect (its workers stay)
+//   DELETE /-/api/runners/<id>                    disconnect (its workers stay; a Connect token is revoked)
+//   POST   /-/api/runners/connect {url}           the Connect button: {redirect} to the runner's consent page
+//   GET    /-/runners/connect/callback            back from it: connected, then to Settings
 //   GET    /-/api/workers?space=&project=         {enabled, runners, canLaunch} for the chat
 //   GET    /-/api/workers?mine=1                  your workers
 //   POST   /-/api/workers {space, project, conversation, text, repo?, title?, runner?}   launch
@@ -27,6 +29,26 @@ import { RUNNER_ID, TASK_ID, type Runner, type RunnerStore, type Worker, type Wo
 
 const RUNNERS = '/-/api/runners';
 const WORKERS = '/-/api/workers';
+// Connect (spec §6.3): like GitHub sign-in, the PKCE verifier stays here, keyed by a random state that also
+// goes in an HttpOnly cookie on the callback's path, so only the browser that pressed Connect can finish it,
+// once, within 10 minutes, as the same builder.
+export const CONNECT_CALLBACK = '/-/runners/connect/callback';
+export const CONNECT_COOKIE = 'spacehub_runner_connect';
+const CONNECT_WAIT_MS = 600_000;
+const MAX_CONNECTING = 500;
+type Connecting = { owner: string; url: string; verifier: string; redirect: string; until: number };
+const connecting = new Map<string, Connecting>();
+const b64url = (bytes: number) => crypto.randomBytes(bytes).toString('base64url');
+const sameText = (a: string, b: string) => { const x = Buffer.from(a); const y = Buffer.from(b); return x.length === y.length && crypto.timingSafeEqual(x, y); };
+function cookieOf(req: http.IncomingMessage, name: string): string {
+  for (const part of String(req.headers.cookie ?? '').split(';')) {
+    const [k, ...v] = part.trim().split('=');
+    if (k === name) return v.join('=');
+  }
+  return '';
+}
+const connectCookie = (value: string, maxAge: number, https: boolean) =>
+  `${CONNECT_COOKIE}=${value}; Path=/-/runners/connect; SameSite=Lax; Max-Age=${maxAge}; HttpOnly${https ? '; Secure' : ''}`;
 const SPACE = /^[a-z0-9][a-z0-9-]{0,38}$/;
 const PROJECT = /^[A-Za-z0-9._-]{1,100}$/;
 const REPO = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
@@ -50,6 +72,8 @@ export interface WorkersDeps {
   placesOf: (session: Session) => Promise<Places>;
   appendChat: (session: Session, input: { project: string; conversation: string; turns: Turn[] }) => Promise<void>;
   sameOrigin: (req: http.IncomingMessage) => boolean;
+  /** CONNECT_CALLBACK's full URL, as the browser reached this hub. */
+  callbackUrl: (req: http.IncomingMessage) => string;
 }
 // allowLocal: runners at http://127.0.0.1 or localhost may be connected (local development only).
 export type WorkersConfig = { key: Buffer | null; store: RunnerStore; allowLocal?: boolean };
@@ -59,8 +83,8 @@ class Reply extends Error {
   constructor(status: number, message: string) { super(message); this.status = status; }
 }
 
-function json(res: http.ServerResponse, status: number, value: unknown) {
-  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+function json(res: http.ServerResponse, status: number, value: unknown, headers: Record<string, string> = {}) {
+  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...headers });
   res.end(JSON.stringify(value));
 }
 
@@ -106,7 +130,7 @@ export function parseLaunch(input: Record<string, unknown>, builder: string) {
   };
 }
 
-const runnerView = (r: Runner) => ({ id: r.id, name: r.name, kind: r.kind, url: r.url, isDefault: r.isDefault, capabilities: r.capabilities, connectedAt: r.connectedAt, checkedAt: r.checkedAt });
+const runnerView = (r: Runner) => ({ id: r.id, name: r.name, kind: r.kind, url: r.url, via: r.via, isDefault: r.isDefault, capabilities: r.capabilities, connectedAt: r.connectedAt, checkedAt: r.checkedAt });
 
 // Only the protocol's fields go on to a browser: a runner's answer is otherwise its own business (and could
 // carry anything, even its token).
@@ -135,7 +159,8 @@ export async function handleWorkers(cfg: WorkersConfig, deps: WorkersDeps, req: 
   const route = url.pathname;
   const isRunners = route === RUNNERS || route.startsWith(`${RUNNERS}/`);
   const isWorkers = route === WORKERS || route.startsWith(`${WORKERS}/`);
-  if (!isRunners && !isWorkers) return false;
+  const isConnectBack = route === CONNECT_CALLBACK;
+  if (!isRunners && !isWorkers && !isConnectBack) return false;
   const { store, key } = cfg;
   try {
     const session = await deps.sessionOf(req);
@@ -160,12 +185,67 @@ export async function handleWorkers(cfg: WorkersConfig, deps: WorkersDeps, req: 
       return open(key, sealed);
     };
     const clientFor = async (r: Runner) => { const token = await tokenOf(r); return { client: runnerClient(r.url, token), token }; };
+    // A checked runner, saved: its token sealed, and its earlier workers (same address) linked back to it.
+    const saveRunner = async (owner: string, address: string, token: string, described: Describe, via: Runner['via'], name: string) => {
+      const id = crypto.randomBytes(8).toString('hex');
+      await store.addRunner({ id, owner, name: name || redactToken(described.name, token), kind: redactToken(described.kind, token), url: address,
+        sealedToken: seal(key!, token), capabilities: described.capabilities, via, isDefault: false });
+      for (const w of await store.listWorkers({ launcher: owner })) {
+        if (w.runnerUrl === address && w.runnerId !== id && !(await store.getRunner(w.runnerId))) await store.updateWorker(w.taskId, { runnerId: id });
+      }
+      return id;
+    };
     const ownRunner = async (id: string) => {
       if (!session) throw new Reply(401, 'Sign in to use runners.');
       const r = RUNNER_ID.test(id) ? await store.getRunner(id) : null;
       if (!r || r.owner !== session.username) throw new Reply(404, 'No such runner.');
       return r;
     };
+
+    // ------------------------------------------------------------ back from a runner's consent page
+    if (isConnectBack) {
+      if (req.method !== 'GET') throw new Reply(405, 'Method not allowed.');
+      // Only a code for the outcome reaches the app, never text from the runner.
+      const done = (outcome: 'connected' | 'denied' | 'expired' | 'full' | 'failed') => {
+        res.writeHead(303, { location: `/?runner=${outcome}#/settings`, 'cache-control': 'no-store',
+          'set-cookie': connectCookie('', 0, deps.callbackUrl(req).startsWith('https:')) });
+        res.end();
+        return true;
+      };
+      const state = url.searchParams.get('state') ?? '';
+      const fromCookie = cookieOf(req, CONNECT_COOKIE);
+      const c = state ? connecting.get(state) : undefined;
+      if (c) connecting.delete(state); // one try, whatever happens next
+      if (!c || !fromCookie || !sameText(state, fromCookie) || c.until <= Date.now()) return done('expired');
+      if (url.searchParams.get('error')) return done('denied');
+      if (!session || session.username !== c.owner || !key) return done('failed');
+      let token = '';
+      try {
+        token = await runnerClient(c.url, '').exchange({ code: url.searchParams.get('code') ?? '', codeVerifier: c.verifier, redirectUri: c.redirect });
+        const client = runnerClient(c.url, token);
+        const described = await client.describe();
+        await client.list();
+        // Connect again to a runner already connected: the same runner gets the new token, so runners and the
+        // runner's tokens do not pile up; a token space-hub got through Connect before is given back.
+        const known = await store.runnerAt(c.owner, c.url);
+        if (known) {
+          if (known.via === 'connect') {
+            try { await (await clientFor(known)).client.revokeSelf(); } catch { /* it can be revoked on the runner */ }
+          }
+          await store.updateRunner(known.id, { sealedToken: seal(key, token), capabilities: described.capabilities, via: 'connect', checked: true });
+        } else {
+          await saveRunner(c.owner, c.url, token, described, 'connect', '');
+        }
+      } catch (err) {
+        process.stderr.write(`spacehub-web: workers: connecting ${c.url} failed: ${err instanceof Error ? redactToken(err.message, token) : 'unknown error'}\n`);
+        // The runner made a token space-hub will not keep: give it back.
+        if (token) { try { await runnerClient(c.url, token).revokeSelf(); } catch { /* it can be revoked on the runner */ } }
+        if (!token && err instanceof RunnerError && err.status === 409) return done('full');      // out of tokens
+        if (!token && err instanceof RunnerError && err.status === 400) return done('expired');   // its code is gone
+        return done('failed');
+      }
+      return done('connected');
+    }
 
     // ------------------------------------------------------------ runners
     if (isRunners) {
@@ -188,14 +268,31 @@ export async function handleWorkers(cfg: WorkersConfig, deps: WorkersDeps, req: 
           if (e instanceof RunnerError && e.auth) throw new Reply(400, 'That token is not valid for this runner.');
           throw e;
         }
-        const id = crypto.randomBytes(8).toString('hex');
-        await store.addRunner({ id, owner: session.username, name: text(body.name).slice(0, 80) || redactToken(described.name, token), kind: redactToken(described.kind, token), url: address,
-          sealedToken: seal(key, token), capabilities: described.capabilities, isDefault: false });
-        // The same runner again: its workers come back to it.
-        for (const w of await store.listWorkers({ launcher: session.username })) {
-          if (w.runnerUrl === address && w.runnerId !== id && !(await store.getRunner(w.runnerId))) await store.updateWorker(w.taskId, { runnerId: id });
-        }
+        const id = await saveRunner(session.username, address, token, described, 'paste', text(body.name).slice(0, 80));
         return json(res, 201, { runner: runnerView((await store.getRunner(id))!) }), true;
+      }
+      if (rest.length === 1 && rest[0] === 'connect') {
+        if (req.method !== 'POST') throw new Reply(405, 'Method not allowed.');
+        if (!key) throw new Reply(503, NOT_SET_UP);
+        const address = checkRunnerUrl(text((await readJson(req)).url), cfg.allowLocal);
+        const pasteInstead = "This runner connects with a token: make one in its settings and paste it here.";
+        let about: Describe;
+        try { about = await runnerClient(address, '').describe(); } catch (e) {
+          if (e instanceof RunnerError && e.auth) throw new Reply(400, pasteInstead);
+          throw e;
+        }
+        if (!about.capabilities.connect) throw new Reply(400, pasteInstead);
+        const now = Date.now();
+        for (const [k, c] of connecting) if (c.until <= now) connecting.delete(k);
+        if (connecting.size >= MAX_CONNECTING) throw new Reply(429, 'Too many connections are waiting; try again in a few minutes.');
+        const state = b64url(32);
+        const verifier = b64url(48);
+        const redirect = deps.callbackUrl(req);
+        connecting.set(state, { owner: session.username, url: address, verifier, redirect, until: now + CONNECT_WAIT_MS });
+        const to = new URL(`${address}/connect`);
+        to.search = new URLSearchParams({ client: new URL(redirect).origin, redirect_uri: redirect, state,
+          code_challenge: crypto.createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256' }).toString();
+        return json(res, 200, { redirect: to.href }, { 'set-cookie': connectCookie(state, CONNECT_WAIT_MS / 1000, redirect.startsWith('https:')) }), true;
       }
       const r = await ownRunner(rest[0]);
       if (rest.length === 1 && req.method === 'PATCH') {
@@ -204,6 +301,10 @@ export async function handleWorkers(cfg: WorkersConfig, deps: WorkersDeps, req: 
         return json(res, 200, { runner: runnerView((await store.getRunner(r.id))!) }), true;
       }
       if (rest.length === 1 && req.method === 'DELETE') {
+        // A token space-hub got through Connect is space-hub's to give back; a pasted one is the person's own.
+        if (r.via === 'connect') {
+          try { await (await clientFor(r)).client.revokeSelf(); } catch { /* disconnect anyway; it can be revoked on the runner */ }
+        }
         await store.deleteRunner(r.id);
         return json(res, 200, { deleted: true }), true;
       }
@@ -211,7 +312,7 @@ export async function handleWorkers(cfg: WorkersConfig, deps: WorkersDeps, req: 
         const { client } = await clientFor(r);
         const described = await client.describe();
         await client.list();
-        await store.updateRunner(r.id, { capabilities: described.capabilities, checked: true });
+        await store.updateRunner(r.id, { capabilities: described.capabilities, via: r.via, checked: true });
         return json(res, 200, { ok: true, runner: runnerView((await store.getRunner(r.id))!) }), true;
       }
       throw new Reply(404, 'No such route.');
