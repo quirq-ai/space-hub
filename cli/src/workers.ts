@@ -105,6 +105,24 @@ const text = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
 const inSpace = (p: Places, space: string) => p.spaces.includes(space) || p.projects.some(x => x.startsWith(`${space}/`));
 const canWrite = (p: Places, space: string, project: string) => p.spaces.includes(space) || p.projects.includes(`${space}/${project}`);
 
+/**
+ * The agent spaces a builder owns. The module's rule (module/src/store.ts, ownsSpace): an agent's owners are its
+ * parent space's owners, with no space_role row for them; a personal space's owner is its builder. Agents of
+ * agents count too, as deep as the module looks (4).
+ */
+export function agentSpacesOwnedBy(username: string, roles: { space: string; role: string }[], agents: { name: string; parent: string }[]): string[] {
+  const owned = new Set([username, ...roles.filter(r => r.role === 'owner').map(r => r.space)]);
+  const out: string[] = [];
+  for (let depth = 0; depth < 4; depth++) {
+    let grew = false;
+    for (const a of agents) {
+      if (!owned.has(a.name) && owned.has(a.parent)) { owned.add(a.name); out.push(a.name); grew = true; }
+    }
+    if (!grew) break;
+  }
+  return out;
+}
+
 /** "owner/repo", from that or a github.com link to the repository, an issue or a pull request. */
 export function repoOf(input: string): string {
   const link = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?(?:\/.*)?$/.exec(input);
@@ -151,7 +169,16 @@ function resultOf(value: unknown): WorkerResult {
 
 // Every string a runner sends could carry its token (an agent printing it in a summary): take it out of
 // the whole answer before it is shown or kept.
-const scrub = <T>(value: T, token: string): T => JSON.parse(redactToken(JSON.stringify(value), token));
+// Each string on its own, never the answer's JSON text: a pattern run over JSON text can swallow its quotes and
+// braces ("…the Bearer header"}" became unparseable). Keys are left alone; values and nested values are scrubbed.
+function scrub<T>(value: T, token: string): T {
+  const walk = (v: unknown): unknown =>
+    typeof v === 'string' ? redactToken(v, token)
+      : Array.isArray(v) ? v.map(walk)
+        : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, walk(x)]))
+          : v;
+  return walk(value) as T;
+}
 
 const viewers = new Map<string, { at: number; places: Places }>();
 

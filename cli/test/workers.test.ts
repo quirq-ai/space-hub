@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createHash, randomBytes } from 'node:crypto';
-import { handleWorkers, type WorkersDeps } from '../src/workers.ts';
+import { agentSpacesOwnedBy, handleWorkers, type WorkersDeps } from '../src/workers.ts';
 import { memoryStore } from '../src/runnerstore.ts';
 import { sealKey } from '../src/seal.ts';
 
@@ -13,8 +13,9 @@ import { sealKey } from '../src/seal.ts';
 // Tokens it knows: each sees only the tasks it started (worker/1 §5.2).
 // leak: it echoes the caller's token in its name, task titles and results; fixedId: every task gets this id;
 // connect: it offers the Connect button (worker/1 §6.3), with approve() standing in for the owner's consent page;
-// full: Connect hits the runner's token limit; failTasks: tokens it hands out are refused on /api/tasks.
-function fakeRunner(tokens: string[], capabilities: Record<string, boolean> = { followUp: true, stop: true, events: true, repo: true }, opts: { leak?: boolean; fixedId?: string; connect?: boolean; full?: boolean; failTasks?: boolean } = {}) {
+// full: Connect hits the runner's token limit; failTasks: tokens it hands out are refused on /api/tasks;
+// bearer: its titles, results and steps talk about "Bearer" headers, as an agent working on auth code does.
+function fakeRunner(tokens: string[], capabilities: Record<string, boolean> = { followUp: true, stop: true, events: true, repo: true }, opts: { leak?: boolean; fixedId?: string; connect?: boolean; full?: boolean; failTasks?: boolean; bearer?: boolean } = {}) {
   const tasks = new Map<string, { id: string; title: string; status: string; repo: string | null; by: string }>();
   const seen: { method: string; path: string; auth: string }[] = [];
   const codes = new Map<string, { challenge: string; redirect: string }>();
@@ -57,15 +58,15 @@ function fakeRunner(tokens: string[], capabilities: Record<string, boolean> = { 
     if (!id && req.method === 'GET') return send(200, { tasks: [...tasks.values()].filter(t => t.by === token) });
     if (!id && req.method === 'POST') {
       const input = JSON.parse(body);
-      const t = { id: opts.fixedId ?? `task-${next++}-${randomBytes(3).toString('hex')}`, title: opts.leak ? `${input.title} ${token}` : input.title, status: 'running', repo: input.repo ?? null, by: token };
+      const t = { id: opts.fixedId ?? `task-${next++}-${randomBytes(3).toString('hex')}`, title: opts.leak ? `${input.title} ${token}` : opts.bearer ? 'Send the Bearer' : input.title, status: 'running', repo: input.repo ?? null, by: token };
       tasks.set(t.id, t);
       return send(201, { task: t, result: { summary: null, links: [], error: null } });
     }
     const t = tasks.get(id!);
     if (!t || t.by !== token) return send(404, { error: 'task not found' });
-    if (!action && req.method === 'GET') return send(200, { task: t, result: t.status === 'done' ? { summary: opts.leak ? `Fixed it with ${token}.` : 'Fixed it.', links: ['https://github.com/acme/site/pull/7'], error: opts.leak ? `no ${token}` : null } : { summary: null, links: [], error: null } });
+    if (!action && req.method === 'GET') return send(200, { task: t, result: t.status === 'done' ? { summary: opts.leak ? `Fixed it with ${token}.` : opts.bearer ? 'Calls need the Bearer header' : 'Fixed it.', links: ['https://github.com/acme/site/pull/7'], error: opts.leak ? `no ${token}` : null } : { summary: null, links: [], error: null } });
     if (!action && req.method === 'DELETE') return tasks.delete(id!), send(200, { deleted: true });
-    if (action === 'events') return send(200, { events: [{ seq: 1, kind: 'user', text: 'go' }], next: 1 });
+    if (action === 'events') return send(200, { events: [{ seq: 1, kind: 'user', text: opts.bearer ? 'Set Authorization: Bearer abc123' : 'go' }, ...(opts.bearer ? [{ seq: 2, kind: 'message', text: `Bearer ${token}` }] : [])], next: opts.bearer ? 2 : 1 });
     if (action === 'stop') return (t.status = 'stopped'), send(202, { ok: true, stopped: true });
     if (action === 'messages') return t.status === 'running' ? send(409, { error: 'The agent is still working.' }) : ((t.status = 'running'), send(202, { ok: true }));
     send(404, { error: 'no' });
@@ -93,7 +94,8 @@ const hubF = fakeRunner(['f-priya', 'f-arjun'], undefined, { fixedId: 'same-1' }
 const hubC = fakeRunner([], undefined, { connect: true });      // connects with the button only
 const hubFull = fakeRunner([], undefined, { connect: true, full: true });
 const hubBroken = fakeRunner([], undefined, { connect: true, failTasks: true });
-for (const h of [hubA, hubB, hubL, hubF, hubC, hubFull, hubBroken]) await new Promise<void>(r => h.server.listen(0, '127.0.0.1', r));
+const hubBearer = fakeRunner(['b-priya'], undefined, { bearer: true });
+for (const h of [hubA, hubB, hubL, hubF, hubC, hubFull, hubBroken, hubBearer]) await new Promise<void>(r => h.server.listen(0, '127.0.0.1', r));
 
 const people: Record<string, { spaces: string[]; projects: string[] }> = {
   priya: { spaces: ['priya', 'acme'], projects: [] },
@@ -119,7 +121,7 @@ const web = http.createServer((req, res) => {
 });
 await new Promise<void>(r => web.listen(0, '127.0.0.1', r));
 const BASE = `http://127.0.0.1:${(web.address() as AddressInfo).port}`;
-after(() => { web.close(); for (const h of [hubA, hubB, hubL, hubF, hubC, hubFull, hubBroken]) h.server.close(); });
+after(() => { web.close(); for (const h of [hubA, hubB, hubL, hubF, hubC, hubFull, hubBroken, hubBearer]) h.server.close(); });
 
 async function as(who: string | null, method: string, path: string, body?: unknown) {
   const r = await fetch(`${BASE}${path}`, {
@@ -441,4 +443,34 @@ test('Disconnect revokes a token it got through Connect, and leaves a pasted one
   assert.equal((await as('priya', 'DELETE', `/-/api/runners/${pasted.id}`)).status, 200);
   assert.ok(!hubB.seen.some(s => s.path === '/api/tokens/self'), 'a pasted token is not revoked');
   assert.ok(hubB.tokens.includes('tok-priya-2'));
+});
+
+test('a worker that writes about "Bearer" headers is shown, kept and followed like any other', async () => {
+  const r = (await as('priya', 'POST', '/-/api/runners', { url: hubBearer.url(), token: 'b-priya', name: 'Auth hub' })).json.runner;
+  const launched = await launch('priya', { runner: r.id });
+  assert.equal(launched.status, 201, launched.text);
+  const id = launched.json.task.id;
+  assert.ok(await store.getWorker(id), 'the worker was recorded');
+  hubBearer.finish(id);
+  const card = await as('arjun', 'GET', `/-/api/workers/${id}`);
+  assert.equal(card.status, 200, card.text);
+  assert.match(card.json.result.summary, /^Calls need the Bearer /);
+  assert.ok((await store.getWorker(id))!.result, 'the result copy was kept');
+  const steps = await as('arjun', 'GET', `/-/api/workers/${id}/events?after=0`);
+  assert.equal(steps.status, 200, steps.text);
+  assert.equal(steps.json.events.length, 2);
+  assert.ok(!steps.text.includes('b-priya'), 'the token is still taken out');
+});
+
+test("an agent's space belongs to its parent's owners, as the module says", () => {
+  const roles = [{ space: 'acme', role: 'owner' }, { space: 'beta', role: 'member' }];
+  const agents = [
+    { name: 'acme-bot', parent: 'acme' },        // the org priya owns
+    { name: 'priya-bot', parent: 'priya' },      // her own space
+    { name: 'deep-bot', parent: 'acme-bot' },    // an agent of an agent
+    { name: 'beta-bot', parent: 'beta' },        // she is only a member there
+    { name: 'bob-bot', parent: 'bob' },
+  ];
+  assert.deepEqual(agentSpacesOwnedBy('priya', roles, agents).sort(), ['acme-bot', 'deep-bot', 'priya-bot']);
+  assert.deepEqual(agentSpacesOwnedBy('carol', [], agents), []);
 });

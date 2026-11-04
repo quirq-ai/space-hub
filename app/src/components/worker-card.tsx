@@ -3,7 +3,7 @@ import { ArrowUp, Check, ChevronDown, CircleSlash, GitPullRequest, Square, Trash
 import { Markdown } from "@/components/content-view";
 import { useLive } from "@/hooks/use-live";
 import { useTaskEvents } from "@/hooks/use-workers";
-import { cardActions, cardHeadline, foldEvents, isRunning, linkLabel, newKey, send, stateNote, statusLabel, toWorkerDetail, webLinksOnly, withoutCredit, type Step, type ThreadItem, type WorkerState } from "@/lib/workers";
+import { cardActions, cardHeadline, foldEvents, isRunning, linkLabel, newKey, send, stateNote, statusLabel, toWorkerDetail, unknownWorkerNote, webLinksOnly, withoutCredit, type Step, type ThreadItem, type WorkerState } from "@/lib/workers";
 
 const tone = (status: string, state: WorkerState) => (state === "gone" || state === "disconnected" ? "quiet" : isRunning(status) ? "run" : status === "done" ? "done" : status === "failed" ? "fail" : "stop");
 const STATE_ICON = { gone: CircleSlash, disconnected: Unplug, unreachable: WifiOff } as const;
@@ -48,7 +48,7 @@ export function WorkerCard({ id, me }: { id: string; me: string | null }) {
   const [key, setKey] = useState(newKey);
 
   if (!task || !worker) {
-    const note = detail.status === 404 ? "This worker is not known here." : detail.status === 403 ? "Only members of this space can follow its workers." : detail.error;
+    const note = unknownWorkerNote(detail.status, detail.error);
     return <div className="worker is-quiet"><div className="worker-head"><i className="worker-dot" /><strong className="worker-title">Worker</strong><span className="worker-status">{note || "Loading…"}</span></div></div>;
   }
   // A follow-up box only stays while the worker can take one: torn down, disconnected or running again closes it.

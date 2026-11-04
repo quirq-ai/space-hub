@@ -122,6 +122,16 @@ export function runnerLabel(name: string, kind: string): string {
   return !name || kind.startsWith(name) ? kind : `${name} · ${kind}`;
 }
 
+/**
+ * A card whose worker space-hub has no record of (404): launched before workers ran on people's own runners, on
+ * the hub's old shared one, which kept no copy. Forbidden (403): not a member. Anything else: the error itself.
+ */
+export function unknownWorkerNote(status: number, error: string): string {
+  if (status === 404) return "Launched on the hub’s old shared runner; its result is no longer available.";
+  if (status === 403) return "Only members of this space can follow its workers.";
+  return error;
+}
+
 /** Back from a runner's consent page (`?runner=<code>`): what to tell the person; null for anything else. */
 export function connectOutcome(code: string | null): { ok: boolean; text: string } | null {
   switch (code) {

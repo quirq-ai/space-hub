@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { open, seal, sealKey } from '../src/seal.ts';
+import { open, seal, sealKey, sealKeyOrOff } from '../src/seal.ts';
 
 const KEY = randomBytes(48).toString('base64');
 
@@ -28,4 +28,14 @@ test('no key is off; a short key is refused', () => {
   assert.equal(sealKey({}), null);
   assert.equal(sealKey({ SPACEHUB_SECRET_KEY: '' }), null);
   assert.throws(() => sealKey({ SPACEHUB_SECRET_KEY: randomBytes(16).toString('base64') }), /at least 32 bytes/);
+});
+
+test('a key that is set but wrong turns runners off with a warning instead of stopping the hub', () => {
+  const warned: string[] = [];
+  assert.equal(sealKeyOrOff({ SPACEHUB_SECRET_KEY: Buffer.alloc(16).toString('base64') }, m => warned.push(m)), null);
+  assert.match(warned[0], /SPACEHUB_SECRET_KEY/);
+  assert.match(warned[0], /off/);
+  assert.equal(sealKeyOrOff({}, m => warned.push(m)), null);
+  assert.equal(warned.length, 1, 'no key at all is not a warning: the feature is simply off');
+  assert.equal(sealKeyOrOff({ SPACEHUB_SECRET_KEY: Buffer.alloc(32, 7).toString('base64') }, m => warned.push(m))!.length, 32);
 });

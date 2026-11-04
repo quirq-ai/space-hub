@@ -40,9 +40,9 @@ import { CALLBACK_ROUTE, ConnectGithub, finishSignIn, offerFor, START_ROUTE, sta
 import * as githubWeb from './githubsignin';
 import { appDir, handleApp } from './app';
 import { Reply, select } from './admin';
-import { CONNECT_CALLBACK, handleWorkers } from './workers';
+import { agentSpacesOwnedBy, CONNECT_CALLBACK, handleWorkers } from './workers';
 import { adminStore } from './runnerstore';
-import { sealKey } from './seal';
+import { sealKeyOrOff } from './seal';
 import { InstanceVault } from './instancevault';
 import { handleInstanceRecovery, recoveryRemote } from './instancerecovery';
 import { InstanceConnections } from './instanceconnections';
@@ -72,7 +72,7 @@ const SIGNIN = signInConfig(DB, INTERNAL_HTTP, GITHUB);
 // hands over.
 const ADMIN_TOKEN = process.env.SPACEHUB_ADMIN_TOKEN ?? '';
 // Runners and workers live in the module's private tables; without the admin token or the sealing key, connecting is off.
-const WORKERS = { key: ADMIN_TOKEN ? sealKey() : null, store: adminStore({ adminToken: ADMIN_TOKEN, http: INTERNAL_HTTP, db: DB }), allowLocal: process.env.SPACEHUB_RUNNER_ALLOW_LOCAL === "1" };
+const WORKERS = { key: ADMIN_TOKEN ? sealKeyOrOff() : null, store: adminStore({ adminToken: ADMIN_TOKEN, http: INTERNAL_HTTP, db: DB }), allowLocal: process.env.SPACEHUB_RUNNER_ALLOW_LOCAL === "1" };
 const RECOVERY_DIR = process.env.SPACEHUB_RECOVERY_DIR ?? '';
 const RECOVERY_REMOTE = recoveryRemote(process.env.SPACEHUB_RECOVERY_URL, process.env.SPACEHUB_RECOVERY_TOKEN);
 // Backups are kept off the hub: sub-hubs copy its data folder live
@@ -224,9 +224,20 @@ async function spacesOf(session: { token: string; username: string }): Promise<s
   return [session.username, ...others.sort()];
 }
 
-// Where the builder may act: its spaces, plus the projects it collaborates on ("<space>/<project>").
+// Where the builder may act: its spaces, the agents it owns through them, and the projects it collaborates on
+// ("<space>/<project>"). Agents have no space_role rows for their owners (the module's rule; agentSpacesOwnedBy).
 async function placesOf(session: { token: string; username: string }): Promise<{ spaces: string[]; projects: string[] }> {
-  const spaces = await spacesOf(session);
+  const base = await spacesOf(session);
+  const agents = await withConn(session.token, async conn => {
+    const roles = await snapshot(conn, tables.spaceRole.where(r => r.member.eq(session.username)), () =>
+      [...conn.db.spaceRole.iter()].filter(r => r.member === session.username).map(r => ({ space: r.space, role: r.role }))
+    );
+    const all = await snapshot(conn, tables.space.where(s => s.kind.eq('agent')), () =>
+      [...conn.db.space.iter()].filter(s => s.kind === 'agent').map(s => ({ name: s.name, parent: s.parent }))
+    );
+    return agentSpacesOwnedBy(session.username, roles, all);
+  }).catch(() => [] as string[]);
+  const spaces = [...new Set([...base, ...agents])];
   const projects = await withConn(session.token, async conn => {
     const ids = await snapshot(conn, tables.projectMember.where(r => r.agent.eq(session.username)), () =>
       [...conn.db.projectMember.iter()].filter(r => r.agent === session.username).map(r => r.projectId)

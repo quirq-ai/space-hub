@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cardActions, cardHeadline, connectOutcome, foldEvents, launchInput, launchNote, launchOf, linkLabel, repoName, runnerLabel, stateNote, toWorkerDetail, webLinksOnly, withoutCredit, toDetail, toEvents, toTasks, type RunnerInfo } from "../src/lib/workers.ts";
+import { cardActions, cardHeadline, connectOutcome, foldEvents, unknownWorkerNote, launchInput, launchNote, launchOf, linkLabel, repoName, runnerLabel, stateNote, toWorkerDetail, webLinksOnly, withoutCredit, toDetail, toEvents, toTasks, type RunnerInfo } from "../src/lib/workers.ts";
 
 test("tasks from a list or {tasks}, newest activity first", () => {
   const tasks = toTasks({ tasks: [
@@ -161,4 +161,11 @@ test("back from Connect: a plain sentence for each outcome, nothing for anything
   assert.match(connectOutcome("full")!.text, /Agent access/);
   assert.equal(connectOutcome("<script>"), null);
   assert.equal(connectOutcome(null), null);
+});
+
+test("a card space-hub has no record of says why, without sounding like an error", () => {
+  assert.equal(unknownWorkerNote(404, ""), "Launched on the hub’s old shared runner; its result is no longer available.");
+  assert.equal(unknownWorkerNote(403, ""), "Only members of this space can follow its workers.");
+  assert.equal(unknownWorkerNote(500, "boom"), "boom");
+  assert.equal(unknownWorkerNote(0, ""), "");
 });

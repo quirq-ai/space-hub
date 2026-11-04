@@ -15,6 +15,19 @@ export function sealKey(env: Record<string, string | undefined> = process.env): 
   return key.subarray(0, 32);
 }
 
+/**
+ * sealKey for the web service's start: a key that is set but unusable turns runners off with a warning, instead
+ * of stopping the whole hub over one feature's setting. Not set at all is not a warning: the feature is simply off.
+ */
+export function sealKeyOrOff(env: Record<string, string | undefined> = process.env, warn: (message: string) => void = m => process.stderr.write(`${m}\n`)): Buffer | null {
+  try {
+    return sealKey(env);
+  } catch (err) {
+    warn(`spacehub-web: SPACEHUB_SECRET_KEY is set but not usable (${err instanceof Error ? err.message : String(err)}); connecting runners is off until it is fixed.`);
+    return null;
+  }
+}
+
 export function seal(key: Buffer, plain: string): string {
   const iv = randomBytes(IV);
   const cipher = createCipheriv('aes-256-gcm', key, iv);
