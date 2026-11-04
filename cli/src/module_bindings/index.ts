@@ -66,6 +66,8 @@ import RunnerUpdateReducer from "./runner_update_reducer";
 import SetAccountsReducer from "./set_accounts_reducer";
 import SetLinkStatusReducer from "./set_link_status_reducer";
 import SetProjectBuilderReducer from "./set_project_builder_reducer";
+import SetSpaceGithubReducer from "./set_space_github_reducer";
+import StartChatReducer from "./start_chat_reducer";
 import StartImportReducer from "./start_import_reducer";
 import UnlinkSpaceReducer from "./unlink_space_reducer";
 import UnwatchReducer from "./unwatch_reducer";
@@ -98,6 +100,7 @@ import ProjectSizeRow from "./project_size_table";
 import RefSyncRow from "./ref_sync_table";
 import SpaceRow from "./space_table";
 import SpaceAliasRow from "./space_alias_table";
+import SpaceGithubRow from "./space_github_table";
 import SpaceLinkRow from "./space_link_table";
 import SpaceRoleRow from "./space_role_table";
 import UserRow from "./user_table";
@@ -325,6 +328,17 @@ const tablesSchema = __schema({
       { name: 'space_alias_name_key', constraint: 'unique', columns: ['name'] },
     ],
   }, SpaceAliasRow),
+  spaceGithub: __table({
+    name: 'space_github',
+    indexes: [
+      { accessor: 'space', name: 'space_github_space_idx_btree', algorithm: 'btree', columns: [
+        'space',
+      ] },
+    ],
+    constraints: [
+      { name: 'space_github_space_key', constraint: 'unique', columns: ['space'] },
+    ],
+  }, SpaceGithubRow),
   spaceLink: __table({
     name: 'space_link',
     indexes: [
@@ -408,6 +422,8 @@ const reducersSchema = __reducers(
   __reducerSchema("set_accounts", SetAccountsReducer),
   __reducerSchema("set_link_status", SetLinkStatusReducer),
   __reducerSchema("set_project_builder", SetProjectBuilderReducer),
+  __reducerSchema("set_space_github", SetSpaceGithubReducer),
+  __reducerSchema("start_chat", StartChatReducer),
   __reducerSchema("start_import", StartImportReducer),
   __reducerSchema("unlink_space", UnlinkSpaceReducer),
   __reducerSchema("unwatch", UnwatchReducer),

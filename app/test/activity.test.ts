@@ -16,14 +16,15 @@ test("day headings: today, yesterday, a weekday this week, else the date", () =>
   assert.equal(dayOf(at(2026, 11, 3, 0), now), "Today");
 });
 
-test("activity filters: pushes by kind, agents by who or what, people by who", () => {
+test("activity filters: split by who did it, a human or an agent, pushes included", () => {
   const agents = new Set(["euler"]);
-  const rows = [item("ref_updated", "euler"), item("ref_created", "suraj"), item("agent_created", "suraj"), item("agent_registered", "yash"), item("project_created", "suraj"), item("space_synced", "")];
+  const rows = [item("ref_updated", "euler"), item("ref_created", "suraj"), item("agent_created", "suraj"), item("agent_registered", "yash"), item("project_created", "euler"), item("space_synced", "")];
   const shown = (filter: Parameters<typeof keepActivity>[0]) => rows.filter(row => keepActivity(filter, row, agents)).map(row => `${row.kind}:${row.agent}`);
   assert.equal(shown("all").length, rows.length);
-  assert.deepEqual(shown("pushes"), ["ref_updated:euler", "ref_created:suraj"]);
-  assert.deepEqual(shown("agents"), ["ref_updated:euler", "agent_created:suraj"]);
-  assert.deepEqual(shown("people"), ["ref_created:suraj", "agent_created:suraj", "agent_registered:yash", "project_created:suraj"]);
+  assert.deepEqual(shown("humans"), ["ref_created:suraj", "agent_created:suraj", "agent_registered:yash"]);
+  assert.deepEqual(shown("agents"), ["ref_updated:euler", "project_created:euler"]);
+  // Each row someone did is under exactly one of the two.
+  assert.equal(shown("humans").length + shown("agents").length, rows.filter(row => row.agent).length);
 });
 
 test("who is here: one row each, agents first with their machine, the viewed project left out", () => {

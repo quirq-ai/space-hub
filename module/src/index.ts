@@ -36,7 +36,7 @@ import { Sha1, objectHeader } from './sha1';
 import { CHUNK_SIZE, PRESENCE_STALE_SECONDS, commitParents, inSpace, memberKey, objectKey, ownsSpace, projectFor, readObject, refKey, roleKey, spaceFor } from './store';
 import { renderUi } from './ui';
 import { ApiError, parseQuery, renderApi, templateFiles } from './workspace';
-import { appendTurns, type NewObject } from './chat';
+import { addFiles, appendTurns, type NewObject } from './chat';
 import { commitFiles, instantiate } from './space';
 import { BUILTIN_TEMPLATE } from './spacetemplate';
 import { OLDEST_PROTOCOL, PROTOCOL } from './protocol';
@@ -278,6 +278,18 @@ const spaceLink = table(
   }
 );
 
+// The GitHub organization whose picture an org shows, chosen by its owners.
+// Only the picture and a link to it: nothing is mirrored, unlike space_link.
+const spaceGithub = table(
+  { name: 'space_github', public: true },
+  {
+    space: t.string().primaryKey(),
+    login: t.string(), // as written
+    setBy: t.string(),
+    setAt: t.timestamp(),
+  }
+);
+
 // Where GitHub had each ref of a mirrored project at the last sync. A ref
 // that still holds that value has no work done here, so it follows GitHub,
 // force pushes included; a ref that moved here only moves forward, and is
@@ -427,6 +439,7 @@ const spacetimedb = schema({
   space,
   spaceRole,
   spaceLink,
+  spaceGithub,
   refSync,
   projectSize,
   agent,
@@ -1263,6 +1276,58 @@ export const appendChat = spacetimedb.reducer(
   }
 );
 
+// Where a place's one chat lives (the app's lib/chat-place.ts agrees): an
+// org's in <org>/chat, at its root; an agent's in its home project; a
+// project's in Chat/chat.json, or at the root of a project named chat.
+function chatOf(ctx: Ctx, space: string, project: string) {
+  space = spaceFor(ctx.db, space.trim().toLowerCase());
+  const row = requireSpace(ctx, space);
+  const name = project.trim();
+  if (name) return { space, project: name, path: name === 'chat' ? 'chat.json' : 'Chat/chat.json', where: `${space}/${name}` };
+  if (row.kind === 'org') return { space, project: 'chat', path: 'chat.json', where: space };
+  if (row.kind === 'agent') return { space, project: 'home', path: 'Chat/chat.json', where: space };
+  throw new SenderError('start a chat in an org, an agent or a project');
+}
+
+// Start a place's chat: one conversation file, in a project made for it
+// when an org or an agent has none yet. A chat already there stays as it is.
+export const startChat = spacetimedb.reducer({ space: t.string(), project: t.string() }, (ctx, { space, project }) => {
+  const me = requireActor(ctx);
+  const at = chatOf(ctx, space, project);
+  const fullName = projectFor(ctx.db, `${at.space}/${at.project}`);
+  const fresh = !ctx.db.project.fullName.find(fullName);
+  if (fresh && project.trim()) throw new SenderError(`project "${fullName}" not found`);
+  if (fresh) createProjectIn(ctx, at.space, at.project, at.project === 'chat' ? `The chat of ${at.space}` : '');
+  const sp = requireWritable(ctx, fullName);
+  const files: Record<string, string> = {
+    [at.path]: JSON.stringify({ type: 'conversation', title: `${at.where} chat`, messages: [{ role: 'system', content: `${me} started this chat.` }] }, null, 2) + '\n',
+  };
+  if (fresh && at.project === 'chat') files['README.md'] = `# ${fullName}\n\nThe chat of ${at.space}: \`chat.json\` starts the conversation and \`chat.log.jsonl\` keeps every message, one per line.\n`;
+  const name = `refs/heads/${sp.defaultBranch}`;
+  const current = ctx.db.gitRef.key.find(refKey(sp.id, name));
+  let built: ReturnType<typeof addFiles>;
+  try {
+    built = addFiles({
+      head: current?.oid ?? '',
+      files,
+      author: me,
+      now: Number(ctx.timestamp.microsSinceUnixEpoch / 1_000_000n),
+      message: `Start the chat of ${at.where}`,
+      read: oid => readObject(ctx.db, sp.id, oid),
+    });
+  } catch (err) {
+    throw new SenderError(err instanceof Error ? err.message : String(err));
+  }
+  if (!built.added.includes(at.path)) return;
+  let added = 0n;
+  for (const object of built.objects) added += writeObject(ctx, sp, object);
+  if (current) ctx.db.gitRef.id.update({ ...current, oid: built.commit, updatedAt: ctx.timestamp, updatedBy: ctx.sender });
+  else ctx.db.gitRef.insert({ id: 0n, key: refKey(sp.id, name), projectId: sp.id, name, oid: built.commit, updatedAt: ctx.timestamp, updatedBy: ctx.sender });
+  ctx.db.project.id.update({ ...sp, pushedAt: ctx.timestamp });
+  grow(ctx, sp.id, added);
+  logActivity(ctx, { projectId: sp.id, path: sp.fullName, kind: current ? 'ref_updated' : 'ref_created', subject: name, oid: built.commit, count: 1, text: `Start the chat of ${at.where}` });
+});
+
 // ---------------------------------------------------------------- spaces
 
 // A builder or an agent: someone who can belong to a space.
@@ -1299,6 +1364,7 @@ export const deleteOrg = spacetimedb.reducer({ space: t.string() }, (ctx, { spac
   if (projects || agents) throw new SenderError(`"${space}" still has ${projects} projects and ${agents} agents; delete or move them first`);
   for (const r of [...ctx.db.spaceRole.space.filter(space)]) ctx.db.spaceRole.id.delete(r.id);
   ctx.db.spaceLink.space.delete(space);
+  ctx.db.spaceGithub.space.delete(space);
   for (const p of [...ctx.db.presence.projectId.filter(0n)]) if (p.space === space) ctx.db.presence.connectionId.delete(p.connectionId);
   ctx.db.space.name.delete(space);
   logActivity(ctx, { kind: 'org_deleted', path: space, subject: space });
@@ -1488,6 +1554,29 @@ export const unlinkSpace = spacetimedb.reducer({ space: t.string() }, (ctx, { sp
   if (!row) throw new SenderError(`"${space}" is not linked to GitHub`);
   ctx.db.spaceLink.space.delete(space);
   logActivity(ctx, { kind: 'space_unlinked', path: space, subject: row.source });
+});
+
+// The GitHub organization an org takes its picture from; "" goes back to the
+// hub's own. Builders show their GitHub account's picture already.
+export const setSpaceGithub = spacetimedb.reducer({ space: t.string(), login: t.string() }, (ctx, { space, login }) => {
+  space = spaceFor(ctx.db, space);
+  const row = requireSpaceOwner(ctx, space);
+  if (row.kind !== 'org') throw new SenderError(`"${space}" is not an org`);
+  const current = ctx.db.spaceGithub.space.find(space);
+  const wanted = login.trim().replace(/^(?:https?:\/\/)?github\.com\//i, '').replace(/\/+$/, '');
+  if (!wanted) {
+    if (!current) return;
+    ctx.db.spaceGithub.space.delete(space);
+    logActivity(ctx, { kind: 'space_edited', path: space, subject: space, text: 'went back to its own picture' });
+    return;
+  }
+  const m = GITHUB_ACCOUNT.exec(`https://github.com/${wanted}`);
+  if (!m) throw new SenderError('name a GitHub organization, like anthropics');
+  if (current?.login === m[1]) return;
+  const next = { space, login: m[1], setBy: actorName(ctx) ?? '', setAt: ctx.timestamp };
+  if (current) ctx.db.spaceGithub.space.update(next);
+  else ctx.db.spaceGithub.insert(next);
+  logActivity(ctx, { kind: 'space_edited', path: space, subject: space, text: `took its picture from GitHub's ${m[1]}` });
 });
 
 // The web service's progress on a space's sync.

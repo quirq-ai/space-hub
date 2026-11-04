@@ -65,7 +65,10 @@ type Sort = "recent" | "name";
 type View = "cards" | "list";
 const PREFS = "spacehub:browse:v1";
 function readPrefs(): { sort: Sort; view: View } {
-  try { const value = JSON.parse(localStorage.getItem(PREFS) || "{}"); return { sort: value.sort === "name" ? "name" : "recent", view: value.view === "list" ? "list" : "cards" }; } catch { return { sort: "recent", view: "cards" }; }
+  try {
+    const value = JSON.parse(localStorage.getItem(PREFS) || "{}");
+    return { sort: value.sort === "name" ? "name" : "recent", view: value.view === "list" ? "list" : "cards" };
+  } catch { return { sort: "recent", view: "cards" }; }
 }
 
 const text = (card: PlaceCard) => `${card.name ?? ""} ${card.search ?? ""}`.toLowerCase();
@@ -78,7 +81,9 @@ const byName = (a: PlaceCard, b: PlaceCard) => (a.name ?? "").localeCompare(b.na
  * viewer), anything new since the viewer last looked pulled to the top, then
  * the groups. Arrow keys move between cards; Enter opens one.
  */
-export function Browser({ head, actions, intro, groups, keepOrder = false }: { head: ReactNode; actions?: ReactNode; intro?: ReactNode; groups: Group[]; keepOrder?: boolean }) {
+export function Browser({ head, actions, intro, groups, keepOrder = false }: {
+  head: ReactNode; actions?: ReactNode; intro?: ReactNode; groups: Group[]; keepOrder?: boolean;
+}) {
   const [prefs, setPrefs] = useState(readPrefs);
   const [query, setQuery] = useState("");
   const box = useRef<HTMLDivElement>(null);

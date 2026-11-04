@@ -11,6 +11,9 @@
 //   GET  /-/api/me                         who is signed in
 //   GET  /-/avatar/<name>                  a builder's, org's or agent's picture (avatar.ts)
 //   POST /-/api/chat                       save chat turns as the signed-in builder (append_chat)
+//   POST /-/api/space-picture              an org owner picks the GitHub organization whose picture
+//                                          the org shows, or clears it (set_space_github)
+//   POST /-/api/start-chat                 start an org's, an agent's or a project's chat (start_chat)
 //
 // The browser never talks to SpacetimeDB: reads come from the module over
 // HTTP, and a chat is saved with the session's own token, so the module's
@@ -22,7 +25,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Conn } from './conn';
 import { findUser } from './conn';
-import { handleAvatar } from './avatar';
+import { forgetAvatar, handleAvatar } from './avatar';
 import { visitorLanding } from './visitor';
 
 export const APP_CSP =
@@ -107,6 +110,22 @@ export function parseChat(input: unknown) {
   return { project: `${input.space}/${input.project}`, conversation: input.conversation, turns: turns as { id: string; role: string; content: string; links: { label: string; path: string }[] }[] };
 }
 
+// Changes the app makes as the signed-in builder, each through one reducer,
+// so the module's own checks decide who may.
+const ACTIONS: Record<string, { what: string; usage: string; call: (input: Record<string, unknown>) => ((conn: Conn) => Promise<unknown>) | null; after?: (input: Record<string, unknown>) => void }> = {
+  '/-/api/space-picture': {
+    what: 'change the picture',
+    usage: 'Send a space and a GitHub organization.',
+    call: ({ space, login }) => (typeof space === 'string' && typeof login === 'string' ? conn => conn.reducers.setSpaceGithub({ space, login }) : null),
+    after: ({ space }) => forgetAvatar(String(space)),
+  },
+  '/-/api/start-chat': {
+    what: 'start a chat',
+    usage: 'Send a space, and a project or "".',
+    call: ({ space, project }) => (typeof space === 'string' && typeof project === 'string' ? conn => conn.reducers.startChat({ space, project }) : null),
+  },
+};
+
 /** Handle the app's routes; false when the request is not one of them. */
 export async function handleApp(deps: AppDeps, req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<boolean> {
   const route = url.pathname;
@@ -173,6 +192,35 @@ export async function handleApp(deps: AppDeps, req: http.IncomingMessage, res: h
         return true;
       });
       if (!saved) return json(res, 401, { error: 'Sign in to save chats.' }), true;
+      return json(res, 200, { ok: true }), true;
+    } catch (error) {
+      const message = (error instanceof Error ? error.message : String(error)).replace(/^Error: /, '');
+      return json(res, /permission denied/.test(message) ? 403 : 400, { error: message }), true;
+    }
+  }
+
+  const action = ACTIONS[route];
+  if (action) {
+    if (req.method !== 'POST') return json(res, 405, { error: `Send it with POST to ${action.what}.` }), true;
+    if (req.headers['content-type']?.split(';')[0] !== 'application/json') return json(res, 415, { error: 'Send JSON.' }), true;
+    const token = /(?:^|;\s*)spacehub_session=([^;]*)/.exec(req.headers.cookie ?? '')?.[1];
+    if (!token) return json(res, 401, { error: `Sign in to ${action.what}.` }), true;
+    let input: unknown;
+    try {
+      input = await readJson(req);
+    } catch {
+      input = null;
+    }
+    const call = object(input) ? action.call(input) : null;
+    if (!call) return json(res, 400, { error: action.usage }), true;
+    try {
+      const done = await deps.withConn(decodeURIComponent(token), async (conn, identity) => {
+        if (!(await findUser(conn, identity))) return false;
+        await call(conn);
+        return true;
+      });
+      if (!done) return json(res, 401, { error: `Sign in to ${action.what}.` }), true;
+      action.after?.(input as Record<string, unknown>);
       return json(res, 200, { ok: true }), true;
     } catch (error) {
       const message = (error instanceof Error ? error.message : String(error)).replace(/^Error: /, '');

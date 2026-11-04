@@ -5,6 +5,7 @@ import { hashOf, onLink } from "@/router";
 import { Ago, Avatar, AvatarStack, Empty, PersonLink, SkeletonRows } from "@/ui/primitives";
 import { dayOf, FILTERS, keepActivity, liveRows, MODES, type ActivityFilter } from "@/lib/activity";
 import { Browser } from "@/ui/cards";
+import { Glass } from "@/ui/home-screen";
 
 export function PageHeader({ crumbs, title, subtitle, leading, actions, children }: {
   crumbs?: { label: string; href: string }[]; title: ReactNode; subtitle?: ReactNode; leading?: ReactNode; actions?: ReactNode; children?: ReactNode;
@@ -47,6 +48,26 @@ export function Tabs({ tabs, active }: { tabs: Tab[]; active: string }) {
   </a>)}</nav></div>;
 }
 
+/**
+ * A place's own bar under the top bar: who or what it is, its actions, and
+ * its sections as tabs. It stays the same on every section of the place, so
+ * you always see where you are and where you can go next.
+ */
+export function PlaceBar({ icon, title, badge, subtitle, actions, tabs, active, children }: {
+  icon: ReactNode; title: ReactNode; badge?: ReactNode; subtitle?: ReactNode; actions?: ReactNode; tabs?: Tab[]; active?: string; children?: ReactNode;
+}) {
+  return <header className={`place-bar${tabs?.length ? "" : " untabbed"}`}>
+    <Glass />
+    <div className="place-id">
+      <span className="place-icon">{icon}</span>
+      <div className="place-name"><h1>{title}{badge}</h1>{subtitle && <p>{subtitle}</p>}</div>
+      {actions && <div className="page-actions">{actions}</div>}
+    </div>
+    {children}
+    {tabs?.length ? <Tabs tabs={tabs} active={active ?? ""} /> : null}
+  </header>;
+}
+
 export function ActivityList({ items, empty = "Nothing has happened here yet.", compact = false }: { items: ActivityItem[]; empty?: string; compact?: boolean }) {
   if (!items.length) return <Empty icon={<History size={20} />} title="No activity yet"><p>{empty}</p></Empty>;
   // Keyed by the row (a group by its newest push), not its position, so a new
@@ -78,15 +99,16 @@ export function ActivityList({ items, empty = "Nothing has happened here yet.", 
   </section>)}</div>;
 }
 
-const NONE: Record<ActivityFilter, string> = { all: "", pushes: "No pushes here yet.", agents: "No agent has done anything here yet.", people: "No builder has done anything here yet." };
+const NONE: Record<ActivityFilter, string> = { all: "", humans: "No builder has done anything here yet.", agents: "No agent has done anything here yet." };
 
 /** A place's activity with a filter (lib/activity.ts); `agents` names the agents, since an activity row only says who. */
 export function ActivityStream({ items, agents, compact = false, empty }: { items: ActivityItem[]; agents: string[]; compact?: boolean; empty?: string }) {
   const [filter, setFilter] = useState<ActivityFilter>("all");
   const isAgent = new Set(agents);
   const shown = items.filter(item => keepActivity(filter, item, isAgent));
+  const counts = new Map(FILTERS.map(option => [option.key, option.key === filter ? shown.length : items.filter(item => keepActivity(option.key, item, isAgent)).length]));
   return <div className="activity-stream">
-    {items.length > 0 && <div className="activity-filter-bar"><div className="segmented activity-filter" role="group" aria-label="Show">{FILTERS.map(option => <button key={option.key} type="button" className={filter === option.key ? "on" : undefined} aria-pressed={filter === option.key} onClick={() => setFilter(option.key)}>{option.label}</button>)}</div></div>}
+    {items.length > 0 && <div className="activity-filter-bar"><div className="segmented activity-filter" role="group" aria-label="Show">{FILTERS.map(option => <button key={option.key} type="button" className={filter === option.key ? "on" : undefined} aria-pressed={filter === option.key} onClick={() => setFilter(option.key)}>{option.label}<span className="tab-count">{counts.get(option.key)}</span></button>)}</div></div>}
     {shown.length || filter === "all" ? <ActivityList items={shown} compact={compact} empty={empty} /> : <p className="quiet activity-none">{NONE[filter]}</p>}
   </div>;
 }
@@ -96,7 +118,7 @@ export function ActivityPanel({ meta }: { meta: Meta | undefined }) {
   if (!meta) return <div className="feed"><SkeletonRows rows={6} /></div>;
   const agents = meta.level === "project" ? meta.agents : [...new Set([...meta.agentList.map(agent => agent.name), ...(meta.level === "space" ? meta.agents : [])])];
   return <div className="feed">
-    <LiveNow variant="panel" title={meta.level === "hub" ? "Live now" : "Here now"} here={meta.here} agents={meta.level === "project" ? [] : meta.agentList} known={agents} place={meta.level === "project" ? meta.fullName : ""} />
+    <LiveNow title={meta.level === "hub" ? "Live now" : "Here now"} here={meta.here} agents={meta.level === "project" ? [] : meta.agentList} known={agents} place={meta.level === "project" ? meta.fullName : ""} />
     <ActivityStream items={meta.activity} agents={agents} compact />
   </div>;
 }
@@ -144,12 +166,9 @@ function PushGroup({ group, compact, index }: { group: ActivityItem[]; compact: 
   </li>;
 }
 
-/** Who is connected now (lib/activity.ts): how many, in a page header, or each one at the top of the right-hand panel. */
-export function LiveNow({ here, agents = [], known = [], place = "", variant, title = "Here now" }: { here: Here[]; agents?: AgentInfo[]; known?: string[]; place?: string; variant: "strip" | "panel"; title?: string }) {
+/** Who is connected now (lib/activity.ts), each one at the top of the right-hand panel. */
+export function LiveNow({ here, agents = [], known = [], place = "", title = "Here now" }: { here: Here[]; agents?: AgentInfo[]; known?: string[]; place?: string; title?: string }) {
   const rows = liveRows(here, agents, known, place);
-  if (variant === "strip") return rows.length ? <div className="live-strip">
-    <span className="strip-here"><i className="online-dot" />Live now</span><span className="live-count">{rows.length}</span>
-  </div> : null;
   return <section className="live-panel" aria-label={title}>
     <h3 className="activity-day-title">{title}{rows.length > 0 && <span className="quiet"> {rows.length}</span>}</h3>
     {rows.length ? <ul className="live-list">{rows.map(row => <li key={row.name}>
@@ -164,14 +183,14 @@ export function HereNow({ here }: { here: Here[] }) {
   return <ul className="people-list">{here.map((who, index) => <li key={index}><PersonLink name={who.agent} /><span className="quiet">{MODES[who.mode] ?? who.mode}{who.project ? ` · ${who.project}` : ""}</span><span className="online-dot" title="Connected now" /></li>)}</ul>;
 }
 
-/** People and agents as cards, grouped by what they may do, with who is connected right now. */
-export function People({ groups, here = [], agents = [] }: { groups: { title: string; names: string[]; note?: string }[]; here?: Here[]; agents?: string[] }) {
+/** People and agents as cards, grouped by what they may do (each card can say why), with who is connected right now. */
+export function People({ groups, here = [], agents = [], counted = n => `${n} ${n === 1 ? "person" : "people and agents"}` }: { groups: { title: string; names: string[]; note?: string; detail?: (name: string) => string }[]; here?: Here[]; agents?: string[]; counted?: (n: number) => string }) {
   const shown = groups.filter(group => group.names.length);
   if (!shown.length) return <Empty icon={<Users size={20} />} title="No people yet" />;
   const online = new Set(here.map(who => who.agent));
   const total = new Set(shown.flatMap(group => group.names)).size;
-  return <Browser head={<>{total} {total === 1 ? "person" : "people and agents"}{online.size ? <> · <span className="strip-here"><i className="online-dot" />{online.size} here now</span></> : null}</>} groups={shown.map(group => ({ key: group.title, title: group.title, note: group.note, compact: true, cards: group.names.map(name => ({
-    key: name, name, search: group.title, href: "/" + encodeURIComponent(name), title: name,
+  return <Browser head={<>{counted(total)}{online.size ? <> · <span className="strip-here"><i className="online-dot" />{online.size} here now</span></> : null}</>} groups={shown.map(group => ({ key: group.title, title: group.title, note: group.note, compact: true, cards: group.names.map(name => ({
+    key: name, name, search: group.title, href: "/" + encodeURIComponent(name), title: name, detail: group.detail?.(name),
     icon: <Avatar name={name} size={28} kind={agents.includes(name) ? "agent" : undefined} />,
     labels: online.has(name) ? <span className="label done" title="Connected now"><i className="online-dot" />Here now</span> : undefined,
   })) }))} />;

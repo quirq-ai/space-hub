@@ -6,7 +6,7 @@ export type Place = { space: string; project: string };
 
 export type Here = { agent: string; mode: string; project: string };
 export type ActivityItem = { at: string; agent: string; kind: string; path: string; subject: string; text: string; count: number; oid: string };
-export type Membership = { space: string; kind: string; role: string };
+export type Membership = { space: string; kind: string; role: string; founder?: boolean };
 export type AgentInfo = { name: string; description: string; parent: string; owned: boolean; connected: boolean; spaces: string[]; running: { host: string; since: string }[] };
 export type ProjectCard = { fullName: string; description: string; pushedAt: string };
 /** A project's SPACE.md, read by the hub: what it is for and how far along it is. */
@@ -17,13 +17,13 @@ export type SpaceGoal = {
 
 export type HubMeta = { level: "hub"; spaces: number; projects: number; bytes: number; events: number; humans: number; agents: number; activity: ActivityItem[]; here: Here[]; allProjects: ProjectCard[]; agentList: AgentInfo[] };
 export type SpaceMeta = {
-  level: "space"; name: string; displayName: string; kind: string; description: string; parent: string; owners: string[]; members: string[];
+  level: "space"; name: string; displayName: string; kind: string; description: string; parent: string; founder?: string; owners: string[]; members: string[];
   projects: number; bytes: number; github: string; githubLogin: string; aliases?: string[]; createdAt: string; memberOf: Membership[]; agents: string[]; agentList: AgentInfo[];
   collaborates: string[]; here: Here[]; activity: ActivityItem[];
 };
 export type ProjectMeta = {
   level: "project"; fullName: string; space: string; name: string; description: string; defaultBranch: string; bytes: number;
-  head: { oid: string; subject: string; author: string; time: string } | null; deps: number; canWrite: boolean; owners: string[]; members: string[]; agents: string[];
+  head: { oid: string; subject: string; author: string; time: string } | null; deps: number; canWrite: boolean; founder?: string; owners: string[]; members: string[]; agents: string[];
   collaborators: string[]; here: Here[]; activity: ActivityItem[]; goal: SpaceGoal | null;
 };
 export type Meta = HubMeta | SpaceMeta | ProjectMeta;
@@ -67,8 +67,30 @@ export function placeUrl(place: Place, hash = ""): string {
   return "/" + [place.space, place.project].filter(Boolean).map(encodeURIComponent).join("/") + (hash ? "#" + hash : "");
 }
 
+// A name whose picture just changed gets a new address, so images load it again.
+const pictureVersions = new Map<string, number>();
+
 export function avatarUrl(name: string): string {
-  return "/-/avatar/" + encodeURIComponent(name.toLowerCase());
+  const key = name.toLowerCase();
+  const version = pictureVersions.get(key);
+  return "/-/avatar/" + encodeURIComponent(key) + (version ? `?v=${version}` : "");
+}
+
+/** A change the web service makes as the signed-in builder (cli/src/app.ts ACTIONS); throws the hub's reason when refused. */
+async function act(route: string, body: Record<string, string>, what: string): Promise<void> {
+  const response = await fetch(route, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  if (!response.ok) throw new Error((await response.json().catch(() => null) as { error?: string } | null)?.error ?? `Could not ${what} (${response.status}).`);
+}
+
+/** An org owner picks the GitHub organization whose picture the org shows ("" for the default). */
+export async function setSpacePicture(space: string, login: string): Promise<void> {
+  await act("/-/api/space-picture", { space, login }, "change the picture");
+  pictureVersions.set(space.toLowerCase(), Date.now());
+}
+
+/** Start the one chat of an org, an agent or a project (lib/chat-place.ts says where it goes). */
+export async function startChat(place: Place): Promise<void> {
+  await act("/-/api/start-chat", { space: place.space, project: place.project }, "start the chat");
 }
 
 /** The module's raw view of a file, for image previews and PDFs. */

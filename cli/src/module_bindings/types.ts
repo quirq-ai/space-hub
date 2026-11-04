@@ -228,6 +228,14 @@ export const SpaceAlias = __t.object("SpaceAlias", {
 });
 export type SpaceAlias = __Infer<typeof SpaceAlias>;
 
+export const SpaceGithub = __t.object("SpaceGithub", {
+  space: __t.string(),
+  login: __t.string(),
+  setBy: __t.string(),
+  setAt: __t.timestamp(),
+});
+export type SpaceGithub = __Infer<typeof SpaceGithub>;
+
 export const SpaceLink = __t.object("SpaceLink", {
   space: __t.string(),
   source: __t.string(),

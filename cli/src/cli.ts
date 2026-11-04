@@ -66,7 +66,7 @@ SPACES
   space create <org> [-d <text>]           Create an org (you are its owner)
   space list [<builder>]                   List spaces (or the ones a builder belongs to)
   space view <space>                       Kind, owners, members and projects
-  space edit <space> --description <text>
+  space edit <space> [--description <text>] [--github <org>]   Describe it; an org takes its picture from a GitHub org ("" clears)
   space delete <org> --yes                 Delete an empty org
   space member add <space> <name> [--owner]   Add a builder as a member (or owner)
   space member remove <space> <name>          (a member can remove itself)
@@ -980,9 +980,13 @@ async function spaceView(args: string[]) {
 async function spaceEdit(args: string[]) {
   const target = await spaceOrProject(firstPositional(args));
   if ('project' in target) return projectEdit(args);
-  const description = opt(args, '--description', '-d') ?? die('nothing to change; pass --description');
+  const description = opt(args, '--description', '-d');
+  const github = opt(args, '--github');
+  if (description === undefined && github === undefined) die('nothing to change; pass --description or --github');
   const { conn } = await open();
-  await conn.reducers.editSpace({ space: target.space, description });
+  if (description !== undefined) await conn.reducers.editSpace({ space: target.space, description });
+  // An org's picture: a GitHub organization's, or "" for the hub's own.
+  if (github !== undefined) await conn.reducers.setSpaceGithub({ space: target.space, login: github });
   out(`Updated ${target.space}`);
 }
 
