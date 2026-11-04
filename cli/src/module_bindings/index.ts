@@ -60,6 +60,9 @@ import RegisterUserReducer from "./register_user_reducer";
 import RemoveProjectMemberReducer from "./remove_project_member_reducer";
 import RemoveSpaceMemberReducer from "./remove_space_member_reducer";
 import RequestSyncReducer from "./request_sync_reducer";
+import RunnerAddReducer from "./runner_add_reducer";
+import RunnerDeleteReducer from "./runner_delete_reducer";
+import RunnerUpdateReducer from "./runner_update_reducer";
 import SetAccountsReducer from "./set_accounts_reducer";
 import SetLinkStatusReducer from "./set_link_status_reducer";
 import SetProjectBuilderReducer from "./set_project_builder_reducer";
@@ -72,6 +75,8 @@ import UpdateImportReducer from "./update_import_reducer";
 import UpdateRefReducer from "./update_ref_reducer";
 import WatchProjectReducer from "./watch_project_reducer";
 import WatchSpaceReducer from "./watch_space_reducer";
+import WorkerAddReducer from "./worker_add_reducer";
+import WorkerUpdateReducer from "./worker_update_reducer";
 import XoLinkAgentReducer from "./xo_link_agent_reducer";
 import XoLinkGithubReducer from "./xo_link_github_reducer";
 import XoPutRecordReducer from "./xo_put_record_reducer";
@@ -411,6 +416,9 @@ const reducersSchema = __reducers(
   __reducerSchema("remove_project_member", RemoveProjectMemberReducer),
   __reducerSchema("remove_space_member", RemoveSpaceMemberReducer),
   __reducerSchema("request_sync", RequestSyncReducer),
+  __reducerSchema("runner_add", RunnerAddReducer),
+  __reducerSchema("runner_delete", RunnerDeleteReducer),
+  __reducerSchema("runner_update", RunnerUpdateReducer),
   __reducerSchema("set_accounts", SetAccountsReducer),
   __reducerSchema("set_link_status", SetLinkStatusReducer),
   __reducerSchema("set_project_builder", SetProjectBuilderReducer),
@@ -423,6 +431,8 @@ const reducersSchema = __reducers(
   __reducerSchema("update_ref", UpdateRefReducer),
   __reducerSchema("watch_project", WatchProjectReducer),
   __reducerSchema("watch_space", WatchSpaceReducer),
+  __reducerSchema("worker_add", WorkerAddReducer),
+  __reducerSchema("worker_update", WorkerUpdateReducer),
   __reducerSchema("xo_link_agent", XoLinkAgentReducer),
   __reducerSchema("xo_link_github", XoLinkGithubReducer),
   __reducerSchema("xo_put_record", XoPutRecordReducer),

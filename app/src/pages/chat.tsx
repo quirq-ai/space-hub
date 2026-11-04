@@ -5,7 +5,7 @@ import { Markdown } from "@/components/content-view";
 import { useChat } from "@/hooks/use-chat";
 import { useLive } from "@/hooks/use-live";
 import { WorkerCard } from "@/components/worker-card";
-import { launchInput, launchOf, newKey, recentRepos, rememberRepo, repoName, send, type AgentHubStatus } from "@/lib/agenthub";
+import { defaultRunner, launchInput, launchNote, launchOf, runnerLabel, newKey, recentRepos, rememberRepo, repoName, send, type RunnerInfo, type WorkersStatus } from "@/lib/workers";
 import { type Place } from "@/api";
 import { Ago, Avatar, AvatarStack, ErrorNote } from "@/ui/primitives";
 
@@ -35,11 +35,10 @@ export function ChatView({ place, path, data, repliesPath, logExists, me, canWri
   const added: Message[] = chat.messages.map(turn => ({ ...turn, author: turn.author || (turn.role === "assistant" ? "quirqy" : "") }));
   const all = [...saved, ...added];
   const people = [...new Set(all.map(message => message.author).filter(name => name && name !== "note"))];
-  // Members of an org with agents launch a worker with the message instead of only sending it.
-  const agents = useLive<AgentHubStatus>(!blocked ? `/-/api/agenthub?space=${encodeURIComponent(place.space)}` : undefined, 0);
-  const canLaunch = !!agents.data?.enabled && agents.data.allowed;
-  // Launching needs an account linked to XO; a member signed in with GitHub only is told how.
-  const needsXo = !!agents.data?.enabled && !!agents.data.needsXo;
+  // People who can write here launch a worker with the message, on a runner of their own.
+  const workers = useLive<WorkersStatus>(!blocked ? `/-/api/workers?space=${encodeURIComponent(place.space)}&project=${encodeURIComponent(place.project)}` : undefined, 0);
+  const runners = workers.data?.runners ?? [];
+  const canLaunch = !!workers.data?.enabled && !!workers.data.signedIn;
   const [launching, setLaunching] = useState(false);
 
   useEffect(() => { end.current?.scrollIntoView({ block: "end", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" }); }, [all.length, chat.pending]);
@@ -66,7 +65,7 @@ export function ChatView({ place, path, data, repliesPath, logExists, me, canWri
               const launch = launchOf(message.content);
               return <>
                 <div className="message-text"><Markdown content={launch ? launch.text : message.content} filePath={path} navigate={onOpen} /></div>
-                {launch && <WorkerCard id={launch.task} />}
+                {launch && <WorkerCard id={launch.task} me={me} />}
               </>;
             })()}
             {message.links && message.links.length > 0 && <div className="message-links">{message.links.map((link, i) => <button key={i} type="button" onClick={() => onOpen(link.path)}><FileText size={14} />{link.label || link.path}</button>)}</div>}
@@ -82,7 +81,7 @@ export function ChatView({ place, path, data, repliesPath, logExists, me, canWri
       {blocked === "signin" && <div className="composer-blocked"><span>Sign in to write in this conversation.</span><a className="button" href={signIn}><LogIn size={15} />Sign in</a></div>}
       {blocked === "member" && <div className="composer-blocked"><span>Only members of {place.space} can write here. You can read along.</span></div>}
       {!blocked && <>
-        {launching && <LaunchTray place={place} path={path} draft={chat.draft} onClose={() => setLaunching(false)} onLaunched={() => { setLaunching(false); chat.setDraft(""); chat.refresh(); onSaved(); }} />}
+        {launching && <LaunchTray place={place} path={path} draft={chat.draft} runners={runners} onClose={() => setLaunching(false)} onLaunched={() => { setLaunching(false); chat.setDraft(""); chat.refresh(); onSaved(); }} />}
         {!added.length && chat.suggestions.length > 0 && <div className="suggestions">{chat.suggestions.map(item => <button key={item.label} type="button" disabled={!chat.ready || chat.pending} onClick={() => chat.send(item.prompt)}>{item.label}</button>)}</div>}
         <form className="composer" onSubmit={event => { event.preventDefault(); chat.send(); }}>
           <Avatar name={me!} size={28} />
@@ -93,30 +92,34 @@ export function ChatView({ place, path, data, repliesPath, logExists, me, canWri
           {chat.pending ? <button type="button" className="send stop" aria-label="Stop the sample reply" onClick={chat.stop}><Square size={13} fill="currentColor" /></button>
             : <button type="submit" className="send" aria-label="Send" disabled={!chat.ready || !chat.draft.trim()}><ArrowUp size={17} /></button>}
         </form>
-        <p className="composer-note">Saved to {place.space}/{place.project} as {me}{chat.sampleReplies ? " · sample replies on" : ""} · Enter to send, Shift+Enter for a new line{canLaunch ? ` · Launch runs it as a worker of ${place.space}` : ""}{needsXo && <> · <a href={`/-/login/xo?next=${encodeURIComponent(location.pathname + location.hash)}`}>Sign in with xo</a> to launch workers</>}</p>
+        <p className="composer-note">Saved to {place.space}/{place.project} as {me}{chat.sampleReplies ? " · sample replies on" : ""} · Enter to send, Shift+Enter for a new line{canLaunch ? " · Launch runs it as a worker on your runner" : ""}</p>
       </>}
     </div>
   </div>;
 }
 
 /**
- * Above the composer: launch the message as a worker of the org, on a GitHub
- * repository, or on an issue or pull request (its link joins the task).
+ * Above the composer: launch the message as a worker on one of your runners,
+ * on a GitHub repository, or on an issue or pull request (its link joins the
+ * task) when the runner works on repositories.
  */
-function LaunchTray({ place, path, draft, onClose, onLaunched }: { place: Place; path: string; draft: string; onClose: () => void; onLaunched: () => void }) {
+function LaunchTray({ place, path, draft, runners, onClose, onLaunched }: { place: Place; path: string; draft: string; runners: RunnerInfo[]; onClose: () => void; onLaunched: () => void }) {
   const [github, setGithub] = useState(() => recentRepos()[0] ?? "");
+  const [chosen, setChosen] = useState(() => defaultRunner(runners)?.id ?? "");
+  const runner = runners.find(r => r.id === chosen) ?? defaultRunner(runners);
+  const repos = !!runner?.capabilities.repo;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   // One key per launch: a retry of it starts one worker, an edited one is new.
-  const key = useMemo(newKey, [draft, github]);
+  const key = useMemo(newKey, [draft, github, chosen]);
   const recent = recentRepos();
-  const repo = repoName(github);
+  const repo = repos ? repoName(github) : "";
   const launch = async () => {
-    if (!draft.trim() || busy) return;
+    if (!draft.trim() || busy || !runner) return;
     setBusy(true); setError("");
     try {
-      const input = launchInput(draft, github);
-      const made = await send("POST", "/tasks", { space: place.space, project: place.project, conversation: path, ...input }, key) as { saved?: boolean };
+      const input = repos ? launchInput(draft, github) : { text: draft.trim() };
+      const made = await send("POST", "/workers", { space: place.space, project: place.project, conversation: path, runner: runner.id, ...input }, key) as { saved?: boolean };
       rememberRepo(repo);
       if (made?.saved === false) setError("The worker started, but the message was not saved to this chat.");
       else onLaunched();
@@ -129,15 +132,17 @@ function LaunchTray({ place, path, draft, onClose, onLaunched }: { place: Place;
   return <div className="launch-tray">
     <div className="launch-row">
       <Rocket size={15} className="launch-icon" />
-      <span className="launch-title">Launch {draft.trim() ? "this message" : "a message"} as a worker of <strong>{place.space}</strong></span>
+      <span className="launch-title">Launch {draft.trim() ? "this message" : "a message"} as a worker</span>
+      {runners.length > 1 && <select aria-label="Runner" value={runner?.id ?? ""} onChange={event => setChosen(event.target.value)}>{runners.map(r => <option key={r.id} value={r.id}>{runnerLabel(r.name, r.kind)}</option>)}</select>}
       <button type="button" className="icon-button" aria-label="Close" onClick={onClose}><X size={14} /></button>
     </div>
     <div className="launch-row">
-      <label className="launch-github"><Github size={14} /><input value={github} placeholder="owner/repo, or a GitHub issue or pull request link" spellCheck={false} autoCapitalize="off" onChange={event => setGithub(event.target.value)} /></label>
-      <button type="button" className="button primary small" disabled={!draft.trim() || busy || (!!github.trim() && !repo)} onClick={() => void launch()}>{busy ? "Launching…" : "Launch"}</button>
+      {repos && <label className="launch-github"><Github size={14} /><input value={github} placeholder="owner/repo, or a GitHub issue or pull request link" spellCheck={false} autoCapitalize="off" onChange={event => setGithub(event.target.value)} /></label>}
+      <button type="button" className="button primary small" disabled={!draft.trim() || busy || !runner || (repos && !!github.trim() && !repo)} onClick={() => void launch()}>{busy ? "Launching…" : "Launch"}</button>
     </div>
-    {recent.length > 0 && <div className="launch-recent">{recent.map(name => <button key={name} type="button" className={name === repo ? "on" : undefined} onClick={() => setGithub(name)}>{name}</button>)}</div>}
-    {github.trim() && !repo && <p className="launch-note">Use owner/repo, or paste a github.com link.</p>}
+    {repos && recent.length > 0 && <div className="launch-recent">{recent.map(name => <button key={name} type="button" className={name === repo ? "on" : undefined} onClick={() => setGithub(name)}>{name}</button>)}</div>}
+    {repos && github.trim() && !repo && <p className="launch-note">Use owner/repo, or paste a github.com link.</p>}
+    {runner ? <p className="launch-note">Runs on {runnerLabel(runner.name, runner.kind)}</p> : <p className="launch-note"><a href="/#/settings">{launchNote(runners)}</a></p>}
     {!draft.trim() && <p className="launch-note">Write what the worker should do in the message box, then launch.</p>}
     {error && <p className="launch-note is-error">{error}</p>}
   </div>;

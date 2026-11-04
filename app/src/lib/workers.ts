@@ -1,12 +1,16 @@
-// Workers launched from a chat, as the app shows them: tasks on the org's
-// Agents Hub, read through the web service (/-/api/agenthub,
-// cli/src/agenthub.ts), and their events folded into messages, steps, links
-// and notes. A launch is a chat turn that ends with the task's marker.
+// Workers launched from a chat, as the app shows them: tasks on the
+// launcher's own runner (Worker Protocol worker/1), read through the web
+// service (/-/api/workers, cli/src/workers.ts), and their events folded into
+// messages, steps, links and notes. A launch is a chat turn that ends with
+// the task's marker.
 //
-// The Agents Hub's event kinds: user · message · thinking · tool / tool_done ·
+// The event kinds: user · message · thinking · tool / tool_done ·
 // command / command_done · link · env · status · turn · note · error.
 
-export type AgentHubStatus = { enabled: boolean; signedIn: boolean; allowed: boolean; needsXo?: boolean };
+export type Capabilities = { followUp: boolean; stop: boolean; events: boolean; repo: boolean; connect: boolean };
+export type RunnerInfo = { id: string; name: string; kind: string; url: string; isDefault: boolean; capabilities: Capabilities; connectedAt: string; checkedAt: string };
+export type WorkersStatus = { enabled: boolean; signedIn: boolean; runners: RunnerInfo[]; canLaunch: boolean };
+export type WorkerState = "" | "gone" | "disconnected" | "unreachable";
 export type TaskStatus = "running" | "ending" | "done" | "stopped" | "failed" | string;
 export type Task = { id: string; title: string; status: TaskStatus; repo: string; createdAt: string; updatedAt: string };
 export type TaskResult = { summary: string; links: { label: string; url: string }[]; error: string };
@@ -66,7 +70,95 @@ export function toEvents(value: unknown, after: number): { events: TaskEvent[]; 
 export const isRunning = (status: TaskStatus) => status === "running" || status === "ending";
 
 export function statusLabel(status: TaskStatus): string {
-  return status === "running" ? "Running" : status === "ending" ? "Finishing" : status === "done" ? "Done" : status === "stopped" ? "Stopped" : status === "failed" ? "Failed" : status;
+  return status === "running" ? "Running" : status === "ending" ? "Finishing" : status === "done" ? "Done" : status === "stopped" ? "Stopped" : status === "failed" ? "Failed" : status === "gone" ? "Torn down" : status;
+}
+
+const NO_CAPS: Capabilities = { followUp: false, stop: false, events: false, repo: false, connect: false };
+const capsOf = (value: unknown): Capabilities => {
+  const v = obj(value) ? value : {};
+  return { followUp: v.followUp === true, stop: v.stop === true, events: v.events === true, repo: v.repo === true, connect: v.connect === true };
+};
+
+export type WorkerDetail = ReturnType<typeof toDetail> & {
+  state: WorkerState; launcher: string;
+  runner: { name: string; kind: string; capabilities: Capabilities } | null;
+};
+
+/** GET /-/api/workers/<task>: the task, its result (or the kept copy), whose runner, and why it is quiet. */
+export function toWorkerDetail(value: unknown): WorkerDetail {
+  const v = obj(value) ? value : {};
+  const state = v.state === "gone" || v.state === "disconnected" || v.state === "unreachable" ? v.state : "";
+  const runner = obj(v.runner) ? { name: str(v.runner.name), kind: str(v.runner.kind) || "runner", capabilities: capsOf(v.runner.capabilities) } : null;
+  return { ...toDetail(value), state, launcher: str(v.launcher), runner };
+}
+
+/** Which buttons a card shows: steps for everyone the runner shares them with; steering for the launcher only. */
+export function cardActions(detail: WorkerDetail, me: string | null) {
+  const quiet = detail.state === "gone" || detail.state === "disconnected";
+  const caps = quiet ? NO_CAPS : detail.runner?.capabilities ?? NO_CAPS;
+  const mine = !!me && detail.launcher === me && !quiet;
+  const live = isRunning(detail.task?.status ?? "");
+  return { steps: caps.events, followUp: mine && !live && caps.followUp, stop: mine && live && caps.stop, tearDown: mine && !live };
+}
+
+/** "on your Agents Hub" / "on priya's Agents Hub". */
+export function cardHeadline(detail: WorkerDetail, me: string | null): string {
+  const kind = detail.runner?.kind || "runner";
+  return me && detail.launcher === me ? `on your ${kind}` : `on ${detail.launcher}'s ${kind}`;
+}
+
+/** Why a card shows its kept copy instead of the live worker; "" when it is live. The launcher reads "Your runner". */
+export function stateNote(detail: WorkerDetail, me: string | null = null): string {
+  const mine = !!me && detail.launcher === me;
+  const whose = mine ? "Your runner" : `${detail.launcher}'s runner`;
+  if (detail.state === "gone") return "Torn down · result kept";
+  if (detail.state === "disconnected") return mine ? `${whose} is not connected · connect it again in Settings` : `${whose} is not connected`;
+  if (detail.state === "unreachable") return `${whose} did not answer`;
+  return "";
+}
+
+/** A runner's name and kind, naming it once when the name only repeats the kind ("Agents Hub", "Agents Hub · OpenAI"). */
+export function runnerLabel(name: string, kind: string): string {
+  return !name || kind.startsWith(name) ? kind : `${name} · ${kind}`;
+}
+
+/**
+ * A card whose worker space-hub has no record of (404): launched before workers ran on people's own runners, on
+ * the hub's old shared one, which kept no copy. Forbidden (403): not a member. Anything else: the error itself.
+ */
+export function unknownWorkerNote(status: number, error: string): string {
+  if (status === 404) return "Launched on the hub’s old shared runner; its result is no longer available.";
+  if (status === 403) return "Only members of this space can follow its workers.";
+  return error;
+}
+
+/** Back from a runner's consent page (`?runner=<code>`): what to tell the person; null for anything else. */
+export function connectOutcome(code: string | null): { ok: boolean; text: string } | null {
+  switch (code) {
+    case "connected": return { ok: true, text: "Runner connected. You can launch workers on it now." };
+    case "denied": return { ok: false, text: "You cancelled on the runner, so nothing was connected." };
+    case "expired": return { ok: false, text: "That connection took too long or was already used; press Connect again." };
+    case "full": return { ok: false, text: "The runner has no room for another token. Revoke one in its Settings → Agent access, then press Connect again." };
+    case "failed": return { ok: false, text: "The runner could not be connected. Try again, or paste a token instead." };
+    default: return null;
+  }
+}
+
+/** The runner a launch goes to: the default one, else the first. */
+export const defaultRunner = (runners: RunnerInfo[]) => runners.find(r => r.isDefault) ?? runners[0];
+
+/** Under the launch tray: where the worker will run. */
+export function launchNote(runners: RunnerInfo[]): string {
+  const r = defaultRunner(runners);
+  return r ? `Runs on ${runnerLabel(r.name, r.kind)}` : "Connect a runner in Settings to launch workers";
+}
+
+/**
+ * A worker's Markdown with only web links kept: a link or image into the runner's sandbox (a relative path,
+ * /workspace/..., sandbox:...) cannot be opened from here, so it shows as its text.
+ */
+export function webLinksOnly(markdown: string): string {
+  return markdown.replace(/!?\[([^\]]*)\]\(([^)\s]*)(?:\s+"[^"]*")?\)/g, (all, text: string, url: string) => (/^https?:\/\//i.test(url) && !all.startsWith("!") ? all : text));
 }
 
 /** "github.com/owner/repo/pull/12" as "owner/repo#12". */
@@ -86,7 +178,12 @@ export function foldEvents(events: TaskEvent[]): ThreadItem[] {
   const steps = new Map<string, Step>();
   let group: Extract<ThreadItem, { type: "steps" }> | null = null;
   const end = () => { if (group) group.open = false; group = null; };
-  const note = (key: string, text: string, tone: Extract<ThreadItem, { type: "note" }>["tone"] = "") => items.push({ type: "note", key, text, tone });
+  // The same note twice in a row (a runner repeating an event) shows once.
+  const note = (key: string, text: string, tone: Extract<ThreadItem, { type: "note" }>["tone"] = "") => {
+    const last = items.at(-1);
+    if (last?.type === "note" && last.text === text) return;
+    items.push({ type: "note", key, text, tone });
+  };
   events.forEach((event, index) => {
     const seq = Number(event.seq);
     if (Number.isFinite(seq)) { if (seen.has(seq)) return; seen.add(seq); }
@@ -154,7 +251,7 @@ export function launchOf(content: string): { task: string; text: string } | null
   return found ? { task: found[1], text: content.slice(0, found.index) } : null;
 }
 
-/** A task's text without the line crediting who launched it (cli/src/agenthub.ts adds it). */
+/** A task's text without the line crediting who launched it (cli/src/workers.ts adds it). */
 export function withoutCredit(text: string): string {
   return text.replace(/\n*\(Launched by [a-z0-9-]+ from [^\n]*\)\s*$/i, "");
 }
@@ -193,8 +290,8 @@ export function newKey(): string {
 }
 
 /** A write to the web service; its error message when it fails. */
-export async function send(method: "POST" | "DELETE", path: string, body?: unknown, key?: string): Promise<unknown> {
-  const response = await fetch("/-/api/agenthub" + path, {
+export async function send(method: "POST" | "PATCH" | "DELETE", path: string, body?: unknown, key?: string): Promise<unknown> {
+  const response = await fetch("/-/api" + path, {
     method,
     headers: { ...(body === undefined ? {} : { "content-type": "application/json" }), ...(key ? { "idempotency-key": key } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),

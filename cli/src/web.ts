@@ -17,8 +17,9 @@
 //   GET      /-/live, /-/live.js live pages: a page's new rendering on every change (live.ts)
 //   GET      /, /<space>, /<space>/<project>, /-/app/*, /-/api/view, /-/api/me,
 //   POST     /-/api/chat         the hub's app: open-chat's interface over the hub (app.ts)
-//   *        /-/api/agenthub/... the orgs' worker agents, launched from a chat (agenthub.ts),
-//                                only with SPACEHUB_AGENTHUB_URL and _TOKEN set
+//   *        /-/api/runners/...  each person's own runners (Worker Protocol), and
+//   *        /-/api/workers/...  the workers launched from a chat on them (workers.ts);
+//                                tokens are sealed with SPACEHUB_SECRET_KEY
 //   *        /-/api/xo/v1/...    xo.quirq.dev's store and agents (xo.ts), only
 //                                with SPACEHUB_XO_KEY set
 //
@@ -39,7 +40,9 @@ import { CALLBACK_ROUTE, ConnectGithub, finishSignIn, offerFor, START_ROUTE, sta
 import * as githubWeb from './githubsignin';
 import { appDir, handleApp } from './app';
 import { Reply, select } from './admin';
-import { agentHubConfig, handleAgentHub } from './agenthub';
+import { agentSpacesOwnedBy, CONNECT_CALLBACK, handleWorkers } from './workers';
+import { adminStore } from './runnerstore';
+import { sealKeyOrOff } from './seal';
 import { InstanceVault } from './instancevault';
 import { handleInstanceRecovery, recoveryRemote } from './instancerecovery';
 import { InstanceConnections } from './instanceconnections';
@@ -59,7 +62,6 @@ const INTERNAL_HTTP = (process.env.SPACEHUB_INTERNAL_HTTP ?? SERVER.replace(/^ws
 const GITHUB = githubApi();
 const XO = xoConfig(DB, INTERNAL_HTTP, GITHUB);
 const XO_SIGNIN = xoSignInConfig(XO);
-const AGENTHUB = agentHubConfig();
 const LIVE = new LiveHub({ server: SERVER, db: DB, http: INTERNAL_HTTP });
 const APP_DIR = appDir();
 const githubInfo = (owner: string, repo: string) => infoOf(GITHUB, owner, repo);
@@ -69,6 +71,8 @@ const SIGNIN = signInConfig(DB, INTERNAL_HTTP, GITHUB);
 // Spaces linked to GitHub sync as the hub admin, whose token the entrypoint
 // hands over.
 const ADMIN_TOKEN = process.env.SPACEHUB_ADMIN_TOKEN ?? '';
+// Runners and workers live in the module's private tables; without the admin token or the sealing key, connecting is off.
+const WORKERS = { key: ADMIN_TOKEN ? sealKeyOrOff() : null, store: adminStore({ adminToken: ADMIN_TOKEN, http: INTERNAL_HTTP, db: DB }), allowLocal: process.env.SPACEHUB_RUNNER_ALLOW_LOCAL === "1" };
 const RECOVERY_DIR = process.env.SPACEHUB_RECOVERY_DIR ?? '';
 const RECOVERY_REMOTE = recoveryRemote(process.env.SPACEHUB_RECOVERY_URL, process.env.SPACEHUB_RECOVERY_TOKEN);
 // Backups are kept off the hub: sub-hubs copy its data folder live
@@ -183,20 +187,6 @@ function localPath(next: string | null) {
 
 // ---------------------------------------------------------------- sessions
 
-// Whether a builder's account is linked to XO: it signed in with xo (with a
-// GitHub account, or before GitHub was needed). Launching agents needs it.
-async function xoLinked(username: string): Promise<boolean> {
-  if (!XO || !USERNAME.test(username)) return false;
-  try {
-    const [link] = await select(XO, `SELECT subject FROM xo_link WHERE username = '${username}'`);
-    if (link) return true;
-    const [legacy] = await select(XO, `SELECT subject FROM xo_agent WHERE username = '${username}'`);
-    return !!legacy;
-  } catch {
-    return false;
-  }
-}
-
 async function withConn<T>(token: string | undefined, fn: (conn: Conn, identity: Parameters<typeof findUser>[1], token: string) => Promise<T>) {
   const { conn, identity, token: issued } = await connectTo(SERVER, DB, token);
   try {
@@ -232,6 +222,34 @@ async function spacesOf(session: { token: string; username: string }): Promise<s
     )
   ).catch(() => [] as string[]);
   return [session.username, ...others.sort()];
+}
+
+// Where the builder may act: its spaces, the agents it owns through them, and the projects it collaborates on
+// ("<space>/<project>"). Agents have no space_role rows for their owners (the module's rule; agentSpacesOwnedBy).
+async function placesOf(session: { token: string; username: string }): Promise<{ spaces: string[]; projects: string[] }> {
+  const base = await spacesOf(session);
+  const agents = await withConn(session.token, async conn => {
+    const roles = await snapshot(conn, tables.spaceRole.where(r => r.member.eq(session.username)), () =>
+      [...conn.db.spaceRole.iter()].filter(r => r.member === session.username).map(r => ({ space: r.space, role: r.role }))
+    );
+    const all = await snapshot(conn, tables.space.where(s => s.kind.eq('agent')), () =>
+      [...conn.db.space.iter()].filter(s => s.kind === 'agent').map(s => ({ name: s.name, parent: s.parent }))
+    );
+    return agentSpacesOwnedBy(session.username, roles, all);
+  }).catch(() => [] as string[]);
+  const spaces = [...new Set([...base, ...agents])];
+  const projects = await withConn(session.token, async conn => {
+    const ids = await snapshot(conn, tables.projectMember.where(r => r.agent.eq(session.username)), () =>
+      [...conn.db.projectMember.iter()].filter(r => r.agent === session.username).map(r => r.projectId)
+    );
+    const names: string[] = [];
+    for (const id of ids) {
+      const row = await snapshot(conn, tables.project.where(p => p.id.eq(id)), () => [...conn.db.project.iter()].find(p => p.id === id));
+      if (row) names.push(row.fullName);
+    }
+    return names.sort();
+  }).catch(() => [] as string[]);
+  return { spaces, projects };
 }
 
 async function recoveryOperator(req: http.IncomingMessage): Promise<boolean> {
@@ -387,7 +405,7 @@ ${steps(
   step('Connect GitHub', 'In your XO account, under connected accounts. It opens in a new tab.', `<p><a class="btn primary" href="${esc(why.url)}" target="_blank" rel="noopener noreferrer">Connect GitHub</a></p>`),
   step('Sign in again', 'Once GitHub shows as connected there.', `<p><a class="btn" href="${esc(`${START_ROUTE}${query}`)}">Sign in with xo</a></p>`)
 )}
-${hub.github ? `<p class="muted">Or <a href="${esc(`${githubWeb.START_ROUTE}${query}`)}">sign in with GitHub</a> alone: chat and projects work without XO, launching agents does not.</p>` : ''}`,
+${hub.github ? `<p class="muted">Or <a href="${esc(`${githubWeb.START_ROUTE}${query}`)}">sign in with GitHub</a> alone: chat, projects and workers work without XO.</p>` : ''}`,
     true
   );
 }
@@ -486,7 +504,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   }, req, res, url)) return;
   if (LIVE.handle(req, res, url)) return;
   if (req.method === 'POST' && !sameOrigin(req)) return send(res, 403, page('Forbidden', null, '<h1>Forbidden</h1><p class="desc">This form must be sent from this site.</p>'));
-  if (await handleAgentHub(AGENTHUB, { sessionOf, spacesOf, appendChat, sameOrigin, ...(XO ? { xoLinked } : {}) }, req, res, url)) return;
+  if (await handleWorkers(WORKERS, { sessionOf, placesOf, appendChat, sameOrigin, callbackUrl: r => callbackOf(r, CONNECT_CALLBACK) }, req, res, url)) return;
   if (await handleApp({ dir: APP_DIR, internalHttp: INTERNAL_HTTP, db: DB, withConn, sessionOf }, req, res, url)) return;
 
   if (route === '/-/login') {

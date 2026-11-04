@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { toEvents, type TaskEvent } from "@/lib/agenthub";
+import { toEvents, type TaskEvent } from "@/lib/workers";
 
 /**
  * A session's events, read from the start once and then only the new ones
@@ -25,7 +25,7 @@ export function useTaskEvents(id: string, running: boolean, every = 2500) {
       if (document.hidden) { timer = setTimeout(read, every); return; }
       try {
         const after = next.current;
-        const response = await fetch(`/-/api/agenthub/tasks/${encodeURIComponent(id)}/events?after=${after}`, { cache: "no-store", signal: controller.signal });
+        const response = await fetch(`/-/api/workers/${encodeURIComponent(id)}/events?after=${after}`, { cache: "no-store", signal: controller.signal });
         const data = await response.json();
         if (!response.ok) throw new Error(typeof data?.error === "string" ? data.error : "The events could not be loaded.");
         const page = toEvents(data, after);

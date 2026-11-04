@@ -385,6 +385,46 @@ const xoLink = table(
   }
 );
 
+// A runner a person connected: a service that runs workers and speaks the Worker Protocol
+// (docs/specs/2026-11-03-workers-on-your-own-runners-design.md). Its token is sealed by the web service
+// (AES-256-GCM with SPACEHUB_SECRET_KEY, kept out of /data). Private: only the admin (the web service) reads or
+// writes it.
+const runner = table(
+  { name: 'runner' },
+  {
+    id: t.string().primaryKey(),
+    owner: t.string().index('btree'),
+    name: t.string(),
+    kind: t.string(), // what the runner says it is, a label only
+    url: t.string(),
+    sealedToken: t.string(),
+    capabilities: t.string(), // JSON from GET /api/worker
+    isDefault: t.bool(),
+    connectedAt: t.timestamp(),
+    checkedAt: t.timestamp(),
+  }
+);
+
+// A worker launched from a chat: which runner (and its address, to link it back after a reconnect), who
+// launched it where, and a copy of its last result. Private, like runner.
+const worker = table(
+  { name: 'worker' },
+  {
+    taskId: t.string().primaryKey(),
+    runnerId: t.string().index('btree'),
+    runnerUrl: t.string(),
+    launcher: t.string().index('btree'),
+    space: t.string(),
+    project: t.string(),
+    conversation: t.string(),
+    title: t.string(),
+    status: t.string(),
+    result: t.string(), // JSON {summary, links, error}, copied when a turn ends
+    createdAt: t.timestamp(),
+    updatedAt: t.timestamp(),
+  }
+);
+
 const spacetimedb = schema({
   user,
   project,
@@ -410,6 +450,8 @@ const spacetimedb = schema({
   githubAccount,
   spaceAlias,
   xoLink,
+  runner,
+  worker,
 });
 export default spacetimedb;
 
@@ -685,6 +727,8 @@ export const deleteBuilder = spacetimedb.reducer(ctx => {
   for (const link of [...ctx.db.xoLink.username.filter(name)]) ctx.db.xoLink.subject.delete(link.subject);
   for (const alias of [...ctx.db.spaceAlias.space.filter(name)]) ctx.db.spaceAlias.name.delete(alias.name);
   ctx.db.githubAccount.username.delete(name);
+  // Their runners go (the tokens are theirs); their workers stay, so the chats still show what was done.
+  for (const r of [...ctx.db.runner.owner.filter(name)]) ctx.db.runner.id.delete(r.id);
   ctx.db.space.name.delete(name);
   ctx.db.user.identity.delete(ctx.sender);
 });
@@ -1741,3 +1785,82 @@ export const api = spacetimedb.httpHandler((ctx, req) => {
 });
 
 export const routes = spacetimedb.httpRouter(new Router().get('/ui', ui).get('/api', api));
+
+// ---------------------------------------------------------------- runners and workers (admin only)
+// The web service keeps each person's runners and the workers launched from chats here. Every reducer is the
+// admin's: people reach these through the web service, which checks who may do what.
+
+// One default per person: making one the default clears the others.
+function soleDefault(ctx: Ctx, owner: string, id: string) {
+  for (const r of [...ctx.db.runner.owner.filter(owner)]) {
+    if (r.id !== id && r.isDefault) ctx.db.runner.id.update({ ...r, isDefault: false });
+  }
+}
+
+export const runnerAdd = spacetimedb.reducer(
+  { id: t.string(), owner: t.string(), name: t.string(), kind: t.string(), url: t.string(), sealedToken: t.string(), capabilities: t.string(), isDefault: t.bool() },
+  (ctx, r) => {
+    requireAdmin(ctx);
+    if (ctx.db.runner.id.find(r.id)) throw new SenderError(`runner ${r.id} exists`);
+    const first = [...ctx.db.runner.owner.filter(r.owner)].length === 0;
+    const isDefault = first || r.isDefault;
+    if (isDefault) soleDefault(ctx, r.owner, r.id);
+    ctx.db.runner.insert({ ...r, isDefault, connectedAt: ctx.timestamp, checkedAt: ctx.timestamp });
+  }
+);
+
+// Empty strings keep the stored value; isDefault true makes it the default (false leaves it as it is);
+// checked records a successful call now.
+export const runnerUpdate = spacetimedb.reducer(
+  { id: t.string(), name: t.string(), sealedToken: t.string(), capabilities: t.string(), isDefault: t.bool(), checked: t.bool() },
+  (ctx, { id, name, sealedToken, capabilities, isDefault, checked }) => {
+    requireAdmin(ctx);
+    const row = ctx.db.runner.id.find(id);
+    if (!row) throw new SenderError(`no runner ${id}`);
+    if (isDefault) soleDefault(ctx, row.owner, id);
+    ctx.db.runner.id.update({
+      ...row,
+      name: name || row.name,
+      sealedToken: sealedToken || row.sealedToken,
+      capabilities: capabilities || row.capabilities,
+      isDefault: isDefault || row.isDefault,
+      checkedAt: checked ? ctx.timestamp : row.checkedAt,
+    });
+  }
+);
+
+export const runnerDelete = spacetimedb.reducer({ id: t.string() }, (ctx, { id }) => {
+  requireAdmin(ctx);
+  const row = ctx.db.runner.id.find(id);
+  if (!row) return;
+  ctx.db.runner.id.delete(id);
+  // Keep one default while the person has runners left.
+  const rest = [...ctx.db.runner.owner.filter(row.owner)];
+  if (row.isDefault && rest.length && !rest.some(r => r.isDefault)) ctx.db.runner.id.update({ ...rest[0], isDefault: true });
+});
+
+export const workerAdd = spacetimedb.reducer(
+  { taskId: t.string(), runnerId: t.string(), runnerUrl: t.string(), launcher: t.string(), space: t.string(), project: t.string(), conversation: t.string(), title: t.string() },
+  (ctx, w) => {
+    requireAdmin(ctx);
+    if (ctx.db.worker.taskId.find(w.taskId)) throw new SenderError(`worker ${w.taskId} exists`);
+    ctx.db.worker.insert({ ...w, status: 'running', result: '', createdAt: ctx.timestamp, updatedAt: ctx.timestamp });
+  }
+);
+
+// Empty strings keep the stored value.
+export const workerUpdate = spacetimedb.reducer(
+  { taskId: t.string(), status: t.string(), result: t.string(), runnerId: t.string() },
+  (ctx, { taskId, status, result, runnerId }) => {
+    requireAdmin(ctx);
+    const row = ctx.db.worker.taskId.find(taskId);
+    if (!row) throw new SenderError(`no worker ${taskId}`);
+    ctx.db.worker.taskId.update({
+      ...row,
+      status: status || row.status,
+      result: result || row.result,
+      runnerId: runnerId || row.runnerId,
+      updatedAt: ctx.timestamp,
+    });
+  }
+);
