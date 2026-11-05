@@ -82,6 +82,8 @@ export interface AppendInput {
   turns: TurnIn[];
   /** Who saves: their name is the commit author and the author of user turns. */
   author: string;
+  /** The author of assistant turns: "quirqy" unless an agent answers as itself. */
+  assistant?: string;
   /** Seconds since the epoch. */
   now: number;
   read: (oid: string) => { kind: string; data: Uint8Array } | null;
@@ -127,7 +129,7 @@ export function appendTurns(input: AppendInput): { commit: string; objects: NewO
   const before = existing ? decoder.decode(read(existing.oid, 'blob')) : '';
   const time = new Date(input.now * 1000).toISOString();
   const lines = input.turns
-    .map(turn => JSON.stringify({ id: turn.id, role: turn.role, author: turn.role === 'user' ? input.author : 'quirqy', content: turn.content, ...(turn.links.length ? { links: turn.links } : {}), time }) + '\n')
+    .map(turn => JSON.stringify({ id: turn.id, role: turn.role, author: turn.role === 'user' ? input.author : input.assistant ?? 'quirqy', content: turn.content, ...(turn.links.length ? { links: turn.links } : {}), time }) + '\n')
     .join('');
   const content = encoder.encode(before + (before && !before.endsWith('\n') ? '\n' : '') + lines);
   if (content.length > MAX_TEXT_BYTES) throw new ApiError('This chat log reached the 2 MB limit. Start a new conversation file.', 413);

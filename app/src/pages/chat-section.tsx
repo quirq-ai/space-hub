@@ -21,7 +21,7 @@ export function ChatSection({ place, kind = "", me, signIn, canStart }: { place:
     const log = chatLogPath(file.path);
     return <ChatView key={`${chat.place.space}/${chat.place.project}/${file.path}`} place={chat.place} path={file.path} data={file.data} repliesPath={undefined}
       logExists={!!log && live.data!.snapshot.directory.entries.some(entry => entry.path === log)} me={me} canWrite={live.data!.meta.canWrite} signIn={signIn}
-      onSaved={live.refresh} onOpen={path => navigate(placeUrl(chat.place, hashOf("files", { path })))} />;
+      onSaved={live.refresh} onOpen={path => navigate(placeUrl(chat.place, hashOf("files", { path })))} room={live.data!.meta.room} />;
   }
   if (!live.data && !live.error) return <SkeletonRows rows={4} />;
   if (live.error && live.status !== 404) return <ErrorNote message={live.error} retry={live.refresh} />;

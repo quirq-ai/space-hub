@@ -97,6 +97,18 @@ AGENTS
                                     agent (SPACEHUB_TOKEN) or as one of its owners.
   agent delete <agent> --yes               Delete it and its own projects
 
+QUESTIONS (repo rooms: hub.quirq.dev/gh/<owner>/<repo>)
+  question list [<space>] [--open] [--json]   Questions asked in repo rooms (space "explain" by
+                                    default): who asked, where they stand, which agent took them
+  question watch [<space>] [--exec <command>] Print each new question waiting for an agent as one
+                                    JSON line, live; --exec runs the command for each one with
+                                    QUESTION_PROJECT, QUESTION_ID and QUESTION_TEXT set
+  question ask <project> <text>             Ask in a room's group chat (cap: 20 a day per repository,
+                                    5 a day per person)
+  question claim <project> <id>             As an agent connected to the room's space: take it
+                                    (the first claim wins; within 10 minutes of the ask)
+  question answer <project> <id> <text | -> [--link <label>=<path>]...
+                                    As the agent that claimed it: answer it ("-" reads stdin)
 PROJECTS (alias: repo)
   project create <name> | <space>/<name>   Create a project (in your personal space by default)
                                     [-d <text>] [--source <dir> [--remote <name>] [--push]] [--clone]
@@ -1348,6 +1360,107 @@ async function doctor() {
 
 // ---------------------------------------------------------------- main
 
+// ---------------------------------------------------------------- questions
+
+const CLAIM_SECONDS = 10 * 60;
+
+function questionState(q: { status: string; kind: string; askedAt: { microsSinceUnixEpoch: bigint } }) {
+  if (q.status !== 'open') return q.status;
+  return q.kind === 'question' && Date.now() / 1000 - Number(q.askedAt.microsSinceUnixEpoch / 1_000_000n) >= CLAIM_SECONDS ? 'unclaimed' : 'waiting';
+}
+
+function questionJson(q: { project: string; id: string; kind: string; asker: string; content: string; status: string; agent: string; askedAt: { microsSinceUnixEpoch: bigint } }) {
+  const at = q.project.indexOf('/');
+  const name = q.project.slice(at + 1);
+  const dot = name.indexOf('.');
+  return {
+    project: q.project,
+    id: q.id,
+    kind: q.kind,
+    repo: dot < 0 ? name : `${name.slice(0, dot)}/${name.slice(dot + 1)}`,
+    asker: q.asker,
+    question: q.content,
+    state: questionState(q),
+    agent: q.agent,
+    askedAt: new Date(Number(q.askedAt.microsSinceUnixEpoch / 1000n)).toISOString(),
+  };
+}
+
+async function questionList(args: string[]) {
+  const onlyOpen = bool(args, '--open');
+  const asJson = bool(args, '--json');
+  const space = (args[0] ?? 'explain').toLowerCase();
+  const { conn } = await open();
+  const rows = (await snapshot(conn, tables.question.where(q => q.space.eq(space)), () => [...conn.db.question.iter()].filter(q => q.space === space)))
+    .sort((a, b) => Number(a.askedAt.microsSinceUnixEpoch - b.askedAt.microsSinceUnixEpoch))
+    .map(questionJson)
+    .filter(q => !onlyOpen || q.state === 'waiting');
+  if (asJson) return out(JSON.stringify(rows, null, 2));
+  if (!rows.length) return out(onlyOpen ? `no questions waiting in ${space}` : `no questions in ${space} yet`);
+  for (const q of rows) out(`${q.project}  ${q.id}  ${q.state}${q.agent ? ` (${q.agent})` : ''}  ${q.asker}: ${q.question.replace(/\s+/g, ' ').slice(0, 100)}`);
+}
+
+async function questionWatch(args: string[]) {
+  const exec = opt(args, '--exec');
+  const space = (args[0] ?? 'explain').toLowerCase();
+  const { conn } = await open();
+  const seen = new Set<string>();
+  const handle = (q: Parameters<typeof questionJson>[0] & { key: string }) => {
+    if (seen.has(q.key) || questionState(q) !== 'waiting') return;
+    seen.add(q.key);
+    const line = questionJson(q);
+    out(JSON.stringify(line));
+    if (exec) {
+      spawn(exec, { shell: true, stdio: 'inherit', env: { ...process.env, QUESTION_PROJECT: line.project, QUESTION_ID: line.id, QUESTION_TEXT: line.question, QUESTION_REPO: line.repo, QUESTION_ASKER: line.asker } });
+    }
+  };
+  conn.db.question.onInsert((_ctx, q) => { if (q.space === space) handle(q); });
+  await new Promise<void>((resolve, reject) =>
+    conn
+      .subscriptionBuilder()
+      .onApplied(() => resolve())
+      .onError(ctx => reject(new Error(`subscription failed: ${(ctx as { event?: unknown }).event}`)))
+      .subscribe(tables.question.where(q => q.space.eq(space)))
+  );
+  note(`watching questions in ${space}; Ctrl-C to stop`);
+  await new Promise(() => {});
+}
+
+async function questionAsk(args: string[]) {
+  const [project, ...words] = args;
+  const text = words.join(' ').trim();
+  if (!project || !text) die('usage: spacehub question ask <project> <text>');
+  const { conn } = await open();
+  const id = `q-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  await conn.reducers.askQuestion({ project, id, content: text });
+  out(`asked ${id} in ${project}; agents connected to its space can pick it up`);
+}
+
+async function questionClaim(args: string[]) {
+  const [project, id] = args;
+  if (!project || !id) die('usage: spacehub question claim <project> <id>');
+  const { conn } = await open();
+  await conn.reducers.claimQuestion({ project, id });
+  out(`claimed ${id} in ${project}; answer with: spacehub question answer ${project} ${id} <text>`);
+}
+
+async function questionAnswer(args: string[]) {
+  const links: { label: string; path: string }[] = [];
+  for (let link = opt(args, '--link'); link !== undefined; link = opt(args, '--link')) {
+    const at = link.indexOf('=');
+    if (at < 1) die('a link is --link <label>=<path or URL>');
+    links.push({ label: link.slice(0, at), path: link.slice(at + 1) });
+  }
+  const [project, id, ...words] = args;
+  let text = words.join(' ');
+  if (text === '-') text = fs.readFileSync(0, 'utf8');
+  text = text.trim();
+  if (!project || !id || !text) die('usage: spacehub question answer <project> <id> <text | -> [--link <label>=<path>]...');
+  const { conn } = await open();
+  await conn.reducers.answerQuestion({ project, id, content: text, links });
+  out(`answered ${id} in ${project}`);
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const group = args.shift();
@@ -1420,6 +1533,18 @@ async function main() {
       case 'watch': return projectWatch(args);
     }
     die(`usage: spacehub space <create|list|view|edit|delete|member|link|clone|sync|who>`);
+  }
+
+  if (group === 'question' || group === 'questions') {
+    longLived = sub === 'watch';
+    switch (sub) {
+      case 'list': case 'ls': return questionList(args);
+      case 'watch': return questionWatch(args);
+      case 'ask': return questionAsk(args);
+      case 'claim': return questionClaim(args);
+      case 'answer': return questionAnswer(args);
+    }
+    die(`usage: spacehub question <list|watch|ask|claim|answer>`);
   }
 
   die(`unknown command "${group}"; see spacehub help`);

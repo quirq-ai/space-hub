@@ -82,8 +82,8 @@ export async function githubInfo(api: GithubApi, owner: string, repo: string) {
     const { status, body } = await getJson(api, `/repos/${owner}/${repo}`);
     if (status === 404) throw new Fail(`github.com/${owner}/${repo} was not found (only public repositories can be imported)`);
     if (!body) return null;
-    const info = body as { description?: string | null; size?: number; private?: boolean; owner?: { login?: string } };
-    return { description: info.description ?? '', sizeKb: info.size ?? 0, private: !!info.private, ownerLogin: info.owner?.login ?? owner };
+    const info = body as { name?: string; description?: string | null; size?: number; private?: boolean; owner?: { login?: string } };
+    return { name: info.name ?? repo, description: info.description ?? '', sizeKb: info.size ?? 0, private: !!info.private, ownerLogin: info.owner?.login ?? owner };
   } catch (err) {
     if (err instanceof Fail) throw err;
     return null;

@@ -22,6 +22,8 @@
 //                                tokens are sealed with SPACEHUB_SECRET_KEY
 //   *        /-/api/xo/v1/...    xo.quirq.dev's store and agents (xo.ts), only
 //                                with SPACEHUB_XO_KEY set
+//   GET      /gh/<owner>/<repo>  a public GitHub repository's room: its explainer and group
+//   POST     /-/api/ask          chat, opened on the first visit; asking there (rooms.ts)
 //
 // Pages are read by the module (ui.ts); this service only acts. A session is
 // the user's identity token in an HttpOnly cookie, so every action runs as
@@ -39,6 +41,7 @@ import { handleXo, xoConfig } from './xo';
 import { CALLBACK_ROUTE, ConnectGithub, finishSignIn, offerFor, START_ROUTE, startSignIn, STATE_COOKIE, WAIT_SECONDS, xoSignInConfig } from './xosignin';
 import * as githubWeb from './githubsignin';
 import { appDir, handleApp } from './app';
+import { explainSpace, handleRooms } from './rooms';
 import { Reply, select } from './admin';
 import { agentSpacesOwnedBy, CONNECT_CALLBACK, handleWorkers } from './workers';
 import { adminStore } from './runnerstore';
@@ -483,6 +486,28 @@ function welcomePage(username: string, token: string) {
   );
 }
 
+// ---------------------------------------------------------------- rooms
+
+const ROOMS: Parameters<typeof handleRooms>[0] = {
+  space: explainSpace(),
+  canOpen: !!ADMIN_TOKEN,
+  exists: async fullName => {
+    const [space, project] = fullName.split('/');
+    const query = new URLSearchParams({ space, project });
+    return (await fetch(`${INTERNAL_HTTP}/v1/database/${encodeURIComponent(DB)}/route/api?${query}`, { signal: AbortSignal.timeout(5_000) })).ok;
+  },
+  info: async (owner, repo) => {
+    const info = await githubInfo(owner, repo);
+    return info && { owner: info.ownerLogin, repo: info.name, description: info.description, private: info.private };
+  },
+  open: input => withConn(ADMIN_TOKEN, conn => conn.reducers.openRepoRoom(input)),
+  sessionOf,
+  ask: (token, input) => withConn(token, conn => conn.reducers.askQuestion(input)),
+  page: (res, status, title, message) => {
+    send(res, status, page(`${title} · spacehub`, null, `<h1><b>${esc(title)}</b></h1><div class="banner err">${esc(message)}</div><p><a href="/">Go to the hub</a></p>`));
+  },
+};
+
 // ---------------------------------------------------------------- routes
 
 async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
@@ -505,6 +530,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   if (LIVE.handle(req, res, url)) return;
   if (req.method === 'POST' && !sameOrigin(req)) return send(res, 403, page('Forbidden', null, '<h1>Forbidden</h1><p class="desc">This form must be sent from this site.</p>'));
   if (await handleWorkers(WORKERS, { sessionOf, placesOf, appendChat, sameOrigin, callbackUrl: r => callbackOf(r, CONNECT_CALLBACK) }, req, res, url)) return;
+  if (await handleRooms(ROOMS, req, res, url)) return;
   if (await handleApp({ dir: APP_DIR, internalHttp: INTERNAL_HTTP, db: DB, withConn, sessionOf }, req, res, url)) return;
 
   if (route === '/-/login') {

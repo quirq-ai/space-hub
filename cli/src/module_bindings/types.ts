@@ -248,6 +248,24 @@ export const SpaceLink = __t.object("SpaceLink", {
 });
 export type SpaceLink = __Infer<typeof SpaceLink>;
 
+export const Question = __t.object("Question", {
+  key: __t.string(),
+  id: __t.string(),
+  projectId: __t.u64(),
+  project: __t.string(),
+  space: __t.string(),
+  conversation: __t.string(),
+  kind: __t.string(),
+  asker: __t.string(),
+  content: __t.string(),
+  status: __t.string(),
+  agent: __t.string(),
+  askedAt: __t.timestamp(),
+  claimedAt: __t.timestamp(),
+  answeredAt: __t.timestamp(),
+});
+export type Question = __Infer<typeof Question>;
+
 export const SpaceRole = __t.object("SpaceRole", {
   id: __t.u64(),
   key: __t.string(),
