@@ -5,7 +5,6 @@ import { hashOf, onLink } from "@/router";
 import { Ago, Avatar, AvatarStack, Empty, PersonLink, SkeletonRows } from "@/ui/primitives";
 import { dayOf, FILTERS, keepActivity, liveRows, MODES, type ActivityFilter } from "@/lib/activity";
 import { Browser } from "@/ui/cards";
-import { Glass } from "@/ui/home-screen";
 
 export function PageHeader({ crumbs, title, subtitle, leading, actions, children }: {
   crumbs?: { label: string; href: string }[]; title: ReactNode; subtitle?: ReactNode; leading?: ReactNode; actions?: ReactNode; children?: ReactNode;
@@ -46,26 +45,6 @@ export function Tabs({ tabs, active }: { tabs: Tab[]; active: string }) {
   return <div className={`tabs-wrap${edges.left ? " fade-left" : ""}${edges.right ? " fade-right" : ""}`}><nav className="tabs" aria-label="Sections" ref={bar}>{tabs.map(tab => <a key={tab.key} href={tab.href} onClick={onLink} className={tab.key === active ? "tab active" : "tab"} aria-current={tab.key === active ? "page" : undefined}>
     {tab.label}{tab.count !== undefined && <span className="tab-count">{tab.count}</span>}
   </a>)}</nav></div>;
-}
-
-/**
- * A place's own bar under the top bar: who or what it is, its actions, and
- * its sections as tabs. It stays the same on every section of the place, so
- * you always see where you are and where you can go next.
- */
-export function PlaceBar({ icon, title, badge, subtitle, actions, tabs, active, children }: {
-  icon: ReactNode; title: ReactNode; badge?: ReactNode; subtitle?: ReactNode; actions?: ReactNode; tabs?: Tab[]; active?: string; children?: ReactNode;
-}) {
-  return <header className={`place-bar${tabs?.length ? "" : " untabbed"}`}>
-    <Glass />
-    <div className="place-id">
-      <span className="place-icon">{icon}</span>
-      <div className="place-name"><h1>{title}{badge}</h1>{subtitle && <p>{subtitle}</p>}</div>
-      {actions && <div className="page-actions">{actions}</div>}
-    </div>
-    {children}
-    {tabs?.length ? <Tabs tabs={tabs} active={active ?? ""} /> : null}
-  </header>;
 }
 
 export function ActivityList({ items, empty = "Nothing has happened here yet.", compact = false }: { items: ActivityItem[]; empty?: string; compact?: boolean }) {
@@ -118,7 +97,7 @@ export function ActivityPanel({ meta }: { meta: Meta | undefined }) {
   if (!meta) return <div className="feed"><SkeletonRows rows={6} /></div>;
   const agents = meta.level === "project" ? meta.agents : [...new Set([...meta.agentList.map(agent => agent.name), ...(meta.level === "space" ? meta.agents : [])])];
   return <div className="feed">
-    <LiveNow title={meta.level === "hub" ? "Live now" : "Here now"} here={meta.here} agents={meta.level === "project" ? [] : meta.agentList} known={agents} place={meta.level === "project" ? meta.fullName : ""} />
+    <LiveNow variant="panel" title={meta.level === "hub" ? "Live now" : "Here now"} here={meta.here} agents={meta.level === "project" ? [] : meta.agentList} known={agents} place={meta.level === "project" ? meta.fullName : ""} />
     <ActivityStream items={meta.activity} agents={agents} compact />
   </div>;
 }
@@ -166,9 +145,12 @@ function PushGroup({ group, compact, index }: { group: ActivityItem[]; compact: 
   </li>;
 }
 
-/** Who is connected now (lib/activity.ts), each one at the top of the right-hand panel. */
-export function LiveNow({ here, agents = [], known = [], place = "", title = "Here now" }: { here: Here[]; agents?: AgentInfo[]; known?: string[]; place?: string; title?: string }) {
+/** Who is connected now (lib/activity.ts): how many, in a page header, or each one at the top of the right-hand panel. */
+export function LiveNow({ here, agents = [], known = [], place = "", variant, title = "Here now" }: { here: Here[]; agents?: AgentInfo[]; known?: string[]; place?: string; variant: "strip" | "panel"; title?: string }) {
   const rows = liveRows(here, agents, known, place);
+  if (variant === "strip") return rows.length ? <div className="live-strip">
+    <span className="strip-here"><i className="online-dot" />Live now</span><span className="live-count">{rows.length}</span>
+  </div> : null;
   return <section className="live-panel" aria-label={title}>
     <h3 className="activity-day-title">{title}{rows.length > 0 && <span className="quiet"> {rows.length}</span>}</h3>
     {rows.length ? <ul className="live-list">{rows.map(row => <li key={row.name}>
