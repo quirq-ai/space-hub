@@ -18,6 +18,7 @@ import { Sha1 } from './sha1';
 import { CodeError, README_BYTES, commitView, commitsView, filesView, refsView, treeView } from './code';
 import { DEPS_FILE, depsText, depsView, parseDeps } from './deps';
 import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_FILES, SPACE_FILE, parseSpace, progressOf, textFiles, type SpaceGoal, type TemplateFile } from './space';
+import { CLAIM_SECONDS, DAY_SECONDS, DEFAULT_EXPLAIN_SPACE, QUESTIONS_PER_PERSON_PER_DAY, QUESTIONS_PER_REPO_PER_DAY, questionState, roomRepo, type QuestionState } from './explain';
 import { BUILTIN_ABOUT, BUILTIN_FILES, BUILTIN_TEMPLATE, BUILTIN_TITLE } from './spacetemplate';
 
 export const MAX_TEXT_BYTES = 2 * 1024 * 1024;
@@ -192,7 +193,32 @@ export type Meta =
       activity: ActivityItem[];
       /** The project's SPACE.md, read: its goal, outcomes, owners, rules and routines. */
       goal: SpaceGoal | null;
+      /** A repo room (explain.ts): its repository, caps and questions; absent elsewhere. */
+      room?: RoomInfo;
     };
+
+export interface RoomQuestion {
+  id: string;
+  kind: string;
+  asker: string;
+  state: QuestionState;
+  agent: string;
+  askedAt: string;
+}
+
+export interface RoomInfo {
+  repo: string;
+  github: string;
+  perRepo: number;
+  perPerson: number;
+  claimSeconds: number;
+  /** Questions asked in the last day, by everyone and by the viewer. */
+  askedToday: number;
+  mineToday: number;
+  /** Agents that answer here: connected to the room's space. */
+  agents: string[];
+  questions: RoomQuestion[];
+}
 
 /** What a new project can start from: the built-in goal space, or a project marked as a template. */
 export interface Template {
@@ -716,8 +742,33 @@ function projectLevel(db: Db, project: Project, requested: string, viewer: strin
       here: here(db, now, row => row.projectId === project.id),
       activity: activity(db, row => row.projectId === project.id),
       goal: goalOf(db, project, rootTree),
+      ...(isRoom(db, project) ? { room: roomOf(db, project, viewer, now) } : {}),
     }
   );
+}
+
+// ---------------------------------------------------------------- repo rooms
+
+function isRoom(db: Db, project: Project) {
+  return project.owner === (db.hubState.key.find('explain_space')?.value || DEFAULT_EXPLAIN_SPACE);
+}
+
+function roomOf(db: Db, project: Project, viewer: string | null, now: number): RoomInfo {
+  const all = [...db.question.projectId.filter(project.id)].sort((a, b) => Number(a.askedAt.microsSinceUnixEpoch - b.askedAt.microsSinceUnixEpoch));
+  const seconds = (at: { microsSinceUnixEpoch: bigint }) => Number(at.microsSinceUnixEpoch / 1_000_000n);
+  const today = all.filter(q => q.kind === 'question' && now - seconds(q.askedAt) < DAY_SECONDS);
+  const repo = roomRepo(project.name);
+  return {
+    repo,
+    github: `https://github.com/${repo}`,
+    perRepo: QUESTIONS_PER_REPO_PER_DAY,
+    perPerson: QUESTIONS_PER_PERSON_PER_DAY,
+    claimSeconds: CLAIM_SECONDS,
+    askedToday: today.length,
+    mineToday: viewer ? today.filter(q => q.asker === viewer).length : 0,
+    agents: [...db.spaceRole.space.filter(project.owner)].map(role => role.member).filter(name => db.space.name.find(name)?.kind === 'agent').sort(),
+    questions: all.slice(-200).map(q => ({ id: q.id, kind: q.kind, asker: q.asker, state: questionState(q.status, seconds(q.askedAt), now, q.kind), agent: q.agent, askedAt: new Date(seconds(q.askedAt) * 1000).toISOString() })),
+  };
 }
 
 // ---------------------------------------------------------------- goals and templates

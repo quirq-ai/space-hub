@@ -9,7 +9,7 @@ import { useLive } from "./use-live";
  * are saved to the hub as the signed-in builder. `blocked` says why saving
  * cannot work (signed out, not a member). Drafts stay in this browser tab.
  */
-export function useChat(place: Place, conversationPath: string | undefined, repliesPath: string | undefined, blocked: string | undefined, logExists: boolean, onSaved: () => void, me?: string) {
+export function useChat(place: Place, conversationPath: string | undefined, repliesPath: string | undefined, blocked: string | undefined, logExists: boolean, onSaved: () => void, me?: string, ask = false) {
   const storageKey = DEMO_STORAGE_PREFIX + "hub:" + place.space + "/" + place.project + ":" + conversationPath;
   const replies = useLive<View>(repliesPath ? viewUrl(place, repliesPath) : undefined);
   const config = parseDemoReplies(replies.data?.snapshot.file?.data);
@@ -65,7 +65,10 @@ export function useChat(place: Place, conversationPath: string | undefined, repl
   async function save(turn: ChatTurn): Promise<boolean> {
     setOutbox(current => [...current, turn]);
     try {
-      const response = await fetch("/-/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ space: place.space, project: place.project, conversation: conversationPath, turns: [turn] }) });
+      // In a repo room a message is a question: asked within the caps, for the room's agents (/-/api/ask).
+      const response = ask
+        ? await fetch("/-/api/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ space: place.space, project: place.project, id: turn.id, content: turn.content }) })
+        : await fetch("/-/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ space: place.space, project: place.project, conversation: conversationPath, turns: [turn] }) });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : "The message was not saved.");
       setSendError("");

@@ -3,8 +3,8 @@
 #   - the two endpoints clients need: one swaps an identity token for a
 #     short-lived websocket token, the other is the database websocket;
 #   - /healthz;
-#   - /-/* : the web service (sign in, sign up, create and import projects,
-#     live pages), except the hub's own pages /-/guide and /-/builders;
+#   - /-/* and /gh/* : the web service (sign in, sign up, create and import
+#     projects, live pages, repo rooms), except the hub's own pages /-/guide and /-/builders;
 #   - everything else as the web UI, which the module renders (original
 #     request URI passed in X-Spacehub-Uri).
 # Publishing modules, SQL, logs and deletes stay unreachable.
@@ -35,6 +35,11 @@
 		}
 	}
 	handle /-/* {
+		reverse_proxy 127.0.0.1:{$SPACEHUB_WEB_PORT:3002}
+	}
+	# Repo rooms (cli/src/rooms.ts): /gh/<owner>/<repo> opens a public GitHub
+	# repository's explainer and group chat.
+	handle /gh/* {
 		reverse_proxy 127.0.0.1:{$SPACEHUB_WEB_PORT:3002}
 	}
 	# The hub's app (web service, cli/src/app.ts): the hub, a space, a project.

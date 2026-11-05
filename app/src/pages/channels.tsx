@@ -139,7 +139,7 @@ export function ChannelPage({ place, snapshot, conversation, readme, meta, me, s
       <div className="channel-chat">
         {data ? <ChatView key={conversation.path} place={place} path={conversation.path} data={data} repliesPath={typeof data.demoReplies === "string" ? data.demoReplies : undefined}
           logExists={!!log && dir.entries.some(entry => entry.path === log)} me={me} canWrite={meta.canWrite} signIn={signIn} onSaved={refresh} onOpen={open}
-          head={false} placeholder={`Message ${kind === "channel" ? "#" : ""}${dir.name}`} />
+          head={false} placeholder={`Message ${kind === "channel" ? "#" : ""}${dir.name}`} room={meta.room} />
           : convo.error ? <ErrorNote message={convo.error} retry={convo.refresh} />
           : file ? <Empty icon={<MessageCircle size={20} />} title="No conversation here"><p>{conversation.name} is not a conversation.</p></Empty>
           : <div className="chat"><SkeletonRows rows={5} /></div>}

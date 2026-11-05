@@ -68,6 +68,10 @@ import SetLinkStatusReducer from "./set_link_status_reducer";
 import SetProjectBuilderReducer from "./set_project_builder_reducer";
 import SetSpaceGithubReducer from "./set_space_github_reducer";
 import StartChatReducer from "./start_chat_reducer";
+import OpenRepoRoomReducer from "./open_repo_room_reducer";
+import AskQuestionReducer from "./ask_question_reducer";
+import ClaimQuestionReducer from "./claim_question_reducer";
+import AnswerQuestionReducer from "./answer_question_reducer";
 import StartImportReducer from "./start_import_reducer";
 import UnlinkSpaceReducer from "./unlink_space_reducer";
 import UnwatchReducer from "./unwatch_reducer";
@@ -97,6 +101,7 @@ import ProjectBuilderRow from "./project_builder_table";
 import ProjectImportRow from "./project_import_table";
 import ProjectMemberRow from "./project_member_table";
 import ProjectSizeRow from "./project_size_table";
+import QuestionRow from "./question_table";
 import RefSyncRow from "./ref_sync_table";
 import SpaceRow from "./space_table";
 import SpaceAliasRow from "./space_alias_table";
@@ -286,6 +291,26 @@ const tablesSchema = __schema({
       { name: 'project_size_project_id_key', constraint: 'unique', columns: ['projectId'] },
     ],
   }, ProjectSizeRow),
+  question: __table({
+    name: 'question',
+    indexes: [
+      { accessor: 'asker', name: 'question_asker_idx_btree', algorithm: 'btree', columns: [
+        'asker',
+      ] },
+      { accessor: 'key', name: 'question_key_idx_btree', algorithm: 'btree', columns: [
+        'key',
+      ] },
+      { accessor: 'projectId', name: 'question_project_id_idx_btree', algorithm: 'btree', columns: [
+        'projectId',
+      ] },
+      { accessor: 'space', name: 'question_space_idx_btree', algorithm: 'btree', columns: [
+        'space',
+      ] },
+    ],
+    constraints: [
+      { name: 'question_key_key', constraint: 'unique', columns: ['key'] },
+    ],
+  }, QuestionRow),
   refSync: __table({
     name: 'ref_sync',
     indexes: [
@@ -392,8 +417,11 @@ const tablesSchema = __schema({
 const reducersSchema = __reducers(
   __reducerSchema("add_project_member", AddProjectMemberReducer),
   __reducerSchema("add_space_member", AddSpaceMemberReducer),
+  __reducerSchema("answer_question", AnswerQuestionReducer),
+  __reducerSchema("ask_question", AskQuestionReducer),
   __reducerSchema("append_chat", AppendChatReducer),
   __reducerSchema("claim_admin", ClaimAdminReducer),
+  __reducerSchema("claim_question", ClaimQuestionReducer),
   __reducerSchema("connect_agent", ConnectAgentReducer),
   __reducerSchema("create_agent", CreateAgentReducer),
   __reducerSchema("create_org", CreateOrgReducer),
@@ -409,6 +437,7 @@ const reducersSchema = __reducers(
   __reducerSchema("finish_object", FinishObjectReducer),
   __reducerSchema("github_link_builder", GithubLinkBuilderReducer),
   __reducerSchema("link_space", LinkSpaceReducer),
+  __reducerSchema("open_repo_room", OpenRepoRoomReducer),
   __reducerSchema("put_chunk", PutChunkReducer),
   __reducerSchema("put_objects", PutObjectsReducer),
   __reducerSchema("record_ref_sync", RecordRefSyncReducer),

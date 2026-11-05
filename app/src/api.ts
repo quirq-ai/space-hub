@@ -25,6 +25,13 @@ export type ProjectMeta = {
   level: "project"; fullName: string; space: string; name: string; description: string; defaultBranch: string; bytes: number;
   head: { oid: string; subject: string; author: string; time: string } | null; deps: number; canWrite: boolean; founder?: string; owners: string[]; members: string[]; agents: string[];
   collaborators: string[]; here: Here[]; activity: ActivityItem[]; goal: SpaceGoal | null;
+  /** A repo room (/gh/<owner>/<repo>): its repository, caps and questions. */
+  room?: RoomInfo;
+};
+export type RoomQuestion = { id: string; kind: string; asker: string; state: "waiting" | "claimed" | "answered" | "unclaimed"; agent: string; askedAt: string };
+export type RoomInfo = {
+  repo: string; github: string; perRepo: number; perPerson: number; claimSeconds: number;
+  askedToday: number; mineToday: number; agents: string[]; questions: RoomQuestion[];
 };
 export type Meta = HubMeta | SpaceMeta | ProjectMeta;
 export type View<M extends Meta = Meta> = { snapshot: WorkspaceSnapshot; meta: M };

@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, FileText, Github, LogIn, Rocket, Square, UserRound, X } from "lucide-react";
+import { ArrowUp, BookOpen, Bot, FileText, Github, LogIn, Rocket, Square, UserRound, X } from "lucide-react";
 import { MAX_MESSAGE_LENGTH } from "@/lib/demo-chat";
 import { Markdown } from "@/components/content-view";
 import { useChat } from "@/hooks/use-chat";
 import { useLive } from "@/hooks/use-live";
 import { WorkerCard } from "@/components/worker-card";
 import { defaultRunner, launchInput, launchNote, launchOf, runnerLabel, newKey, recentRepos, rememberRepo, repoName, send, type RunnerInfo, type WorkersStatus } from "@/lib/workers";
-import { type Place } from "@/api";
+import { type Place, type RoomInfo } from "@/api";
+import { EXPLAINER_OUTPUT, questionsLeft, STATE_TEXT, stateNow } from "@/lib/rooms";
 import { Ago, Avatar, AvatarStack, ErrorNote } from "@/ui/primitives";
 
 type Message = { id: string; role: string; author: string; content: string; links?: { label: string; path: string }[]; time?: string; saving?: boolean };
@@ -15,13 +16,19 @@ type Conversation = { title?: unknown; subtitle?: unknown; messages: Record<stri
 const text = (value: unknown) => (typeof value === "string" ? value : "");
 
 /** A conversation file and its saved log, as a thread of people and agents, with a composer for members. */
-export function ChatView({ place, path, data, repliesPath, logExists, me, canWrite, signIn, onSaved, onOpen, head = true, placeholder = "Write a message" }: {
+export function ChatView({ place, path, data, repliesPath, logExists, me, canWrite, signIn, onSaved, onOpen, head = true, placeholder = "Write a message", room }: {
   place: Place; path: string; data: Conversation; repliesPath: string | undefined; logExists: boolean; me: string | null; canWrite: boolean; signIn: string; onSaved: () => void; onOpen: (path: string) => void;
+  /** A repo room's group chat: anyone signed in asks, within the caps, and connected agents answer. */
+  room?: RoomInfo;
   /** A channel page shows its own header instead of the conversation's. */
   head?: boolean; placeholder?: string;
 }) {
-  const blocked = !me ? "signin" : !canWrite ? "member" : undefined;
-  const chat = useChat(place, path, repliesPath, blocked ? "blocked" : undefined, logExists, onSaved, me ?? undefined);
+  // A room's group chat (Chat/general) is open to anyone signed in; its other conversations stay with members.
+  const asking = !!room && path === "Chat/general/chat.json";
+  const left = room ? questionsLeft(room) : { left: 1, why: "" };
+  const blocked = !me ? "signin" : asking && !left.left ? "capped" : !canWrite && !asking ? "member" : undefined;
+  const chat = useChat(place, path, repliesPath, blocked ? "blocked" : undefined, logExists, onSaved, me ?? undefined, asking);
+  const questions = new Map((asking ? room!.questions : []).map(question => [question.id, question]));
   const end = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   const saved: Message[] = data.messages.map((message, index) => ({
@@ -36,7 +43,7 @@ export function ChatView({ place, path, data, repliesPath, logExists, me, canWri
   const all = [...saved, ...added];
   const people = [...new Set(all.map(message => message.author).filter(name => name && name !== "note"))];
   // People who can write here launch a worker with the message, on a runner of their own.
-  const workers = useLive<WorkersStatus>(!blocked ? `/-/api/workers?space=${encodeURIComponent(place.space)}&project=${encodeURIComponent(place.project)}` : undefined, 0);
+  const workers = useLive<WorkersStatus>(!blocked && !asking ? `/-/api/workers?space=${encodeURIComponent(place.space)}&project=${encodeURIComponent(place.project)}` : undefined, 0);
   const runners = workers.data?.runners ?? [];
   const canLaunch = !!workers.data?.enabled && !!workers.data.signedIn;
   const [launching, setLaunching] = useState(false);
@@ -48,6 +55,13 @@ export function ChatView({ place, path, data, repliesPath, logExists, me, canWri
   }, [chat.draft]);
 
   return <div className="chat">
+    {asking && <div className="room-bar">
+      <a href={room!.github} target="_blank" rel="noreferrer"><Github size={14} />{room!.repo}</a>
+      <button type="button" onClick={() => onOpen(EXPLAINER_OUTPUT)}><BookOpen size={14} />Explanation</button>
+      <span className="room-agents" title="Agents connected here pick up questions and answer">
+        <Bot size={14} />{room!.agents.length ? <>Answered by {room!.agents.map(name => <Avatar key={name} name={name} size={16} kind="agent" title={name} />)}</> : "No agents connected yet"}
+      </span>
+    </div>}
     {head && <div className="chat-head">
       <div><h2>{text(data.title) || path.split("/").pop()}</h2>{text(data.subtitle) && <p>{text(data.subtitle)}</p>}</div>
       {people.length > 0 && <AvatarStack names={people} />}
@@ -68,7 +82,14 @@ export function ChatView({ place, path, data, repliesPath, logExists, me, canWri
                 {launch && <WorkerCard id={launch.task} me={me} />}
               </>;
             })()}
-            {message.links && message.links.length > 0 && <div className="message-links">{message.links.map((link, i) => <button key={i} type="button" onClick={() => onOpen(link.path)}><FileText size={14} />{link.label || link.path}</button>)}</div>}
+            {questions.has(message.id) && (() => {
+              const question = questions.get(message.id)!;
+              const state = stateNow(question, room!.claimSeconds);
+              return <div className="message-state"><span className={`label ${state === "answered" ? "done" : state === "unclaimed" ? "warn" : "open"}`}>{state !== "waiting" && state !== "unclaimed" && <Avatar name={question.agent} size={14} kind="agent" />}{STATE_TEXT[state](question.agent)}</span></div>;
+            })()}
+            {message.links && message.links.length > 0 && <div className="message-links">{message.links.map((link, i) => /^https:\/\//.test(link.path)
+              ? <a key={i} href={link.path} target="_blank" rel="noreferrer"><Github size={14} />{link.label || link.path}</a>
+              : <button key={i} type="button" onClick={() => onOpen(link.path)}><FileText size={14} />{link.label || link.path}</button>)}</div>}
           </div>
         </li>;
       })}
@@ -80,19 +101,22 @@ export function ChatView({ place, path, data, repliesPath, logExists, me, canWri
       {chat.error && chat.error !== "blocked" && <ErrorNote message={chat.error} retry={chat.refresh} />}
       {blocked === "signin" && <div className="composer-blocked"><span>Sign in to write in this conversation.</span><a className="button" href={signIn}><LogIn size={15} />Sign in</a></div>}
       {blocked === "member" && <div className="composer-blocked"><span>Only members of {place.space} can write here. You can read along.</span></div>}
+      {blocked === "signin" && asking && <p className="composer-note">Anyone can read this room. Sign in with GitHub to ask; agents connected to {place.space} answer.</p>}
+      {blocked === "capped" && <div className="composer-blocked"><span>{left.why} Ask again tomorrow; you can read along.</span></div>}
       {!blocked && <>
         {launching && <LaunchTray place={place} path={path} draft={chat.draft} runners={runners} onClose={() => setLaunching(false)} onLaunched={() => { setLaunching(false); chat.setDraft(""); chat.refresh(); onSaved(); }} />}
         {!added.length && chat.suggestions.length > 0 && <div className="suggestions">{chat.suggestions.map(item => <button key={item.label} type="button" disabled={!chat.ready || chat.pending} onClick={() => chat.send(item.prompt)}>{item.label}</button>)}</div>}
         <form className="composer" onSubmit={event => { event.preventDefault(); chat.send(); }}>
           <Avatar name={me!} size={28} />
-          <textarea ref={input} rows={1} maxLength={MAX_MESSAGE_LENGTH} aria-label={`Message ${place.space}/${place.project}`} placeholder={chat.ready ? placeholder : "Connecting…"} value={chat.draft}
+          <textarea ref={input} rows={1} maxLength={MAX_MESSAGE_LENGTH} aria-label={asking ? `Ask about ${room!.repo}` : `Message ${place.space}/${place.project}`} placeholder={chat.ready ? (asking ? `Ask about ${room!.repo}` : placeholder) : "Connecting…"} value={chat.draft}
             onChange={event => chat.setDraft(event.target.value)}
             onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} />
-          {canLaunch && !chat.pending && <button type="button" className={`launch${launching ? " on" : ""}`} aria-label="Launch a worker with this message" title="Launch a worker with this message" aria-pressed={launching} onClick={() => setLaunching(value => !value)}><Rocket size={16} /></button>}
+          {canLaunch && !asking && !chat.pending && <button type="button" className={`launch${launching ? " on" : ""}`} aria-label="Launch a worker with this message" title="Launch a worker with this message" aria-pressed={launching} onClick={() => setLaunching(value => !value)}><Rocket size={16} /></button>}
           {chat.pending ? <button type="button" className="send stop" aria-label="Stop the sample reply" onClick={chat.stop}><Square size={13} fill="currentColor" /></button>
             : <button type="submit" className="send" aria-label="Send" disabled={!chat.ready || !chat.draft.trim()}><ArrowUp size={17} /></button>}
         </form>
-        <p className="composer-note">Saved to {place.space}/{place.project} as {me}{chat.sampleReplies ? " · sample replies on" : ""} · Enter to send, Shift+Enter for a new line{canLaunch ? " · Launch runs it as a worker on your runner" : ""}</p>
+        {asking ? <p className="composer-note">Asked as {me} · {left.left} of {room!.perPerson} questions left today · an agent connected to {place.space} picks it up within {Math.round(room!.claimSeconds / 60)} minutes or it is marked as not picked up</p>
+        : <p className="composer-note">Saved to {place.space}/{place.project} as {me}{chat.sampleReplies ? " · sample replies on" : ""} · Enter to send, Shift+Enter for a new line{canLaunch ? " · Launch runs it as a worker on your runner" : ""}</p>}
       </>}
     </div>
   </div>;

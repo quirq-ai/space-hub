@@ -19,6 +19,7 @@
 //   agent_secret    (private) an agent's token, for its owners to launch it with
 //   space_link      the GitHub user or organization a space mirrors
 //   ref_sync        where GitHub had each mirrored ref at the last sync
+//   question        a question asked in a repo room, and the agent that claimed it (explain.ts)
 //
 // A database from before these names (when `space` held repositories) cannot
 // take this schema, since SpacetimeDB renames neither tables nor columns. The
@@ -39,6 +40,8 @@ import { ApiError, parseQuery, renderApi, templateFiles } from './workspace';
 import { addFiles, appendTurns, type NewObject } from './chat';
 import { commitFiles, instantiate } from './space';
 import { BUILTIN_TEMPLATE } from './spacetemplate';
+import { CLAIM_SECONDS, DAY_SECONDS, DEFAULT_EXPLAIN_SPACE, EXPLAIN_PROMPT, ROOM_CHAT, capProblem, roomName } from './explain';
+import { roomFiles } from './roomfiles';
 import { OLDEST_PROTOCOL, PROTOCOL } from './protocol';
 
 const MAX_OBJECT_SIZE = 100 * 1024 * 1024;
@@ -425,6 +428,30 @@ const worker = table(
   }
 );
 
+// A question asked in a repo room (explain.ts): who asked, which agent
+// claimed it, and where it stands ("open", "claimed", "answered"). The turns
+// themselves are in the room's chat log. Public, so connected agents follow
+// new questions live.
+const question = table(
+  { name: 'question', public: true },
+  {
+    key: t.string().primaryKey(), // "<project id>:<id>"
+    id: t.string(),
+    projectId: t.u64().index('btree'),
+    project: t.string(),
+    space: t.string().index('btree'),
+    conversation: t.string(),
+    kind: t.string(), // "question", or "explain" (the room's first ask, outside the caps)
+    asker: t.string().index('btree'),
+    content: t.string(),
+    status: t.string(),
+    agent: t.string(),
+    askedAt: t.timestamp(),
+    claimedAt: t.timestamp(),
+    answeredAt: t.timestamp(),
+  }
+);
+
 const spacetimedb = schema({
   user,
   project,
@@ -452,6 +479,7 @@ const spacetimedb = schema({
   xoLink,
   runner,
   worker,
+  question,
 });
 export default spacetimedb;
 
@@ -467,8 +495,8 @@ const ObjectIn = t.object('ObjectIn', {
 // so any GitHub user or organization has the same name here.
 const USERNAME = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
 // First path segments the server's proxy and the app need for themselves
-// (/subhub/<name> is a connected sub-hub's page).
-const RESERVED_USERNAMES = new Set(['v1', 'healthz', 'subhub']);
+// (/subhub/<name> is a connected sub-hub's page, /gh/<owner>/<repo> a repo room).
+const RESERVED_USERNAMES = new Set(['v1', 'healthz', 'subhub', 'gh']);
 const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
 // Project names are GitHub repository names.
 const PROJECT_NAME = /^[A-Za-z0-9._-]{1,100}$/;
@@ -970,14 +998,16 @@ function moveBuilder(ctx: Ctx, from: string, to: string) {
   ctx.db.spaceAlias.insert({ name: from, space: to, createdAt: ctx.timestamp });
 }
 
-function createProjectIn(ctx: Ctx, space: string, name: string, description: string) {
+// `system` names who creates it when the hub itself does (a repo room, opened
+// by the web service as the hub admin): no membership is needed then.
+function createProjectIn(ctx: Ctx, space: string, name: string, description: string, system?: string) {
   space = spaceFor(ctx.db, space);
-  const me = isSyncer(ctx, space) ? SYNCER : requireActor(ctx);
+  const me = system ?? (isSyncer(ctx, space) ? SYNCER : requireActor(ctx));
   if (!PROJECT_NAME.test(name) || name === '.' || name === '..' || name.endsWith('.git')) {
     throw new SenderError('a project name may use letters, digits, ".", "_" and "-" and must not end in .git');
   }
   if (!ctx.db.space.name.find(space) && space !== me) throw new SenderError(`no space named "${space}"`);
-  if (me !== SYNCER && !isMember(ctx, space, me)) throw new SenderError(`permission denied: only owners and members of "${space}" create projects in it`);
+  if (me !== SYNCER && !system && !isMember(ctx, space, me)) throw new SenderError(`permission denied: only owners and members of "${space}" create projects in it`);
   const fullName = `${space}/${name}`;
   if (ctx.db.project.fullName.find(fullName)) throw new SenderError(`project "${fullName}" already exists`);
   const created = ctx.db.project.insert({
@@ -1251,30 +1281,36 @@ export const appendChat = spacetimedb.reducer(
   (ctx, { project: fullName, conversation, turns }) => {
     fullName = projectFor(ctx.db, fullName);
     const sp = requireWritable(ctx, fullName);
-    const me = requireActor(ctx);
-    const name = `refs/heads/${sp.defaultBranch}`;
-    const current = ctx.db.gitRef.key.find(refKey(sp.id, name));
-    let built: ReturnType<typeof appendTurns>;
-    try {
-      built = appendTurns({
-        head: current?.oid ?? '',
-        conversation,
-        turns,
-        author: me,
-        now: Number(ctx.timestamp.microsSinceUnixEpoch / 1_000_000n),
-        read: oid => readObject(ctx.db, sp.id, oid),
-      });
-    } catch (err) {
-      throw new SenderError(err instanceof Error ? err.message : String(err));
-    }
-    let added = 0n;
-    for (const object of built.objects) added += writeObject(ctx, sp, object);
-    ctx.db.gitRef.id.update({ ...current!, oid: built.commit, updatedAt: ctx.timestamp, updatedBy: ctx.sender });
-    ctx.db.project.id.update({ ...sp, pushedAt: ctx.timestamp });
-    grow(ctx, sp.id, added);
-    logActivity(ctx, { projectId: sp.id, path: sp.fullName, kind: 'ref_updated', subject: name, oid: built.commit, count: 1, text: built.subject });
+    appendTo(ctx, sp, conversation, turns, requireActor(ctx));
   }
 );
+
+// Append turns to a conversation's log as one commit on the default branch;
+// `assistant` names who wrote the assistant turns (an agent answering as itself).
+function appendTo(ctx: Ctx, sp: ReturnType<typeof requireProject>, conversation: string, turns: { id: string; role: string; content: string; links: { label: string; path: string }[] }[], author: string, assistant?: string) {
+  const name = `refs/heads/${sp.defaultBranch}`;
+  const current = ctx.db.gitRef.key.find(refKey(sp.id, name));
+  let built: ReturnType<typeof appendTurns>;
+  try {
+    built = appendTurns({
+      head: current?.oid ?? '',
+      conversation,
+      turns,
+      author,
+      assistant,
+      now: Number(ctx.timestamp.microsSinceUnixEpoch / 1_000_000n),
+      read: oid => readObject(ctx.db, sp.id, oid),
+    });
+  } catch (err) {
+    throw new SenderError(err instanceof Error ? err.message : String(err));
+  }
+  let added = 0n;
+  for (const object of built.objects) added += writeObject(ctx, sp, object);
+  ctx.db.gitRef.id.update({ ...current!, oid: built.commit, updatedAt: ctx.timestamp, updatedBy: ctx.sender });
+  ctx.db.project.id.update({ ...sp, pushedAt: ctx.timestamp });
+  grow(ctx, sp.id, added);
+  logActivity(ctx, { projectId: sp.id, path: sp.fullName, kind: 'ref_updated', subject: name, oid: built.commit, count: 1, text: built.subject, agent: author });
+}
 
 // Where a place's one chat lives (the app's lib/chat-place.ts agrees): an
 // org's in <org>/chat, at its root; an agent's in its home project; a
@@ -1327,6 +1363,113 @@ export const startChat = spacetimedb.reducer({ space: t.string(), project: t.str
   grow(ctx, sp.id, added);
   logActivity(ctx, { projectId: sp.id, path: sp.fullName, kind: current ? 'ref_updated' : 'ref_created', subject: name, oid: built.commit, count: 1, text: `Start the chat of ${at.where}` });
 });
+
+// ---------------------------------------------------------------- repo rooms
+
+// The space whose projects are repo rooms (explain.ts).
+function explainSpace(ctx: Ctx) {
+  return ctx.db.hubState.key.find('explain_space')?.value || DEFAULT_EXPLAIN_SPACE;
+}
+
+const nowSeconds = (ctx: Ctx) => Number(ctx.timestamp.microsSinceUnixEpoch / 1_000_000n);
+const secondsOf = (at: Timestamp) => Number(at.microsSinceUnixEpoch / 1_000_000n);
+const QUESTION_ID = /^[A-Za-z0-9-]{1,40}$/;
+
+// A room: a project in the explain space.
+function requireRoom(ctx: Ctx, fullName: string) {
+  const sp = requireProject(ctx, projectFor(ctx.db, fullName));
+  if (sp.owner !== explainSpace(ctx)) throw new SenderError(`"${sp.fullName}" is not a repo room; questions are asked in projects of "${explainSpace(ctx)}"`);
+  return sp;
+}
+
+function insertQuestion(ctx: Ctx, sp: ReturnType<typeof requireProject>, id: string, kind: string, asker: string, content: string) {
+  ctx.db.question.insert({
+    key: `${sp.id}:${id}`, id, projectId: sp.id, project: sp.fullName, space: sp.owner, conversation: ROOM_CHAT, kind, asker,
+    content: content.slice(0, 1000), status: 'open', agent: '', askedAt: ctx.timestamp, claimedAt: ctx.timestamp, answeredAt: ctx.timestamp,
+  });
+}
+
+// Open the room for a public GitHub repository, as the hub admin (the web
+// service checks GitHub first). Its first question asks for the explanation.
+// A room already there stays as it is.
+export const openRepoRoom = spacetimedb.reducer(
+  { owner: t.string(), repo: t.string(), description: t.string(), openedBy: t.string() },
+  (ctx, { owner, repo, description, openedBy }) => {
+    if (!isAdmin(ctx)) throw new SenderError('permission denied: rooms are opened by the hub (open /gh/<owner>/<repo>)');
+    const space = explainSpace(ctx);
+    const row = ctx.db.space.name.find(space);
+    if (row?.kind !== 'org') throw new SenderError(`make the org "${space}" first: spacehub space create ${space}`);
+    const name = roomName(owner, repo);
+    if (!name) throw new SenderError('use a GitHub owner and repository name');
+    const opener = ctx.db.user.username.find(openedBy) ? openedBy : 'someone';
+    if (ctx.db.project.fullName.find(`${space}/${name}`)) return;
+    const full = `${owner.trim()}/${repo.trim().replace(/\.git$/i, '')}`;
+    const sp = createProjectIn(ctx, space, name, (description.trim() || `The open room for github.com/${full}`).slice(0, 300), opener);
+    const built = commitFiles(roomFiles(owner.trim(), repo.trim().replace(/\.git$/i, ''), space, description, opener), opener, nowSeconds(ctx), `Open the room for github.com/${full}`);
+    let added = 0n;
+    for (const object of built.objects) added += writeObject(ctx, sp, object);
+    ctx.db.gitRef.insert({ id: 0n, key: refKey(sp.id, 'refs/heads/main'), projectId: sp.id, name: 'refs/heads/main', oid: built.commit, updatedAt: ctx.timestamp, updatedBy: ctx.sender });
+    ctx.db.project.id.update({ ...sp, defaultBranch: 'main', pushedAt: ctx.timestamp });
+    grow(ctx, sp.id, added);
+    logActivity(ctx, { projectId: sp.id, path: sp.fullName, kind: 'ref_created', subject: 'refs/heads/main', oid: built.commit, agent: opener, text: `Open the room for github.com/${full}` });
+    // The first question: the explanation. It counts against no cap.
+    const room = ctx.db.project.id.find(sp.id)!;
+    appendTo(ctx, room, ROOM_CHAT, [{ id: 'explain', role: 'user', content: EXPLAIN_PROMPT, links: [] }], opener);
+    insertQuestion(ctx, room, 'explain', 'explain', opener, EXPLAIN_PROMPT);
+  }
+);
+
+// Ask in a room's group chat, as any signed-in builder, within the caps.
+export const askQuestion = spacetimedb.reducer(
+  { project: t.string(), id: t.string(), content: t.string() },
+  (ctx, { project: fullName, id, content }) => {
+    const me = requireUser(ctx).username;
+    const sp = requireRoom(ctx, fullName);
+    if (!QUESTION_ID.test(id)) throw new SenderError('a question needs an id of up to 40 letters, digits and hyphens');
+    if (ctx.db.question.key.find(`${sp.id}:${id}`)) throw new SenderError('that question was already asked');
+    const since = nowSeconds(ctx) - DAY_SECONDS;
+    const today = [...ctx.db.question.projectId.filter(sp.id)].filter(q => q.kind === 'question' && secondsOf(q.askedAt) > since);
+    const problem = capProblem(today.length, today.filter(q => q.asker === me).length);
+    if (problem) throw new SenderError(problem);
+    appendTo(ctx, sp, ROOM_CHAT, [{ id, role: 'user', content, links: [] }], me);
+    insertQuestion(ctx, ctx.db.project.id.find(sp.id)!, id, 'question', me, content);
+  }
+);
+
+// An agent connected to the room's space takes a question: the first claim
+// wins, and only while the question still waits (CLAIM_SECONDS).
+export const claimQuestion = spacetimedb.reducer(
+  { project: t.string(), id: t.string() },
+  (ctx, { project: fullName, id }) => {
+    const me = ctx.db.agent.identity.find(ctx.sender)?.name;
+    if (!me) throw new SenderError('permission denied: agents claim questions');
+    const sp = requireRoom(ctx, fullName);
+    if (!ctx.db.spaceRole.key.find(roleKey(sp.owner, me))) throw new SenderError(`permission denied: ${me} is not connected to "${sp.owner}"`);
+    const q = ctx.db.question.key.find(`${sp.id}:${id}`);
+    if (!q) throw new SenderError(`no question "${id}" in ${sp.fullName}`);
+    if (q.status === 'claimed' || q.status === 'answered') throw new SenderError(`${q.agent} already took this question`);
+    // The explanation waits for whichever agent comes first; questions wait CLAIM_SECONDS.
+    if (q.kind === 'question' && nowSeconds(ctx) - secondsOf(q.askedAt) >= CLAIM_SECONDS) throw new SenderError('this question waited too long and was marked as not picked up');
+    ctx.db.question.key.update({ ...q, status: 'claimed', agent: me, claimedAt: ctx.timestamp });
+    appendTo(ctx, sp, q.conversation, [{ id: `${id}-claim`, role: 'assistant', content: `${me} is on it.`, links: [] }], me, me);
+  }
+);
+
+// The agent that claimed a question answers it, once.
+export const answerQuestion = spacetimedb.reducer(
+  { project: t.string(), id: t.string(), content: t.string(), links: t.array(ChatLinkIn) },
+  (ctx, { project: fullName, id, content, links }) => {
+    const me = ctx.db.agent.identity.find(ctx.sender)?.name;
+    if (!me) throw new SenderError('permission denied: agents answer questions');
+    const sp = requireRoom(ctx, fullName);
+    const q = ctx.db.question.key.find(`${sp.id}:${id}`);
+    if (!q) throw new SenderError(`no question "${id}" in ${sp.fullName}`);
+    if (q.status === 'answered') throw new SenderError('this question is already answered');
+    if (q.status !== 'claimed' || q.agent !== me) throw new SenderError('claim the question before answering it');
+    appendTo(ctx, sp, q.conversation, [{ id: `${id}-answer`, role: 'assistant', content, links }], me, me);
+    ctx.db.question.key.update({ ...q, status: 'answered', answeredAt: ctx.timestamp });
+  }
+);
 
 // ---------------------------------------------------------------- spaces
 

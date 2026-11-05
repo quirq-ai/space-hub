@@ -73,7 +73,7 @@ export function FilesTab({ place, path, as, view, error, me, signIn, refresh }: 
       const log = chatLogPath(file.path);
       return <>
         <ChatView key={file.path} place={place} path={file.path} data={file.data} repliesPath={typeof file.data.demoReplies === "string" ? file.data.demoReplies : undefined}
-          logExists={!!log && snapshot.directory.entries.some(entry => entry.path === log)} me={me} canWrite={meta.canWrite} signIn={signIn} onSaved={refresh} onOpen={open} />
+          logExists={!!log && snapshot.directory.entries.some(entry => entry.path === log)} me={me} canWrite={meta.canWrite} signIn={signIn} onSaved={refresh} onOpen={open} room={meta.room} />
       </>;
     }
     return <div className="file-view">
