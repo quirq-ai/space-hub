@@ -60,7 +60,7 @@ export function HomePage({ tab, view, me, mySpaces, seen }: HomeProps) {
         <CommandTabs tabs={[
           { label: "spacehub", lines: ["spacehub auth login", "spacehub project create notes --source . --push"] },
           { label: "xo", lines: ['pip install "quirq-xo @ git+https://github.com/quirq-ai/xo"', "xo login", "spacehub project create notes --source . --push"] },
-        ]} note={<>Both need the hub's CLI: <code>scripts/install-cli.sh</code> from quirq-ai/space-hub. xo is XO's command line; <code>xo login</code> signs you in to XO and this hub. <a href="/-/guide">Read the guide</a>.</>} />
+        ]} note={<>Both need the hub's CLI: <code>scripts/install-cli.sh</code> (or <code>install-cli.ps1</code> on Windows) from quirq-ai/space-hub. xo is XO's command line; <code>xo login</code> signs you in to XO and this hub. <a href="/-/guide">Read the guide</a>.</>} />
       </Popover>}</>}>
       <LiveNow variant="strip" here={view.meta.here} agents={view.meta.agentList} />
     </PageHeader>

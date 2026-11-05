@@ -10,11 +10,18 @@ import { esc } from './style';
 export const DEFAULT_HOST = 'hub.quirq.dev';
 
 export const INSTALL_CLI = 'd="$(mktemp -d)" && git clone -q --depth 1 https://github.com/quirq-ai/space-hub "$d" && "$d/scripts/install-cli.sh"';
+// The same on Windows, in PowerShell (scripts/install-cli.ps1).
+export const INSTALL_CLI_WINDOWS = 'irm https://raw.githubusercontent.com/quirq-ai/space-hub/main/scripts/install-cli.ps1 | iex';
 // xo, XO's command line (github.com/quirq-ai/xo). Its package is quirq-xo: PyPI's "xo" is something else.
 export const INSTALL_XO = 'pip install "quirq-xo @ git+https://github.com/quirq-ai/xo"';
 
 // One or more command lines, copied together.
 export const cmd = (...lines: string[]) => `<div class="command"><code>${esc(lines.join('\n'))}</code></div>`;
+
+// The install command block, then the Windows one under it. `more` are lines
+// that follow the install on both (such as installing xo).
+export const installCmd = (...more: string[]) =>
+  `${cmd(INSTALL_CLI, ...more)}<p class="or">On Windows, in PowerShell:</p>${cmd(INSTALL_CLI_WINDOWS, ...more)}`;
 
 // A numbered step, as a row: a title, what it does, and the commands to run.
 export const step = (title: string, text: string, ...blocks: string[]) =>
@@ -62,7 +69,7 @@ export function signInWays(hub: Hub, forWebsite: boolean) {
   const token = forWebsite ? [step('Print your token', 'Paste it below.', cmd('spacehub auth token'))] : [];
   const xo = `<section class="way"><h2 class="section-title">With xo <span>Use XO? One login for XO and this hub. Your builder name is the GitHub login connected to your XO account.</span></h2>
 ${steps(
-  step("Install the hub's CLI and xo", 'Needs git, Node 22 or newer and Python 3.11 or newer.', cmd(INSTALL_CLI, INSTALL_XO)),
+  step("Install the hub's CLI and xo", 'Needs git, Node 22 or newer and Python 3.11 or newer.', installCmd(INSTALL_XO)),
   step('Log in', 'It signs you in to XO and hands your hub builder to spacehub.', cmd('xo login')),
   ...token
 )}</section>`;
@@ -70,14 +77,14 @@ ${steps(
     hub.accounts === 'github'
       ? `<section class="way"><h2 class="section-title">With GitHub <span>Your builder name is your GitHub login.</span></h2>
 ${steps(
-  step("Install the hub's CLI", 'Needs git and Node 22 or newer.', cmd(INSTALL_CLI)),
+  step("Install the hub's CLI", 'Needs git and Node 22 or newer.', installCmd()),
   step('Log in', 'The first time, it makes your builder. If it asks you to log in to GitHub first, run <code>gh auth login</code> and try again.', cmd(loginCommand(hub))),
   ...token
 )}</section>`
       : hub.accounts === 'open'
         ? `<section class="way"><h2 class="section-title">With a builder name <span>Pick a name once; the CLI keeps your token.</span></h2>
 ${steps(
-  step("Install the hub's CLI", 'Needs git and Node 22 or newer.', cmd(INSTALL_CLI)),
+  step("Install the hub's CLI", 'Needs git and Node 22 or newer.', installCmd()),
   step('Log in', 'The first time, it registers the name. You can also <a href="/-/signup">register here</a>.', cmd(loginCommand(hub))),
   ...token
 )}</section>`

@@ -6,7 +6,8 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { accountCheck, binDir, findOnPath, hubCheck, pathCheck, pathFix, report, restartCheck, shellRc } from '../src/doctor.ts';
+import { accountCheck, binDir, findOnPath, hubCheck, pathCheck, pathFix, reinstallCommand, REINSTALL, report, restartCheck, shellRc } from '../src/doctor.ts';
+import { UPDATE_COMMAND_WINDOWS } from '../src/compat.ts';
 import { permissionHelp, spacesNamed } from '../src/permission.ts';
 
 const root = path.join(import.meta.dirname, '../..');
@@ -63,6 +64,40 @@ test('the PATH check passes, fails with the line to add, or names the spacehub t
   const shadowed = pathCheck(bin, [path.join(dir, 'other/spacehub'), path.join(bin, 'spacehub')], '/bin/zsh');
   assert.equal(shadowed.level, 'warn');
   assert.ok(shadowed.text.includes(path.join(dir, 'other/spacehub')));
+});
+
+test('on Windows the PATH fix is PowerShell, whatever the shell', () => {
+  const lines = [
+    `[Environment]::SetEnvironmentVariable('Path', 'C:\\npm;' + [Environment]::GetEnvironmentVariable('Path', 'User'), 'User')`,
+    `$env:Path = 'C:\\npm;' + $env:Path`,
+  ];
+  assert.deepEqual(pathFix('C:\\npm', undefined, 'win32'), lines);
+  assert.deepEqual(pathFix('C:\\npm', '/usr/bin/bash', 'win32'), lines);
+  assert.deepEqual(pathFix('/home/u/.local/bin', '/bin/bash', 'linux'), [
+    `echo 'export PATH="/home/u/.local/bin:$PATH"' >> ~/.bashrc`,
+    'export PATH="/home/u/.local/bin:$PATH"',
+  ]);
+});
+
+test('on Windows the PATH check knows npm\'s launchers and ignores case', () => {
+  const bin = 'C:\\Users\\u\\AppData\\Roaming\\npm';
+  for (const launcher of ['spacehub.cmd', 'spacehub.ps1', 'spacehub', 'SPACEHUB.CMD']) {
+    assert.equal(pathCheck(bin, [`${bin}\\${launcher}`], undefined, 'win32').level, 'ok', launcher);
+  }
+  assert.equal(pathCheck(bin.toLowerCase(), [`${bin}\\spacehub.cmd`], undefined, 'win32').level, 'ok');
+  const shadowed = pathCheck(bin, ['C:\\other\\spacehub.cmd'], undefined, 'win32');
+  assert.equal(shadowed.level, 'warn');
+  assert.match(shadowed.fix?.[1] ?? '', /^\$env:Path = /);
+  const missing = pathCheck(bin, [], undefined, 'win32');
+  assert.equal(missing.level, 'fail');
+  assert.match(missing.fix?.[0] ?? '', /^\[Environment\]::SetEnvironmentVariable/);
+});
+
+test('on Windows the reinstall is the PowerShell command', () => {
+  assert.equal(reinstallCommand('linux'), REINSTALL);
+  assert.equal(reinstallCommand('win32'), UPDATE_COMMAND_WINDOWS);
+  assert.deepEqual(restartCheck('/tmp/x/node_modules/spacehub', '/home/u', '/tmp', 'win32').fix, [UPDATE_COMMAND_WINDOWS]);
+  assert.deepEqual(restartCheck('/tmp/x/node_modules/spacehub', '/home/u', '/tmp', 'linux').fix, [REINSTALL]);
 });
 
 test('an install under home survives restarts; outside it is a warning; a temp folder fails', () => {

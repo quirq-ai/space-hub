@@ -15,7 +15,7 @@
 // name) or github (sign in with GitHub from the CLI).
 // TODO: on a hub whose accounts are xo (SPACEHUB_ACCOUNTS=xo), builders come from xo login instead.
 import { esc } from './style';
-import { cmd, INSTALL_CLI, INSTALL_XO, loginCommand, step, steps, xoSignsIn } from './howto';
+import { cmd, INSTALL_CLI, INSTALL_XO, installCmd, loginCommand, step, steps, xoSignsIn } from './howto';
 
 const HUB = {
   cli: 'spacehub',
@@ -78,7 +78,7 @@ export function guideHome(ctx: GuideContext): string {
 <li>Anyone can browse spaces and projects and clone them.</li>
 <li>To create projects or push, you need a builder login. ${github ? 'Sign in with your GitHub account from the CLI: your builder name is your GitHub login.' : 'Register on the <a href="/-/signup">sign-up page</a>, or with the CLI.'}</li></ul></div>
 <div><h3>Get started</h3><ol>
-<li>Install the CLI (needs git and Node 22+):${cmd(c.install)}</li>
+<li>Install the CLI (needs git and Node 22+):${installCmd()}</li>
 <li>Sign in:${cmd(c.login)}</li>
 <li>Share a repo (run inside it):${cmd(c.create)}</li></ol></div>
 <div><h3>Use cases</h3><ul>
@@ -142,7 +142,7 @@ ${card('Live', 'Every connected copy, person or agent, gets each push within sec
 
 <section id="start"><h2 class="section-title">Get started <span>Five steps, a couple of minutes. You need git and Node 22 or newer.</span></h2>
 ${steps(
-  step('Install the CLI', `It puts <code>${HUB.cli}</code> and git's <code>${HUB.remote}</code> helper on your PATH. Run it again any time to update.`, cmd(c.install)),
+  step('Install the CLI', `It puts <code>${HUB.cli}</code> and git's <code>${HUB.remote}</code> helper on your PATH. Run it again any time to update.`, installCmd()),
   signIn,
   step('Share a repo', 'Run it inside the repo. Its page here is <code>/&lt;you&gt;/&lt;name&gt;</code>.', cmd('cd path/to/your-repo', c.create)),
   step('Get it on another machine', 'A laptop, a cloud machine or an agent: sign in there too, then clone.', cmd(c.clone)),
@@ -195,7 +195,7 @@ ${steps(step('Clone', '', cmd(c.gitClone)), step('Push', '', cmd(c.gitPush)), st
 
 <section id="help"><h2 class="section-title">If something goes wrong</h2>
 <ul class="rows faq">
-${faq('The CLI says it is out of date', 'The hub was updated. Run the install command again; your login stays.', cmd(c.install))}
+${faq('The CLI says it is out of date', 'The hub was updated. Run the install command again; your login stays.', installCmd())}
 ${faq('Autosync stopped on a conflict', 'You and someone else changed the same lines. Your autosync stopped and listed the files; everyone else keeps going. Fix the files, continue the rebase and start autosync again. <code>git rebase --abort</code> keeps your commits as they were instead.', cmd(c.resolve, c.autosync))}
 ${faq('A new file did not sync', 'Check that autosync is running in that clone, and that git is not ignoring the file:', cmd(c.ignored))}
 ${faq('Sign in on this website', 'Sign in from your terminal first (with spacehub or xo), then print your token and paste it at <b>Sign in</b>.', cmd(c.token))}

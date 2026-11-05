@@ -6,6 +6,11 @@
 // Reinstalls the CLI from the latest source; the saved login stays.
 export const UPDATE_COMMAND =
   'd="$(mktemp -d)" && git clone -q --depth 1 https://github.com/quirq-ai/space-hub "$d" && "$d/scripts/install-cli.sh"';
+// The same on Windows, in PowerShell (scripts/install-cli.ps1).
+export const UPDATE_COMMAND_WINDOWS = 'irm https://raw.githubusercontent.com/quirq-ai/space-hub/main/scripts/install-cli.ps1 | iex';
+
+// The update command for this machine: bash everywhere but Windows.
+export const updateCommand = (platform: string = process.platform) => (platform === 'win32' ? UPDATE_COMMAND_WINDOWS : UPDATE_COMMAND);
 
 export interface HubProtocol {
   current: number; // the protocol the hub speaks
@@ -15,10 +20,10 @@ export interface HubProtocol {
 // What is wrong with a CLI speaking protocol `mine` talking to a hub that
 // speaks `hub`, or null when they match. A hub too old to report its
 // protocol (null) gets the benefit of the doubt.
-export function protocolProblem(mine: number, hub: HubProtocol | null, server: string): string | null {
+export function protocolProblem(mine: number, hub: HubProtocol | null, server: string, platform: string = process.platform): string | null {
   if (!hub) return null;
   if (mine < hub.oldest) {
-    return `this spacehub CLI is out of date for the hub at ${server} (it speaks protocol ${mine}; the hub needs ${hub.oldest}). Update it, your login stays:\n  ${UPDATE_COMMAND}`;
+    return `this spacehub CLI is out of date for the hub at ${server} (it speaks protocol ${mine}; the hub needs ${hub.oldest}). Update it, your login stays:\n  ${updateCommand(platform)}`;
   }
   if (mine > hub.current) {
     return `the hub at ${server} runs an older spacehub than this CLI (the hub speaks protocol ${hub.current}; this CLI ${mine}). Update the hub, or use the CLI from the hub's version of spacehub.`;
@@ -29,8 +34,8 @@ export function protocolProblem(mine: number, hub: HubProtocol | null, server: s
 // Rows the CLI cannot decode: the hub changed under a running command (it was
 // updated, and the reconnect replayed subscriptions before the protocol check
 // answered).
-export function unreadableData(server: string): string {
-  return `cannot read the hub's data at ${server}: the hub was probably updated and no longer matches this spacehub CLI. Update it, your login stays:\n  ${UPDATE_COMMAND}`;
+export function unreadableData(server: string, platform: string = process.platform): string {
+  return `cannot read the hub's data at ${server}: the hub was probably updated and no longer matches this spacehub CLI. Update it, your login stays:\n  ${updateCommand(platform)}`;
 }
 
 // The SDK's error for rows shaped differently from this CLI's bindings.

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { isDecodeError, protocolProblem, unreadableData, UPDATE_COMMAND } from '../src/compat.ts';
+import { isDecodeError, protocolProblem, unreadableData, UPDATE_COMMAND, UPDATE_COMMAND_WINDOWS, updateCommand } from '../src/compat.ts';
 import { hubMismatch } from '../src/autosync.ts';
 import { BINDINGS_HASH, OLDEST_PROTOCOL, PROTOCOL } from '../../module/src/protocol.ts';
 
@@ -48,6 +48,22 @@ test('autosync recognizes either mismatch in the remote helper\'s output', () =>
 
 test('the update command reinstalls from a fresh checkout', () => {
   assert.equal(UPDATE_COMMAND, 'd="$(mktemp -d)" && git clone -q --depth 1 https://github.com/quirq-ai/space-hub "$d" && "$d/scripts/install-cli.sh"');
+  assert.equal(updateCommand('linux'), UPDATE_COMMAND);
+  assert.equal(updateCommand('darwin'), UPDATE_COMMAND);
+});
+
+test('on Windows the update command is the PowerShell one, and the messages use it', () => {
+  assert.equal(UPDATE_COMMAND_WINDOWS, 'irm https://raw.githubusercontent.com/quirq-ai/space-hub/main/scripts/install-cli.ps1 | iex');
+  assert.equal(updateCommand('win32'), UPDATE_COMMAND_WINDOWS);
+  assert.ok(protocolProblem(1, { current: 3, oldest: 2 }, HUB, 'win32')!.endsWith(`\n  ${UPDATE_COMMAND_WINDOWS}`));
+  assert.ok(unreadableData(HUB, 'win32').endsWith(`\n  ${UPDATE_COMMAND_WINDOWS}`));
+  assert.ok(protocolProblem(1, { current: 3, oldest: 2 }, HUB, 'linux')!.endsWith(`\n  ${UPDATE_COMMAND}`));
+});
+
+test('install-cli.ps1, the Windows install command, is in the repo', () => {
+  const ps1 = fs.readFileSync(path.join(import.meta.dirname, '../../scripts/install-cli.ps1'), 'utf8');
+  assert.match(ps1, /npm\.cmd/);
+  assert.ok(/^[\x00-\x7f]*$/.test(ps1), 'ASCII only: Windows PowerShell 5.1 reads a file without a BOM as ANSI');
 });
 
 test('the protocol numbers are sane', () => {

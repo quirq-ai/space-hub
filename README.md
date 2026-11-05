@@ -678,6 +678,25 @@ the setup any time: whether the shell finds the CLI (and the line to add if
 not), whether the install survives a restart, the CLI against the hub, and
 which builder you are signed in as and its roles.
 
+**On Windows**, install from PowerShell (needs Node 22+ and Git for Windows):
+
+```powershell
+irm https://raw.githubusercontent.com/quirq-ai/space-hub/main/scripts/install-cli.ps1 | iex
+# or, from a checkout: scripts\install-cli.ps1 [-Prefix <folder>]
+```
+
+`scripts/install-cli.ps1` is the Windows twin of `install-cli.sh`: piped into
+`iex` it fetches the latest source itself, and run from a checkout it installs
+that checkout. npm puts `spacehub` (as `spacehub.cmd` and `spacehub.ps1`) and
+git's `git-remote-quirq` helper in its global folder, `%APPDATA%\npm`, which
+installing Node puts on PATH. If PowerShell can't find `spacehub`, the
+script prints the lines to add it. If PowerShell's execution policy is
+`Restricted`, it won't run `spacehub.ps1`: run
+`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or type
+`spacehub.cmd`. On Windows, `spacehub doctor` and the out-of-date message
+give the PowerShell commands, and `project watch --exec` runs its command
+with `cmd`.
+
 Or use the client image, which bundles git, the CLI and the helper. It's
 handy for sandboxes and CI:
 
@@ -696,6 +715,8 @@ and the saved login stays:
 
 ```sh
 d="$(mktemp -d)" && git clone -q --depth 1 https://github.com/quirq-ai/space-hub "$d" && "$d/scripts/install-cli.sh"
+# Windows, in PowerShell:
+irm https://raw.githubusercontent.com/quirq-ai/space-hub/main/scripts/install-cli.ps1 | iex
 ```
 
 A hub from before the check (no `client_protocol` procedure) is trusted, as
@@ -1133,7 +1154,7 @@ app/                     the app: open-chat's interface over the hub (React, bui
 Dockerfile               targets: server (default), client
 docker-compose.yml       server + Caddy TLS front
 docker/                  server entrypoint, built-in allowlist (server.Caddyfile), compose Caddyfile
-scripts/                 setup.sh, install-cli.sh, e2e.sh
+scripts/                 setup.sh, install-cli.sh (+ install-cli.ps1 for Windows), e2e.sh
 ```
 
 ## How it works
