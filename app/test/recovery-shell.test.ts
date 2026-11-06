@@ -8,10 +8,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 // Exercise the actual shell components without browser effects or production data.
 const appDirectory = fileURLToPath(new URL("..", import.meta.url));
-const built = await build({ absWorkingDir: appDirectory, stdin: { contents: 'export { AccountMenu, Dock, InsetHeader, Sidebar, SpaceMenu } from "./src/shell/shell"; export { SettingsPage } from "./src/pages/settings"; export { SubhubConnectionCard, RemoteBackupCatalog } from "./src/pages/instance-recovery";', resolveDir: appDirectory, loader: "tsx" }, bundle: true, write: false, platform: "node", format: "cjs", jsx: "automatic", external: ["react", "react/jsx-runtime", "react-dom", "react-dom/server"], logLevel: "silent" });
+const built = await build({ absWorkingDir: appDirectory, stdin: { contents: 'export { AccountMenu, Dock, InsetHeader, Sidebar, SpaceMenu } from "./src/shell/shell"; export { SettingsPage } from "./src/pages/settings"; export { HomePage } from "./src/pages/home"; export { SubhubConnectionCard, RemoteBackupCatalog } from "./src/pages/instance-recovery";', resolveDir: appDirectory, loader: "tsx" }, bundle: true, write: false, platform: "node", format: "cjs", jsx: "automatic", external: ["react", "react/jsx-runtime", "react-dom", "react-dom/server"], logLevel: "silent" });
 const compiled: { exports: Record<string, ComponentType<any>> } = { exports: {} };
 new Function("require", "module", "exports", built.outputFiles[0].text)(createRequire(import.meta.url), compiled, compiled.exports);
-const { AccountMenu, Dock, InsetHeader, Sidebar, SpaceMenu, SettingsPage, SubhubConnectionCard, RemoteBackupCatalog } = compiled.exports;
+const { AccountMenu, Dock, InsetHeader, Sidebar, SpaceMenu, SettingsPage, HomePage, SubhubConnectionCard, RemoteBackupCatalog } = compiled.exports;
 const nothing = () => {};
 
 test("the page header replaces the top bar: sidebar trigger, where you are, live state and Activity", () => {
@@ -122,4 +122,25 @@ test("reported connections display heartbeat and source backup time while remote
   assert.match(remote, /Restore on Backup laptop/);
   assert.match(remote, /--storage &lt;folder&gt;/);
   assert.doesNotMatch(remote, /<form|<button[^>]*>Restore|\/restore/);
+});
+
+test("the Orgs page lists only orgs, the ones you belong to first, with their projects and agents", () => {
+  const entry = (name: string, detail: string) => ({ name, path: name, type: "directory", size: 0, modifiedAt: "2026-11-01T00:00:00.000Z", detail });
+  const entries = [entry("acme", "org · 2 projects"), entry("globex", "org · 1 project"), entry("ada", "builder · 3 projects"), entry("bot", "agent · 0 projects")];
+  const hub = (list: unknown[]) => ({ snapshot: { directory: { path: "", name: "spacehub", entries: list } }, meta: { level: "hub", spaces: list.length, projects: 6, bytes: 0, events: 0, humans: 1, agents: 1, activity: [], here: [], allProjects: [], agentList: [{ name: "bot", parent: "globex" }] } });
+  const page = (me: string | null, mySpaces: string[], list: unknown[] = entries) => renderToStaticMarkup(createElement(HomePage, { tab: "orgs", view: hub(list), me, mySpaces, seen: {} }));
+
+  const member = page("ada", ["ada", "acme"]);
+  assert.match(member, /<h1>Orgs<\/h1>/);
+  assert.match(member, /2 orgs/);
+  assert.ok(member.indexOf("Your orgs") < member.indexOf("Other orgs"));
+  assert.ok(member.indexOf(">acme<") < member.indexOf(">globex<"));
+  assert.match(member, /Member/);
+  assert.match(member, /1 project · 1 agent/);
+  assert.doesNotMatch(member, />ada<|>bot</);
+
+  const guest = page(null, []);
+  assert.doesNotMatch(guest, /Your orgs|Other orgs|Member/);
+  assert.match(guest, />acme</);
+  assert.match(page(null, [], [entry("ada", "builder · 3 projects")]), /No orgs yet/);
 });
