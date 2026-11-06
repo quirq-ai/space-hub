@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, File, Folder, FolderGit2, Home } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, File, Folder, FolderGit2, Home } from "lucide-react";
 import { placeUrl, viewUrl, type Place, type View } from "@/api";
 import { hashOf, onLink } from "@/router";
 import { Avatar } from "@/ui/primitives";
@@ -72,7 +72,7 @@ function SegmentMenu({ segment }: { segment: Segment }) {
 }
 
 /**
- * Where you are, as one line at the top of every space and project page:
+ * Where you are, as one line in the page header of every space and project:
  * home, then the space, the project and each folder. A segment goes up to
  * that place; its arrow opens the places beside it, so moving across never
  * needs a trip back up.
@@ -81,6 +81,6 @@ export function PathBar({ place, path }: { place: Place; path: string }) {
   const segments = segmentsOf(place, path);
   return <nav className="path-bar" aria-label="Where you are">
     <a className="path-home" href="/" onClick={onLink} aria-label="All spaces" title="All spaces"><Home size={14} /></a>
-    {segments.map(segment => <span key={segment.key} className="path-item"><span className="crumb-sep">/</span><SegmentMenu segment={segment} /></span>)}
+    {segments.map(segment => <span key={segment.key} className="path-item"><ChevronRight size={14} className="crumb-sep" /><SegmentMenu segment={segment} /></span>)}
   </nav>;
 }

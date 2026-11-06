@@ -8,27 +8,42 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 // Exercise the actual shell components without browser effects or production data.
 const appDirectory = fileURLToPath(new URL("..", import.meta.url));
-const built = await build({ absWorkingDir: appDirectory, stdin: { contents: 'export { TopBar, Sidebar } from "./src/shell/shell"; export { SettingsPage } from "./src/pages/settings"; export { SubhubConnectionCard, RemoteBackupCatalog } from "./src/pages/instance-recovery";', resolveDir: appDirectory, loader: "tsx" }, bundle: true, write: false, platform: "node", format: "cjs", jsx: "automatic", external: ["react", "react/jsx-runtime", "react-dom", "react-dom/server"], logLevel: "silent" });
+const built = await build({ absWorkingDir: appDirectory, stdin: { contents: 'export { InsetHeader, Sidebar } from "./src/shell/shell"; export { SettingsPage } from "./src/pages/settings"; export { SubhubConnectionCard, RemoteBackupCatalog } from "./src/pages/instance-recovery";', resolveDir: appDirectory, loader: "tsx" }, bundle: true, write: false, platform: "node", format: "cjs", jsx: "automatic", external: ["react", "react/jsx-runtime", "react-dom", "react-dom/server"], logLevel: "silent" });
 const compiled: { exports: Record<string, ComponentType<any>> } = { exports: {} };
 new Function("require", "module", "exports", built.outputFiles[0].text)(createRequire(import.meta.url), compiled, compiled.exports);
-const { TopBar, Sidebar, SettingsPage, SubhubConnectionCard, RemoteBackupCatalog } = compiled.exports;
+const { InsetHeader, Sidebar, SettingsPage, SubhubConnectionCard, RemoteBackupCatalog } = compiled.exports;
 const nothing = () => {};
 
-test("standalone recovery shell offers its own home without hub search or sign-in", () => {
-  const props = { me: { checked: true, name: null }, signIn: "/-/login", live: "live", onSearch: nothing, onMenu: nothing };
-  const standalone = renderToStaticMarkup(createElement(TopBar, { ...props, recoveryOnly: true }));
+test("the page header replaces the top bar: sidebar trigger, where you are, live state and Activity", () => {
+  const props = { crumbs: createElement("span", null, "quirq / quirq"), live: "live", rail: false, onToggleSidebar: nothing };
+  const header = renderToStaticMarkup(createElement(InsetHeader, { ...props, activity: { open: false, onToggle: nothing } }));
+  assert.match(header, /Toggle the sidebar/);
+  assert.match(header, /quirq \/ quirq/);
+  assert.match(header, /Live/);
+  assert.match(header, /aria-label="Activity"/);
+  assert.doesNotMatch(header, /Search spaces|Sign in/);
+  assert.doesNotMatch(renderToStaticMarkup(createElement(InsetHeader, props)), /aria-label="Activity"/);
+});
+
+test("standalone recovery sidebar offers its own home and no hub search or sign-in", () => {
+  const props = { switcher: { current: null, options: [] }, primary: [], sections: [], footer: [], me: { checked: true, name: null }, signIn: "/-/login", open: false, onClose: nothing, rail: false, onRail: nothing, onSearch: nothing };
+  const standalone = renderToStaticMarkup(createElement(Sidebar, { ...props, recoveryOnly: true }));
   assert.match(standalone, /href="\/#\/settings"/);
   assert.match(standalone, /Local recovery/);
-  assert.doesNotMatch(standalone, /Sign in|Search spaces|\/-\/login/);
-  const normal = renderToStaticMarkup(createElement(TopBar, props));
-  assert.match(normal, /Search spaces/);
-  assert.match(normal, /Sign in/);
+  assert.doesNotMatch(standalone, /Sign in|Search|\/-\/login|Guest/);
+  const normal = renderToStaticMarkup(createElement(Sidebar, props));
+  assert.match(normal, /Search/);
+  assert.match(normal, /Guest/);
+  assert.match(normal, /Not signed in/);
+  const signedIn = renderToStaticMarkup(createElement(Sidebar, { ...props, me: { checked: true, name: "suraj" } }));
+  assert.match(signedIn, /Account: suraj/);
 });
 
 test("Settings sits below Guide, while standalone recovery hides nonfunctional hub links", () => {
   const props = {
     switcher: { current: null, options: [] }, primary: [],
     sections: [{ key: "recent", title: "Recent", limit: 4, items: [{ key: "project", label: "org/project", href: "/org/project", icon: null }] }],
+    me: { checked: true, name: null }, signIn: "/-/login",
     footer: [{ key: "guide", label: "Guide", href: "/-/guide", icon: null }, { key: "settings", label: "Settings", href: "/#/settings", icon: null, active: true }, { key: "builders", label: "Builders", href: "/-/builders", icon: null }], open: false, onClose: nothing, rail: false, onRail: nothing, onSearch: nothing,
   };
   const standalone = renderToStaticMarkup(createElement(Sidebar, { ...props, recoveryOnly: true }));

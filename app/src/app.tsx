@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { BookOpen, BrainCircuit, Hash, Folder, FolderGit2, History, Home, Settings, Users, User } from "lucide-react";
+import { Bot, BookOpen, BrainCircuit, Hash, Folder, FolderGit2, History, Home, Settings, Users, User } from "lucide-react";
 import { placeUrl, viewUrl, type HubMeta, type Place, type ProjectMeta, type SpaceMeta, type View } from "@/api";
 import { useLive } from "@/hooks/use-live";
 import { channelSeenKey, ChannelsContext, useChannels } from "@/hooks/use-channels";
 import { channelCards, channelOf } from "@/lib/channels";
 import { recentProjects, rememberProject, useMe } from "@/hooks/use-me";
 import { hashOf, navigate, useRoute } from "@/router";
-import { Dock, Inspector, Progress, Sidebar, TopBar, type DockItem, type SideSection } from "@/shell/shell";
+import { Crumbs, Dock, InsetHeader, Inspector, Progress, Sidebar, type DockItem, type SideSection } from "@/shell/shell";
+import { PathBar } from "@/shell/path-bar";
 import { SearchPalette } from "@/shell/search";
 import { Avatar } from "@/ui/primitives";
 import { HomePage } from "@/pages/home";
@@ -43,6 +44,8 @@ export function App() {
   const [searching, setSearching] = useState(false);
   const [rail, setRail] = useState(() => { try { return localStorage.getItem(RAIL) === "on"; } catch { return false; } });
   const toggleRail = () => setRail(on => { try { localStorage.setItem(RAIL, on ? "off" : "on"); } catch { /* Storage may be blocked. */ } return !on; });
+  // The trigger in the page header, and ⌘B as in shadcn's sidebar: fold to icons on wide windows, open the drawer on narrow ones.
+  const toggleSidebar = () => matchMedia("(max-width: 760px)").matches ? setSidebarOpen(open => !open) : toggleRail();
   const [seen, setSeen] = useState(readSeen);
   const [activityOpen, setActivityOpen] = useState(readActivity);
   const toggleActivity = () => setActivityOpen(open => { try { localStorage.setItem(ACTIVITY, open ? "closed" : "open"); } catch { /* Storage may be blocked. */ } return !open; });
@@ -89,6 +92,7 @@ export function App() {
     if (recoveryOnly) return;
     const key = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); setSearching(true); }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "b") { event.preventDefault(); toggleSidebar(); }
       if (event.key === "/" && !(event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || (event.target as HTMLElement)?.isContentEditable)) { event.preventDefault(); setSearching(true); }
     };
     addEventListener("keydown", key);
@@ -127,21 +131,21 @@ export function App() {
       icon: card.kind === "channel" ? <Hash size={16} /> : <Avatar name={card.entry.name} size={18} kind={card.kind === "agent" ? "agent" : undefined} />,
     });
     const all = { label: "All channels", href: placeUrl(place, hashOf("files", { path: channels.root })) };
-    sideSections.push({ key: "channels", title: "Channels", limit: 8, items: cards.filter(card => card.kind !== "agent").map(item), more: all });
+    sideSections.push({ key: "channels", title: "Channels", icon: <Hash size={16} />, limit: 8, items: cards.filter(card => card.kind !== "agent").map(item), more: all });
     const agents = cards.filter(card => card.kind === "agent");
-    if (agents.length) sideSections.push({ key: "agents", title: "Agents", limit: 6, items: agents.map(item) });
+    if (agents.length) sideSections.push({ key: "agents", title: "Agents", icon: <Bot size={16} />, limit: 6, items: agents.map(item) });
   }
   const siblings = route.page === "project" ? space.data?.snapshot.directory.entries : route.page === "space" ? view?.snapshot.directory.entries : undefined;
   if (route.page !== "home" && siblings) sideSections.push({
-    key: "projects", title: `Projects in ${place.space}`, limit: 6,
+    key: "projects", title: "Projects", icon: <FolderGit2 size={16} />, limit: 6,
     items: [...siblings].sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt)).map(entry => ({ key: "p:" + entry.name, label: entry.name, href: placeUrl({ space: place.space, project: entry.name }), icon: <FolderGit2 size={16} />, active: place.project === entry.name })),
   });
   if (route.page === "home" && me.spaces.length) sideSections.push({
-    key: "spaces", title: "Your spaces", limit: 6,
+    key: "spaces", title: "Your spaces", icon: <Users size={16} />, limit: 6,
     items: me.spaces.map(s => ({ key: "s:" + s.space, label: s.space, href: placeUrl({ space: s.space, project: "" }), icon: <Avatar name={s.space} size={18} kind={s.kind} /> })),
   });
   const recent = recoveryOnly ? [] : recentProjects().filter(name => name !== placeKey);
-  if (recent.length) sideSections.push({ key: "recent", title: "Recent", limit: 4, items: recent.map(name => { const [s, p] = name.split("/"); return { key: "r:" + name, label: name, href: placeUrl({ space: s, project: p }), icon: <History size={16} /> }; }) });
+  if (recent.length) sideSections.push({ key: "recent", title: "Recent", icon: <History size={16} />, limit: 4, items: recent.map(name => { const [s, p] = name.split("/"); return { key: "r:" + name, label: name, href: placeUrl({ space: s, project: p }), icon: <History size={16} /> }; }) });
   // The hub's own pages, rendered by the server in this same frame.
   const footer = [
     { key: "guide", label: "Guide", href: "/-/guide", icon: <BookOpen size={16} /> },
@@ -173,6 +177,13 @@ export function App() {
     ];
   }
 
+  // The page header says where you are; a space's or project's segments open the places beside them.
+  const crumbs = recovery ? <Crumbs items={[{ label: "Settings" }]} />
+    : route.page === "subhub" ? <Crumbs items={[{ label: "Settings", href: "/#/settings" }, { label: `Sub-hub ${route.name}` }]} />
+    : route.page === "home" ? <Crumbs items={[{ label: "Home", href: "/" }, ...(route.tab === "agents" ? [{ label: "Agents" }] : route.tab === "builders" ? [{ label: "Builders" }] : [])]} />
+    : <PathBar place={place} path={filesPath} />;
+  const sectionsTitle = route.page === "project" ? placeKey : route.page === "space" ? place.space : "Your hub";
+
   // Every place has one: the hub's activity on Home, a space's or a project's on theirs.
   const hasActivity = !recovery && route.page !== "subhub";
   const activity = hasActivity && activityOpen;
@@ -180,9 +191,9 @@ export function App() {
 
   return <div className={`shell${activity ? " with-inspector" : ""}${rail ? " rail" : ""}`}>
     <Progress />
-    <TopBar me={me} signIn={signIn} live={state} onSearch={() => setSearching(true)} onMenu={() => setSidebarOpen(true)} activity={hasActivity ? { open: activityOpen, onToggle: toggleActivity } : undefined} recoveryOnly={recoveryOnly} />
-    <Sidebar switcher={switcher} primary={primary} sections={sideSections} footer={footer} open={sidebarOpen} onClose={() => setSidebarOpen(false)} rail={rail} onRail={toggleRail} onSearch={() => setSearching(true)} recoveryOnly={recoveryOnly} />
+    <Sidebar switcher={switcher} primary={primary} sectionsTitle={sectionsTitle} sections={sideSections} footer={footer} me={me} signIn={signIn} open={sidebarOpen} onClose={() => setSidebarOpen(false)} rail={rail} onRail={toggleRail} onSearch={() => setSearching(true)} recoveryOnly={recoveryOnly} />
     <main className="main" id="main">
+      <InsetHeader crumbs={crumbs} live={state} rail={rail} onToggleSidebar={toggleSidebar} activity={hasActivity ? { open: activityOpen, onToggle: toggleActivity } : undefined} recoveryOnly={recoveryOnly} />
       <div className="main-scroll">
         {route.page === "home" && route.tab !== "settings" && !recovery && <HomePage tab={route.tab} view={view as View<HubMeta> | undefined} me={me.name} mySpaces={me.spaces.map(s => s.space)} seen={seen} />}
         {recovery && <SettingsPage onConnectionState={setRecoveryState} signedIn={!recoveryOnly && !!me.name} />}

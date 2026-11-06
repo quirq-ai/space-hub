@@ -7,7 +7,6 @@ import { ChatSection } from "./chat-section";
 import { BranchesTab, CodeTab, CommitTab, CommitsTab } from "./code";
 import { DepsTab } from "./deps";
 import { FilesTab, isChannel } from "./files";
-import { PathBar } from "@/shell/path-bar";
 import { GoalChip, GoalPanel } from "./goal";
 import { RawFiles } from "@/components/content-view";
 
@@ -21,10 +20,9 @@ export function ProjectPage({ route, view, error, me, signIn, refresh }: { route
   const tab = route.tab === "commit" || route.tab === "commits" || route.tab === "branches" ? "code" : route.tab;
   const people = meta ? new Set([...meta.owners, ...meta.members, ...meta.collaborators, ...meta.agents]).size : undefined;
   const path = route.tab === "files" ? route.path : "";
-  if (!meta && error) return <div className="page"><PathBar place={place} path={path} /><PageHeader title={place.project} /><ErrorNote message={error} retry={refresh} /></div>;
+  if (!meta && error) return <div className="page"><PageHeader title={place.project} /><ErrorNote message={error} retry={refresh} /></div>;
   const chatty = route.tab === "files" && view && (view.snapshot.file?.format === "json" || (!view.snapshot.file && route.as !== "folder" && isChannel(view.snapshot)));
   return <RawFiles.Provider value={meta ? file => rawUrl(place, meta.defaultBranch, file) : undefined}><div className={`page${chatty ? " page-chat" : ""}`}>
-    <PathBar place={place} path={path} />
     <PageHeader
       leading={<span className="project-mark"><FolderGit2 size={22} /></span>}
       title={place.project}
