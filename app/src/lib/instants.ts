@@ -119,7 +119,7 @@ const DAY_YEAR = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeri
 
 /** "Developer Tools · Tool · research from Nov 2026", as Instants heads a card. */
 export function byline(post: Post): string {
-  const when = Date.parse(post.generatedAt || post.occurredAt);
+  const when = Date.parse(post.occurredAt || post.generatedAt);
   return [post.topic, post.kind, Number.isFinite(when) ? `research from ${MONTH.format(when)}` : ""].filter(Boolean).join(" · ");
 }
 

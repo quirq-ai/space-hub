@@ -12,11 +12,11 @@
 .feed-search { flex: 1; min-width: 160px; display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text-3, var(--text-2)); }
 .feed-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; color: var(--text); font: inherit; font-size: 13px; }
 .feed-search button { display: inline-flex; border: 0; background: none; color: var(--text-2); cursor: pointer; padding: 2px; }
-.feed-kind { display: inline-flex; padding: 3px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); }
-.feed-kind button { display: inline-flex; align-items: center; gap: 6px; padding: 4px 11px; border: 0; border-radius: 999px; background: none; color: var(--text); font-size: 12.5px; cursor: pointer; }
-.feed-kind button span { color: var(--text-2); }
-.feed-kind button.on { background: var(--text); color: var(--bg); }
-.feed-kind button.on span { color: inherit; opacity: .7; }
+.instants-kind { display: inline-flex; padding: 3px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); }
+.instants-kind button { display: inline-flex; align-items: center; gap: 6px; padding: 4px 11px; border: 0; border-radius: 999px; background: none; color: var(--text); font-size: 12.5px; cursor: pointer; }
+.instants-kind button span { color: var(--text-2); }
+.instants-kind button.on { background: var(--text); color: var(--bg); }
+.instants-kind button.on span { color: inherit; opacity: .7; }
 .feed-topics { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 4px; }
 .feed-topics button { padding: 4px 11px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--text); font-size: 12.5px; cursor: pointer; }
 .feed-topics button:hover { background: var(--hover); }
@@ -31,7 +31,7 @@
 .feed-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .feed-title a { overflow: hidden; color: var(--text); font-size: 15px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .feed-badge { display: inline-flex; flex: none; align-items: center; gap: 4px; padding: 1px 7px; border-radius: 6px; background: var(--accent-soft); color: var(--accent-text); font-size: 11.5px; font-weight: 500; }
-.feed-byline { overflow: hidden; color: var(--text-2); font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
+.instants-byline { overflow: hidden; color: var(--text-2); font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
 .feed-span { color: var(--text-3, var(--text-2)); font-size: 11px; opacity: .85; }
 .feed-video { display: block; width: 100%; max-height: 78vh; background: #000; }
 .feed-actions { display: flex; justify-content: flex-end; gap: 4px; padding: 8px 10px 0; }
@@ -71,8 +71,8 @@
   .feed-head h2 { font-size: 28px; }
   .feed-bar { gap: 8px; justify-content: space-between; }
   .feed-order button { padding-inline: 6px; }
-  .feed-kind button { padding-inline: 9px; }
-  .feed-kind svg { display: none; }
+  .instants-kind button { padding-inline: 9px; }
+  .instants-kind svg { display: none; }
   .feed-search { order: 3; flex-basis: 100%; }
   .feed-card { border-radius: 12px; }
 }

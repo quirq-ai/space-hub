@@ -33,7 +33,7 @@ function PostCard({ place, meta, post, video }: { place: Place; meta: ProjectMet
       <Swatch accent={post.accent} />
       <div>
         <div className="feed-title"><a href={href} onClick={onLink}>{post.title}</a>{video && <span className="feed-badge"><Clapperboard size={11} />Video</span>}</div>
-        <div className="feed-byline">{byline(post)}</div>
+        <div className="instants-byline">{byline(post)}</div>
         {when && <div className="feed-span mono">{when}</div>}
       </div>
     </header>
@@ -99,7 +99,7 @@ export function FeedTab({ place, meta }: { place: Place; meta: ProjectMeta }) {
         {(["latest", "rediscover"] as const).map(key => <button key={key} type="button" role="tab" aria-selected={order === key} className={order === key ? "on" : undefined} onClick={() => setOrder(key)}>{key === "latest" ? "Latest" : "Rediscover"}</button>)}
       </div>
       <label className="feed-search"><Search size={14} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Find a post or a topic" aria-label="Search posts" />{query && <button type="button" aria-label="Clear the search" onClick={() => setQuery("")}><X size={13} /></button>}</label>
-      <div className="feed-kind">
+      <div className="instants-kind">
         <button type="button" className={!onlyVideos ? "on" : undefined} onClick={() => setOnlyVideos(false)}><LayoutGrid size={14} />All posts</button>
         <button type="button" className={onlyVideos ? "on" : undefined} onClick={() => setOnlyVideos(true)}><Clapperboard size={14} />Videos{videos > 0 && <span>{videos}</span>}</button>
       </div>
@@ -123,6 +123,8 @@ export function FeedTab({ place, meta }: { place: Place; meta: ProjectMeta }) {
 /** One post on its own page: slides, the full writeup, sources and tags. */
 export function PostPage({ place, meta, post, path }: { place: Place; meta: ProjectMeta; post: Post; path: string }) {
   const [video, setVideo] = useState(true);
+  // The feed is long: a post opens at its top, wherever its card was.
+  useEffect(() => { document.querySelector(".main-scroll")?.scrollTo(0, 0); }, []);
   const raw = (file: string) => rawUrl(place, meta.defaultBranch, file);
   const when = span(post);
   return <div className="post-page">
@@ -134,7 +136,7 @@ export function PostPage({ place, meta, post, path }: { place: Place; meta: Proj
       <Swatch accent={post.accent} size={40} />
       <div>
         <h2>{post.title}</h2>
-        <div className="feed-byline">{[byline(post), post.status].filter(Boolean).join(" · ")}</div>
+        <div className="instants-byline">{[byline(post), post.status].filter(Boolean).join(" · ")}</div>
         {when && <div className="feed-span mono">{when}</div>}
       </div>
     </header>

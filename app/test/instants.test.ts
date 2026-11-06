@@ -39,6 +39,8 @@ test("media links Instants serves under /research map to project paths", () => {
 test("bylines and spans read like Instants' card heads", () => {
   const post = parsePost(record("xo-agents"))!;
   assert.equal(byline(post), "AI & Agents · Prototype · research from Nov 2026");
+  // When the research happened, not when Instants wrote it up.
+  assert.equal(byline(parsePost(record("old", { occurredAt: "2026-05-20T00:00:00.000Z" }))!), "AI & Agents · Prototype · research from May 2026");
   assert.equal(span(post), "Oct 26 to Nov 4, 2026 · 22 commits");
   assert.equal(span(parsePost(record("n", { meta: {} }))!), "");
 });
