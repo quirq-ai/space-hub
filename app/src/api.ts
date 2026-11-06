@@ -21,6 +21,8 @@ export type SpaceMeta = {
   level: "space"; name: string; displayName: string; kind: string; description: string; parent: string; founder?: string; owners: string[]; members: string[];
   projects: number; bytes: number; github: string; githubLogin: string; aliases?: string[]; createdAt: string; memberOf: Membership[]; agents: string[]; agentList: AgentInfo[];
   collaborates: string[]; here: Here[]; activity: ActivityItem[]; activityTotal?: number;
+  /** Its projects are repo rooms, and its chat opens them from a GitHub URL. */
+  rooms?: boolean;
 };
 export type ProjectMeta = {
   level: "project"; fullName: string; space: string; name: string; description: string; defaultBranch: string; bytes: number;

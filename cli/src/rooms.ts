@@ -4,7 +4,8 @@
 //   GET  /gh/<owner>/<repo>        open the repository's room (made on the first visit, once GitHub
 //   GET  /-/gh/<owner>/<repo>      says the repository is public) and go to its group chat; anyone,
 //                                  signed in or not, can open one
-//   GET  /-/gh?repo=<owner/repo or github.com URL>   the same, from the home page's form
+//   POST /-/api/explain            the same from the explain org's chat, which takes only a GitHub URL:
+//                                  {url}, answered with {project} or {error}
 //   POST /-/api/ask                ask in a room as the signed-in builder (ask_question), within the
 //                                  caps: {space, project, id, content}
 //
@@ -54,6 +55,12 @@ export function parseRepo(input: string): { owner: string; repo: string } | null
   return m && roomName(m[1], m[2]) ? { owner: m[1], repo: m[2] } : null;
 }
 
+/** A GitHub URL's repository; null for anything else, "owner/repo" alone included. The explain org's chat takes nothing else (app/src/lib/rooms.ts agrees). */
+export function parseGithubUrl(input: string): { owner: string; repo: string } | null {
+  const m = /^(?:https?:\/\/)?(?:www\.)?github\.com\/([A-Za-z0-9-]{1,39})\/([A-Za-z0-9._-]{1,100}?)(?:\.git)?(?:[/?#]\S*)?$/i.exec(input.trim());
+  return m && roomName(m[1], m[2]) ? { owner: m[1], repo: m[2] } : null;
+}
+
 /** Where a room's group chat opens in the app. */
 export function roomUrl(space: string, name: string) {
   return `/${space}/${encodeURIComponent(name)}#/files?path=${encodeURIComponent(ROOM_CHAT.slice(0, ROOM_CHAT.lastIndexOf('/')))}`;
@@ -76,6 +83,37 @@ async function readJson(req: http.IncomingMessage): Promise<unknown> {
     if (body.length > MAX_BODY) throw new Error('too long');
   }
   return JSON.parse(body);
+}
+
+type OpenedRoom = { name: string } | { status: number; title: string; message: string };
+
+// The repository's room, opened now when this is its first visit.
+async function openRoom(deps: RoomsDeps, wanted: { owner: string; repo: string }, req: http.IncomingMessage, now: number): Promise<OpenedRoom> {
+  const name = roomName(wanted.owner, wanted.repo)!;
+  if (await deps.exists(`${deps.space}/${name}`).catch(() => false)) return { name };
+  if (!deps.canOpen) return { status: 503, title: 'Rooms are off on this hub', message: 'This hub has no admin token, so it cannot open rooms for GitHub repositories.' };
+  opened = opened.filter(at => now - at < 60_000);
+  if (opened.length >= OPENS_PER_MINUTE) return { status: 429, title: 'Too many new rooms', message: 'Many rooms were opened in the last minute. Try again in a minute.' };
+  const missing = { status: 404, title: 'No such repository', message: `GitHub has no public repository ${wanted.owner}/${wanted.repo}.` };
+  let info: RepoInfo | null;
+  try {
+    info = await deps.info(wanted.owner, wanted.repo);
+  } catch {
+    return missing;
+  }
+  if (!info) return { status: 503, title: 'GitHub did not answer', message: 'The hub could not ask GitHub about this repository. Try again in a minute.' };
+  if (info.private) return missing;
+  opened.push(now);
+  const session = await deps.sessionOf(req).catch(() => null);
+  try {
+    await deps.open({ owner: info.owner, repo: info.repo, description: info.description, openedBy: session?.username ?? '' });
+  } catch (error) {
+    // Two first visits at once: the other one made it.
+    if (!(await deps.exists(`${deps.space}/${name}`).catch(() => false))) {
+      return { status: 500, title: 'The room did not open', message: (error instanceof Error ? error.message : String(error)).replace(/^Error: /, '') };
+    }
+  }
+  return { name };
 }
 
 /** Handle the room routes; false when the request is not one of them. */
@@ -107,47 +145,30 @@ export async function handleRooms(deps: RoomsDeps, req: http.IncomingMessage, re
     }
   }
 
-  if (req.method !== 'GET' && req.method !== 'HEAD') return false;
-  let wanted: { owner: string; repo: string } | null = null;
-  const path = /^\/(?:-\/)?gh\/([^/]+)\/([^/]+?)\/?$/.exec(route);
-  if (path) {
-    try {
-      wanted = parseRepo(`${decodeURIComponent(path[1])}/${decodeURIComponent(path[2])}`);
-    } catch {
-      wanted = null;
-    }
-  } else if (route === '/-/gh') {
-    wanted = parseRepo(url.searchParams.get('repo') ?? '');
-  } else return false;
-  if (!wanted) return deps.page(res, 404, 'Not a GitHub repository', 'Use a GitHub repository like owner/repo or https://github.com/owner/repo.'), true;
+  if (route === '/-/api/explain') {
+    if (req.method !== 'POST') return json(res, 405, { error: 'Send a URL with POST.' }), true;
+    if (req.headers['content-type']?.split(';')[0] !== 'application/json') return json(res, 415, { error: 'Send JSON.' }), true;
+    const input = await readJson(req).catch(() => null);
+    const sent = (input as { url?: unknown } | null)?.url;
+    const wanted = typeof sent === 'string' ? parseGithubUrl(sent) : null;
+    if (!wanted) return json(res, 400, { error: 'Only a GitHub repository URL works here, like https://github.com/owner/repo.' }), true;
+    const room = await openRoom(deps, wanted, req, now);
+    return ('name' in room ? json(res, 200, { project: room.name }) : json(res, room.status, { error: room.message })), true;
+  }
 
-  const name = roomName(wanted.owner, wanted.repo)!;
-  const there = (await deps.exists(`${deps.space}/${name}`).catch(() => false));
-  const go = () => {
-    res.writeHead(303, { location: roomUrl(deps.space, name), 'cache-control': 'no-store' });
-    res.end();
-  };
-  if (there) return go(), true;
-  if (!deps.canOpen) return deps.page(res, 503, 'Rooms are off on this hub', 'This hub has no admin token, so it cannot open rooms for GitHub repositories.'), true;
-  opened = opened.filter(at => now - at < 60_000);
-  if (opened.length >= OPENS_PER_MINUTE) return deps.page(res, 429, 'Too many new rooms', 'Many rooms were opened in the last minute. Try again in a minute.'), true;
-  let info: RepoInfo | null;
+  if (req.method !== 'GET' && req.method !== 'HEAD') return false;
+  const path = /^\/(?:-\/)?gh\/([^/]+)\/([^/]+?)\/?$/.exec(route);
+  if (!path) return false;
+  let wanted: { owner: string; repo: string } | null = null;
   try {
-    info = await deps.info(wanted.owner, wanted.repo);
+    wanted = parseRepo(`${decodeURIComponent(path[1])}/${decodeURIComponent(path[2])}`);
   } catch {
-    return deps.page(res, 404, 'No such repository', `GitHub has no public repository ${wanted.owner}/${wanted.repo}.`), true;
+    wanted = null;
   }
-  if (!info) return deps.page(res, 503, 'GitHub did not answer', 'The hub could not ask GitHub about this repository. Try again in a minute.'), true;
-  if (info.private) return deps.page(res, 404, 'No such repository', `GitHub has no public repository ${wanted.owner}/${wanted.repo}.`), true;
-  opened.push(now);
-  const session = await deps.sessionOf(req).catch(() => null);
-  try {
-    await deps.open({ owner: info.owner, repo: info.repo, description: info.description, openedBy: session?.username ?? '' });
-  } catch (error) {
-    // Two first visits at once: the other one made it.
-    if (!(await deps.exists(`${deps.space}/${name}`).catch(() => false))) {
-      return deps.page(res, 500, 'The room did not open', (error instanceof Error ? error.message : String(error)).replace(/^Error: /, '')), true;
-    }
-  }
-  return go(), true;
+  if (!wanted) return deps.page(res, 404, 'Not a GitHub repository', 'Use a GitHub repository like owner/repo or https://github.com/owner/repo.'), true;
+  const room = await openRoom(deps, wanted, req, now);
+  if (!('name' in room)) return deps.page(res, room.status, room.title, room.message), true;
+  res.writeHead(303, { location: roomUrl(deps.space, room.name), 'cache-control': 'no-store' });
+  res.end();
+  return true;
 }

@@ -185,10 +185,13 @@ a.label:hover { text-decoration: none; filter: brightness(.96); }
 .composer { display: flex; align-items: flex-end; gap: 10px; padding: 8px 8px 8px 10px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--bg); }
 .composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .composer textarea { flex: 1; min-height: 24px; max-height: 160px; padding: 3px 0; border: 0; outline: none; resize: none; background: none; color: var(--text); font: inherit; line-height: 1.5; }
+.composer input { flex: 1; min-width: 0; min-height: 30px; padding: 3px 0; border: 0; outline: none; background: none; color: var(--text); font: inherit; line-height: 1.5; }
+.composer.invalid, .composer.invalid:focus-within { border-color: var(--red); box-shadow: none; }
 .send { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; border: 0; border-radius: 8px; background: var(--accent); color: var(--on-accent); cursor: pointer; }
 .send:disabled { background: var(--fill); color: var(--text-3); cursor: default; }
 .send.stop { background: var(--text); color: var(--panel); }
 .composer-note { margin: 6px 2px 0; color: var(--text-3); font-size: 11.5px; }
+.composer-note.problem { color: var(--red); }
 .composer-blocked { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 4px; color: var(--text-2); font-size: 13px; }
 .suggestions { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 .suggestions button { padding: 5px 11px; border: 1px solid var(--line-strong); border-radius: 20px; background: var(--panel); font-size: 12.5px; cursor: pointer; }
@@ -727,6 +730,3 @@ a.overview-tile:hover { border-color: var(--line-strong); text-decoration: none;
 .room-bar a, .room-bar button { display: inline-flex; align-items: center; gap: 5px; color: var(--accent-text); font: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
 .room-bar .room-agents { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; color: var(--text-2); }
 .message-state { margin-top: 4px; }
-.room-open { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 16px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-lg); }
-.room-open label { font-weight: 600; font-size: 13px; }
-.room-open input { flex: 1 1 220px; min-width: 0; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; }

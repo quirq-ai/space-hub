@@ -8,6 +8,7 @@ import { hashOf, onLink } from "@/router";
 import { Ago, Avatar, AvatarStack, CommandTabs, Empty, Popover, SkeletonRows } from "@/ui/primitives";
 import { ActivityStream, HereNow, PageHeader, People, placeOf, Tabs } from "./common";
 import { ChatSection } from "./chat-section";
+import { ExplainChat } from "./explain-chat";
 
 const KIND_ICON = { personal: <User size={13} />, org: <Building2 size={13} />, agent: <Bot size={13} /> } as Record<string, React.ReactNode>;
 
@@ -74,7 +75,7 @@ export function SpacePage({ name, tab, view, error, me, signIn, seen }: { name: 
     </>}
     {tab === "agents" && hasAgents && <AgentList space={name} kind={meta.kind} agents={meta.agentList} canManage={canManage} />}
     {/* An agent's owners are its parent's, which this view does not list: the hub decides. */}
-    {tab === "chat" && hasChat && <ChatSection place={{ space: name, project: "" }} kind={meta.kind} me={me} signIn={signIn} canStart={!!me && (meta.kind === "org" ? meta.owners.includes(me) || meta.members.includes(me) : true)} />}
+    {tab === "chat" && hasChat && (meta.rooms ? <ExplainChat space={name} me={me} /> : <ChatSection place={{ space: name, project: "" }} kind={meta.kind} me={me} signIn={signIn} canStart={!!me && (meta.kind === "org" ? meta.owners.includes(me) || meta.members.includes(me) : true)} />)}
     {tab === "activity" && <ActivityStream items={meta.activity} agents={[...new Set([...meta.agentList.map(agent => agent.name), ...meta.agents])]} place={placeOf(meta)} total={meta.activityTotal} />}
     {tab === "people" && <>
       {meta.here.length > 0 && <><h2 className="section-title">Here now</h2><HereNow here={meta.here} /></>}

@@ -176,6 +176,8 @@ export type Meta =
       here: Here[];
       activity: ActivityItem[];
       activityTotal: number;
+      /** Its projects are repo rooms (explain.ts), and its chat opens them from a GitHub URL. */
+      rooms?: boolean;
     }
   | {
       level: 'project';
@@ -730,6 +732,7 @@ function spaceLevel(db: Db, name: string, now: number) {
       collaborates: [...db.projectMember.agent.filter(name)].map(row => db.project.id.find(row.projectId)?.fullName ?? '').filter(Boolean).sort(),
       here: here(db, now, row => (row.projectId === 0n ? row.space === name : ids.has(row.projectId)) || row.agent === name),
       ...activity(db, spaceKeep(db, name)),
+      ...(isExplainSpace(db, name) ? { rooms: true } : {}),
     }
   );
 }
@@ -801,8 +804,12 @@ function projectLevel(db: Db, project: Project, requested: string, viewer: strin
 
 // ---------------------------------------------------------------- repo rooms
 
+function isExplainSpace(db: Db, name: string) {
+  return name === (db.hubState.key.find('explain_space')?.value || DEFAULT_EXPLAIN_SPACE);
+}
+
 function isRoom(db: Db, project: Project) {
-  return project.owner === (db.hubState.key.find('explain_space')?.value || DEFAULT_EXPLAIN_SPACE);
+  return isExplainSpace(db, project.owner);
 }
 
 function roomOf(db: Db, project: Project, viewer: string | null, now: number): RoomInfo {

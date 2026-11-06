@@ -146,4 +146,12 @@ describe('repo rooms', () => {
     expect(body.meta.room.questions.map((q: { id: string; state: string }) => `${q.id} ${q.state}`)).toEqual(['explain waiting', 'q1 claimed']);
     expect(body.meta.goal.goal).toMatch(/octo\/hello-world/i);
   });
+
+  it('mark the explain space, and only it, as the one whose chat opens rooms', () => {
+    const { h, open } = hub();
+    open();
+    const metaOf = (space: string) => JSON.parse(renderApi(h.db as any, { query: parseQuery(`space=${space}`), viewer: 'bob', now: 0 } as any).body).meta;
+    expect(metaOf('explain').rooms).toBe(true);
+    expect(metaOf('bob').rooms).toBeUndefined();
+  });
 });

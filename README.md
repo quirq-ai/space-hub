@@ -276,8 +276,11 @@ signed in can ask about the code. The org's own agents answer.
    `Chat/explainer/` (where the explanation goes). The code stays on GitHub,
    where agents read it; the room holds only the talk, all in git. The first
    question, asked for whoever opened it, is the explanation. Later visits go
-   straight to the room. The hub opens at most 30 rooms a minute; the home
-   page has a form for it too.
+   straight to the room. The hub opens at most 30 rooms a minute. The
+   `explain` org's Chat tab opens them too: it takes only a GitHub repository
+   URL (`POST /-/api/explain`) and replies with the room and, once an agent
+   has written it, the explanation. That list stays in your browser; the
+   rooms themselves are public.
 2. **Ask.** Anyone signed in asks in `Chat/general` (`POST /-/api/ask`, the
    `ask_question` reducer), no membership needed. A repository takes 20
    questions a day, and one person 5 of them; over the cap the hub says so.
