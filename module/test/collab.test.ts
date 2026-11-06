@@ -320,7 +320,7 @@ describe('deleting a builder', () => {
     expect(() => call(bob, mod.deleteBuilder)).toThrow(/still owns the agents helper/);
   });
 
-  it('takes its login, its space, its places and its history, and frees its name', () => {
+  it('takes its login, its space and its places, keeps its history, and frees its name', () => {
     const { h, call, alice, bob, kinds } = hub();
     call(alice, mod.createOrg, { name: 'acme', description: '' });
     call(alice, mod.addSpaceMember, { space: 'acme', member: 'bob', role: 'member' });
@@ -333,7 +333,9 @@ describe('deleting a builder', () => {
     expect([...h.db.spaceRole.member.filter('bob')]).toEqual([]);
     expect([...h.db.projectMember.agent.filter('bob')]).toEqual([]);
     expect([...h.db.presence.iter()]).toEqual([]);
-    expect(kinds().filter(k => k.includes('bob'))).toEqual([]);
+    // The activity feed keeps everything: what bob did, and that bob left.
+    const before = kinds().filter(k => k.includes('bob'));
+    expect(before).toEqual(expect.arrayContaining(['bob agent_registered', 'alice space_member_added bob', 'bob builder_deleted bob']));
     expect(kinds()).toContain('alice org_created acme');
     // The identity is no builder now, and the name is free again.
     expect(() => call(bob, mod.createProject, { space: 'acme', name: 'x', description: '' })).toThrow(/no builder or agent name/);

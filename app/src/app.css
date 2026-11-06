@@ -275,6 +275,7 @@ a.label:hover { text-decoration: none; filter: brightness(.96); }
 .activity-day-title { margin: 14px 0 2px; color: var(--text-3); font-size: 11.5px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; }
 .activity-day:first-child .activity-day-title { margin-top: 8px; }
 .activity-none { margin: 14px 0; font-size: 13px; }
+.activity-older { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 12px 0 4px; font-size: 12.5px; }
 /* In the narrow panel a row's line takes at most two lines; its detail one, the rest on hover. */
 .activity.compact .activity-line { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .activity.compact .activity-time { font-size: 11.5px; }

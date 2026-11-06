@@ -5,7 +5,8 @@ import { hashOf } from "@/router";
 export type Place = { space: string; project: string };
 
 export type Here = { agent: string; mode: string; project: string };
-export type ActivityItem = { at: string; agent: string; kind: string; path: string; subject: string; text: string; count: number; oid: string };
+/** One activity row; `id` grows with time, and pages of older rows go `before` one (activityUrl). */
+export type ActivityItem = { id: string; at: string; agent: string; kind: string; path: string; subject: string; text: string; count: number; oid: string };
 export type Membership = { space: string; kind: string; role: string; founder?: boolean };
 export type AgentInfo = { name: string; description: string; parent: string; owned: boolean; connected: boolean; spaces: string[]; running: { host: string; since: string }[] };
 export type ProjectCard = { fullName: string; description: string; pushedAt: string };
@@ -15,16 +16,16 @@ export type SpaceGoal = {
   owners: string[]; rules: string[]; routines: string[]; template: string | null;
 };
 
-export type HubMeta = { level: "hub"; spaces: number; projects: number; bytes: number; events: number; humans: number; agents: number; activity: ActivityItem[]; here: Here[]; allProjects: ProjectCard[]; agentList: AgentInfo[] };
+export type HubMeta = { level: "hub"; spaces: number; projects: number; bytes: number; events: number; humans: number; agents: number; activity: ActivityItem[]; activityTotal?: number; here: Here[]; allProjects: ProjectCard[]; agentList: AgentInfo[] };
 export type SpaceMeta = {
   level: "space"; name: string; displayName: string; kind: string; description: string; parent: string; founder?: string; owners: string[]; members: string[];
   projects: number; bytes: number; github: string; githubLogin: string; aliases?: string[]; createdAt: string; memberOf: Membership[]; agents: string[]; agentList: AgentInfo[];
-  collaborates: string[]; here: Here[]; activity: ActivityItem[];
+  collaborates: string[]; here: Here[]; activity: ActivityItem[]; activityTotal?: number;
 };
 export type ProjectMeta = {
   level: "project"; fullName: string; space: string; name: string; description: string; defaultBranch: string; bytes: number;
   head: { oid: string; subject: string; author: string; time: string } | null; deps: number; canWrite: boolean; founder?: string; owners: string[]; members: string[]; agents: string[];
-  collaborators: string[]; here: Here[]; activity: ActivityItem[]; goal: SpaceGoal | null;
+  collaborators: string[]; here: Here[]; activity: ActivityItem[]; activityTotal?: number; goal: SpaceGoal | null;
   /** A repo room (/gh/<owner>/<repo>): its repository, caps and questions. */
   room?: RoomInfo;
 };
@@ -68,6 +69,24 @@ export function viewUrl(place: Place, path = ""): string {
 /** A project's code views. */
 export function codeUrl(place: Place, view: "refs" | "tree" | "commits" | "commit" | "files" | "deps", params: { ref?: string; path?: string; page?: number; oid?: string } = {}): string {
   return "/-/api/view" + query({ space: place.space, project: place.project, view, ...params });
+}
+
+/**
+ * Older activity of the hub, a space or a project: the `limit` rows before
+ * the row `before` (module/src/workspace.ts activityPage). The hub keeps
+ * every row, so paging back reaches its very first.
+ */
+export function activityUrl(place: Place, before = "", limit = 100): string {
+  return "/-/api/view" + query({ activity: 1, space: place.space, project: place.project, before, limit });
+}
+
+export type ActivityPage = { items: ActivityItem[]; total: number; more: boolean };
+
+export async function fetchActivity(place: Place, before: string, limit = 100): Promise<ActivityPage> {
+  const response = await fetch(activityUrl(place, before, limit));
+  const body = await response.json().catch(() => null) as (ActivityPage & { error?: string }) | null;
+  if (!response.ok || !body) throw new Error(body?.error ?? `Could not load older activity (${response.status}).`);
+  return body;
 }
 
 export function placeUrl(place: Place, hash = ""): string {
@@ -131,7 +150,7 @@ export function kindLabel(kind: string): string {
 }
 
 const VERBS: Record<string, string> = {
-  agent_registered: "joined the hub", project_created: "created", project_edited: "edited", project_deleted: "deleted",
+  agent_registered: "joined the hub", builder_deleted: "left the hub", project_created: "created", project_edited: "edited", project_deleted: "deleted",
   org_created: "created the org", org_deleted: "deleted the org", space_edited: "edited",
   space_member_added: "added a member to", space_member_removed: "removed a member from",
   project_member_added: "added a collaborator to", project_member_removed: "removed a collaborator from",

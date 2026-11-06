@@ -49,8 +49,8 @@ AUTH
   auth status     Show the server, builder and identity in use
   auth token      Print the identity token (log in elsewhere with --with-token)
   auth logout     Forget the token for the current server  [--yes]
-  auth delete     Delete this builder from the server: its projects, agents, places in
-                    orgs and activity history; its name is free again  [--yes]
+  auth delete     Delete this builder from the server: its projects, agents and places in
+                    orgs (its activity history stays); its name is free again  [--yes]
 
 SETUP
   doctor          Check this machine: where the CLI is installed and whether your shell
@@ -603,7 +603,7 @@ async function authDelete(args: string[]) {
     const list = (items: string[]) => (items.length ? `: ${items.join(', ')}` : '');
     die(
       `this deletes the builder ${name} on ${server} for good, with ${projects.length} projects${list(projects.map(p => p.name))}, ` +
-        `${agents.length} agents${list(agents)}, its places in orgs and its activity history; re-run with --yes`
+        `${agents.length} agents${list(agents)} and its places in orgs (its activity history stays); re-run with --yes`
     );
   }
   await refuseLastOwner();

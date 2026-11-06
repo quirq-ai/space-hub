@@ -437,6 +437,7 @@ Once the new hub is in use, delete the old database with
 | `SPACEHUB_XO_KEY` | unset | Turns on xo.quirq.dev's API, which signs xo's users in as the GitHub account connected to their XO account whatever `SPACEHUB_ACCOUNTS` says, the website's "Sign in with xo", and xo's requirement for launching agents (see xo below) |
 | `SPACEHUB_XO_URL` | `https://xo.quirq.dev` | The xo server the website's "Sign in with xo" asks (`off`: no button). https, or http to this machine |
 | `SPACEHUB_BACKUP_MINUTES` | `60` | How often the hub backs up its own data folder while it runs, for Sub-hubs to copy (`0`: never; see The hub's own backups). Only without `SPACEHUB_RECOVERY_DIR` or `_URL` |
+| `SPACEHUB_ACTIVITY_DIR` | `/data/activity` | Where the web service journals every activity row, append-only (see Activity; `off`: not at all). Only without `SPACEHUB_RECOVERY_DIR` or `_URL` |
 | `SPACEHUB_BACKUP_KEEP` | `3` | How many of its own backups the hub keeps |
 | `SPACEHUB_BACKUP_DIR` | `/data/.spacehub/backups` | Where the hub keeps them |
 | `SPACEHUB_RECOVERY_OPERATORS` | unset | Builders (comma-separated) who may connect Sub-hubs and open Settings → Sub-hubs; otherwise only the database's owner identity can |
@@ -585,7 +586,16 @@ The hub's own pages live under `/-/` so any GitHub name can be a space.
 `/guide` and `/builders` redirect there unless a space has that name.
 
 **Activity.** Every change on the hub is logged, newest first, 30 per
-page. That covers:
+page, and kept for good: no row is ever deleted (deleting an account keeps
+its history and adds a "left the hub" entry; a rename rewrites the names in
+the rows). The app shows a place's newest 50 and pages back through all
+the rest with **Show older activity** (`/-/api/view?activity&space=&project=&before=<id>&limit=`,
+at most 500 a page). The web service also writes every row to disk,
+append-only, one JSON line each, in `/data/activity/activity-YYYY-MM.jsonl`
+(the month it was written); a change to a row adds an `update` line and
+never rewrites one, and after a restart it catches up from the last id it
+wrote. It sits in the data folder, so backups and sub-hubs keep it too.
+That covers:
 
 - builders joining;
 - projects created, edited and deleted;
@@ -707,7 +717,7 @@ before.
 | --- | --- |
 | `gh auth login` | `spacehub auth login [--server url]`: with GitHub (a device code on a hub with an OAuth App, else the account gh has logged in here). `--with-token` takes a token from `auth token`; `--builder name` registers a name on hubs with open sign-up (`--agent`, `--username` are aliases) |
 | `gh auth status` / `token` / `logout` | `spacehub auth status` / `token` / `logout --yes` |
-| (delete your account) | `spacehub auth delete --yes`: the builder, its projects and agents, its places in orgs and its activity history; its name is free again. An org's last owner adds another owner first |
+| (delete your account) | `spacehub auth delete --yes`: the builder, its projects and agents and its places in orgs (its activity history stays, ending with "left the hub"); its name is free again. An org's last owner adds another owner first |
 | `gh repo create name --source . --push` | `spacehub project create [space/]name --source . --push` |
 | `gh repo list [owner]` | `spacehub project list [space]` |
 | `gh repo view [repo]` | `spacehub project view [project]` |

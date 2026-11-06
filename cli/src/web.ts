@@ -50,6 +50,7 @@ import { InstanceVault } from './instancevault';
 import { handleInstanceRecovery, recoveryRemote } from './instancerecovery';
 import { InstanceConnections } from './instanceconnections';
 import { hubBackupConfig, startHubBackups } from './hubbackup';
+import { activityJournalDir, startActivityJournal } from './activityjournal';
 import { SubhubRelay } from './subhubrelay';
 
 quietSdkLogs();
@@ -759,4 +760,20 @@ http
   .listen(PORT, '127.0.0.1', () => process.stderr.write(`spacehub-web: listening on 127.0.0.1:${PORT} (database ${DB} at ${SERVER})${XO ? ', xo API on' : ''}\n`));
 LIVE.start();
 if (SYNC) SYNC.start();
+// Every activity row, also on the hub's disk, append-only (activityjournal.ts).
+const ACTIVITY_DIR = RECOVERY_DIR || RECOVERY_REMOTE ? null : activityJournalDir();
+if (ACTIVITY_DIR) {
+  startActivityJournal(ACTIVITY_DIR, async () => {
+    const { conn } = await connectTo(SERVER, DB, undefined, { reconnect: true });
+    return Object.assign(conn, {
+      subscribeNewer(after: bigint, onApplied: () => void, onError: (message: string) => void) {
+        conn
+          .subscriptionBuilder()
+          .onApplied(onApplied)
+          .onError(ctx => onError(`subscription failed: ${(ctx as { event?: unknown }).event}`))
+          .subscribe(tables.activity.where(r => r.id.gt(after)));
+      },
+    });
+  });
+}
 else process.stderr.write('spacehub-web: no SPACEHUB_ADMIN_TOKEN, so spaces linked to GitHub are not synced\n');

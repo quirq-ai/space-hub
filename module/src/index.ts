@@ -150,6 +150,8 @@ const projectBuilder = table(
 );
 
 // The hub's activity feed: every change, oldest first. Pages sort by `at`.
+// Append-only: no reducer deletes a row (a rename only rewrites names in
+// them), and the web service journals every row to disk (activityjournal.ts).
 const activity = table(
   { name: 'activity', public: true },
   {
@@ -720,7 +722,7 @@ export const registerUser = spacetimedb.reducer({ username: t.string() }, (ctx, 
 });
 
 // A builder leaves the hub: its login, its personal space, its places in
-// other spaces, and every record of it in the activity feed. Its projects
+// other spaces (its activity stays, recorded as builder_deleted). Its projects
 // and agents go first (spacehub auth delete deletes them), and it cannot be
 // the last owner of an org. Its name is free again afterwards.
 export const deleteBuilder = spacetimedb.reducer(ctx => {
@@ -745,11 +747,9 @@ export const deleteBuilder = spacetimedb.reducer(ctx => {
   for (const p of [...ctx.db.presence.iter()]) {
     if (p.agent === name || p.space === name || p.space.startsWith(`${name}/`)) ctx.db.presence.connectionId.delete(p.connectionId);
   }
-  const about = new Set(['space_member_added', 'space_member_removed', 'project_member_added', 'project_member_removed']);
-  for (const e of [...ctx.db.activity.iter()]) {
-    const mine = e.agent === name || e.path === name || e.path.startsWith(`${name}/`) || (about.has(e.kind) && e.subject === name);
-    if (mine) ctx.db.activity.id.delete(e.id);
-  }
+  // Its activity stays: the feed is the hub's history and nothing in it is
+  // ever deleted (the web service also journals every row to disk).
+  logActivity(ctx, { kind: 'builder_deleted', path: name, agent: name, subject: name });
   const xo = [...ctx.db.xoAgent.iter()].find(a => a.username === name);
   if (xo) ctx.db.xoAgent.subject.delete(xo.subject);
   for (const link of [...ctx.db.xoLink.username.filter(name)]) ctx.db.xoLink.subject.delete(link.subject);
