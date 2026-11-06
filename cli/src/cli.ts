@@ -232,6 +232,17 @@ function run(cmd: string, args: string[], cwd?: string): Promise<number> {
   });
 }
 
+// A command line, as the system's shell reads it: sh, or cmd on Windows
+// (which has no sh unless Git Bash is on PATH).
+function runCommandLine(line: string): Promise<number> {
+  if (process.platform !== 'win32') return run('sh', ['-c', line]);
+  return new Promise((resolve, reject) => {
+    const child = spawn(line, { shell: true, stdio: 'inherit' });
+    child.on('error', reject);
+    child.on('close', code => resolve(code ?? 1));
+  });
+}
+
 async function runOrDie(cmd: string, args: string[], cwd?: string) {
   const code = await run(cmd, args, cwd);
   if (code !== 0) die(`"${[cmd, ...args].join(' ')}" exited with ${code}`);
@@ -839,7 +850,7 @@ async function autosync(found: { remote: string; project: string }, branch: stri
 async function projectWatch(args: string[]) {
   const command = opt(args, '--exec');
   const fullName = await resolveProject(args[0]);
-  const tick = command ? serialized(() => run('sh', ['-c', command])) : null;
+  const tick = command ? serialized(() => runCommandLine(command)) : null;
   const { conn, sp } = await followRefs(fullName, (refName, oid, sign) => {
     out(`${new Date().toISOString().slice(11, 19)}  ${sign} ${refName}${oid ? ` ${oid.slice(0, 12)}` : ''}`);
     if (tick) void tick();

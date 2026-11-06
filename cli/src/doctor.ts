@@ -4,6 +4,7 @@
 // when it fails. The checks are pure (tested); cli.ts gathers the facts.
 import fs from 'node:fs';
 import path from 'node:path';
+import { UPDATE_COMMAND_WINDOWS } from './compat.ts';
 
 export type Level = 'ok' | 'warn' | 'fail';
 
@@ -71,8 +72,16 @@ export function shellRc(shell: string | undefined): string {
   return '~/.profile';
 }
 
-// The exact lines that put `dir` on PATH, now and in new shells.
-export function pathFix(dir: string, shell: string | undefined): string[] {
+// The exact lines that put `dir` on PATH, now and in new shells. On Windows,
+// PowerShell lines: the user's PATH lives in the registry, not a startup file
+// (Git Bash picks it up too, in new windows).
+export function pathFix(dir: string, shell: string | undefined, platform: string = process.platform): string[] {
+  if (platform === 'win32') {
+    return [
+      `[Environment]::SetEnvironmentVariable('Path', '${dir};' + [Environment]::GetEnvironmentVariable('Path', 'User'), 'User')`,
+      `$env:Path = '${dir};' + $env:Path`,
+    ];
+  }
   const rc = shellRc(shell);
   if (rc.endsWith('config.fish')) return [`fish_add_path ${dir}`];
   const line = `export PATH="${dir}:$PATH"`;
@@ -80,29 +89,39 @@ export function pathFix(dir: string, shell: string | undefined): string[] {
 }
 
 // Does the shell find this spacehub? `found` is what PATH finds, first first.
-export function pathCheck(bin: string, found: string[], shell: string | undefined): Check {
+export function pathCheck(bin: string, found: string[], shell: string | undefined, platform: string = process.platform): Check {
   const mine = path.join(bin, 'spacehub');
   const first = found[0];
-  if (first && realpath(first) === realpath(mine)) return { name: 'PATH', level: 'ok', text: `${bin} is on PATH` };
+  if (first && sameCommand(first, mine, platform)) return { name: 'PATH', level: 'ok', text: `${bin} is on PATH` };
   if (first) {
     return {
       name: 'PATH',
       level: 'warn',
       text: `your shell runs ${first}, not this install in ${bin}; put ${bin} first on PATH, or remove the other one`,
-      fix: pathFix(bin, shell),
+      fix: pathFix(bin, shell, platform),
     };
   }
-  return { name: 'PATH', level: 'fail', text: `${bin} is not on PATH, so your shell cannot find spacehub. Add it:`, fix: pathFix(bin, shell) };
+  return { name: 'PATH', level: 'fail', text: `${bin} is not on PATH, so your shell cannot find spacehub. Add it:`, fix: pathFix(bin, shell, platform) };
+}
+
+// Is `found` this install's spacehub? On Windows npm's launchers are
+// spacehub.cmd and spacehub.ps1 beside the extensionless one, and paths
+// ignore case.
+function sameCommand(found: string, mine: string, platform: string) {
+  if (platform !== 'win32') return realpath(found) === realpath(mine);
+  const plain = (file: string) => path.win32.resolve(file.replace(/\.(cmd|ps1|exe)$/i, '')).toLowerCase();
+  return plain(found) === plain(mine);
 }
 
 // Whether the install is likely to outlive a restart. Cloud workspaces often
 // keep only the home folder (a global npm under /opt/nvm or /usr/local is
 // rebuilt), and temporary folders go on any machine.
-export function restartCheck(packageDir: string, home: string, tmp: string): Check {
+export function restartCheck(packageDir: string, home: string, tmp: string, platform: string = process.platform): Check {
   const name = 'Restarts';
+  const fix = [reinstallCommand(platform)];
   for (const t of new Set([tmp, '/tmp', '/var/tmp'])) {
     if (isInside(packageDir, t)) {
-      return { name, level: 'fail', text: `installed in a temporary folder (${packageDir}), which is cleared. Reinstall into your home folder:`, fix: [REINSTALL] };
+      return { name, level: 'fail', text: `installed in a temporary folder (${packageDir}), which is cleared. Reinstall into your home folder:`, fix };
     }
   }
   if (isInside(packageDir, home)) return { name, level: 'ok', text: 'installed in your home folder, which a restart keeps' };
@@ -110,12 +129,16 @@ export function restartCheck(packageDir: string, home: string, tmp: string): Che
     name,
     level: 'warn',
     text: `installed outside your home folder (${packageDir}). Fine on your own machine, but a workspace that resets on restart loses it; to keep it, reinstall into your home folder:`,
-    fix: [REINSTALL],
+    fix,
   };
 }
 
 export const REINSTALL =
   'd="$(mktemp -d)" && git clone -q --depth 1 https://github.com/quirq-ai/space-hub "$d" && "$d/scripts/install-cli.sh" --prefix ~/.local';
+
+// On Windows npm's own prefix (%APPDATA%\npm) is already in the home folder,
+// so the plain install command does.
+export const reinstallCommand = (platform: string = process.platform) => (platform === 'win32' ? UPDATE_COMMAND_WINDOWS : REINSTALL);
 
 // How the CLI and the hub get along. `hub` is the hub's protocol (null when
 // it is too old to say); `problem` is the mismatch connecting reported, or why
