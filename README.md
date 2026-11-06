@@ -530,6 +530,16 @@ phone the sidebar becomes a drawer and the dock a tab bar.
   channels and agents, with a dot on those where someone else wrote since you
   last looked. **Files** shows any of these as a plain folder (`as=folder` in
   the hash). `cd app && npm test` checks how channels are recognized.
+- **Feeds.** A project with `instants.json` at its root is an
+  [Instants](https://github.com/quirq-ai/instants) library (like
+  `quirq/curie`), and its **Files** tab is the library's feed, laid out the
+  way Instants shows it: each `posts/<slug>.json` as a card with its slides
+  (or its `videos/<slug>.mp4`), topic and dates, newest research first or
+  shuffled for the day (Rediscover), filtered by topic, videos or a search.
+  A card opens its post (`posts/<slug>.json` in Files): the slides, the full
+  writeup and its sources. The library's files are under **Code**, and
+  `as=folder` still shows the root as a plain folder. Every other project is
+  unchanged.
 - **The server-rendered pages** stay at their addresses (tree, blob, raw,
   commits, commit, refs, activity), work without JavaScript, and wear the
   app's frame and look (`module/src/style.ts`): the same header, sidebar,

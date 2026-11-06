@@ -14,6 +14,8 @@ import { ChatView } from "./chat";
 import { ChannelList, ChannelPage } from "./channels";
 import { channelConversation, listsChannels } from "@/lib/channels";
 import type { WorkspaceSnapshot } from "@/lib/types";
+import { isLibrary, isPostPath, parsePost, slugOf } from "@/lib/instants";
+import { FeedTab, PostPage } from "./feed";
 
 export const SECTION_ICONS = new Map<string, LucideIcon>([
   ["chat", MessageCircle], ["activity", PanelsTopLeft], ["insights", Lightbulb], ["vision", SquareCheck],
@@ -69,6 +71,9 @@ export function FilesTab({ place, path, as, view, error, me, signIn, refresh }: 
   const open = (next: string) => navigate(filesHref(place, next));
   const file = snapshot.file;
   if (file) {
+    // A post of an Instants library reads as the post, not its record.
+    const post = file.format === "json" && isPostPath(file.path) ? parsePost(file.data, slugOf(file.path)) : null;
+    if (post) return <PostPage key={file.path} place={place} meta={meta} post={post} path={file.path} />;
     if (file.format === "json" && isConversation(file.data)) {
       const log = chatLogPath(file.path);
       return <>
@@ -81,6 +86,8 @@ export function FilesTab({ place, path, as, view, error, me, signIn, refresh }: 
       <FileContent key={file.path} file={file} revision={snapshot.revision} navigate={open} src={rawUrl(place, meta.defaultBranch, file.path)} />
     </div>;
   }
+  // An Instants library (instants.json at its root) opens on its feed; its files are under Code.
+  if (as !== "folder" && !snapshot.directory.path && isLibrary(snapshot.directory.entries)) return <FeedTab place={place} meta={meta} />;
   // A channel opens on its conversation, and a folder of channels as a list of them, unless asked for files.
   const readme = readmeOf(snapshot);
   const conversation = as !== "folder" ? channelConversation(snapshot.directory.entries, readme?.content) : undefined;
