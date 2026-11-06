@@ -1,6 +1,6 @@
 
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { ArrowUpRight, Check, ChevronRight, Code2, FileText, LockKeyhole } from "lucide-react";
+import { ArrowUpRight, Check, ChevronRight, Code2, FileText, Globe, LockKeyhole } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { remarkHtmlAsText } from "@/lib/markdown";
@@ -133,6 +133,16 @@ function UrlPreview({ content, name }: { content: string; name: string }) {
   </section>;
 }
 
+/** A web page in the project: shown live from its raw file, which the hub serves only inside a sandbox with an origin of its own (module/src/ui.ts HTML_CSP), so it never runs as this site. */
+function HtmlPreview({ src, name }: { src: string; name: string }) {
+  return <section className="url-preview html-preview" aria-label="Web page preview">
+    <div className="url-preview-bar"><span title={name}><Globe size={13} />Web page · runs in a sandbox, apart from your account</span><a href={src} target="_blank" rel="noopener noreferrer">Open in new tab <ArrowUpRight size={15} /></a></div>
+    <iframe key={src} title={"Web page: " + name} src={src} sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads" referrerPolicy="no-referrer" />
+  </section>;
+}
+
+export const isHtml = (path: string) => /\.html?$/i.test(path);
+
 export function FileContent({ file, revision, navigate, demo = false, extraMessages = [], endNote, src: fileSrc }: { file: FileView; revision: string; navigate: Navigate; demo?: boolean; extraMessages?: ObjectValue[]; endNote?: string; src?: string }) {
   const [source, setSource] = useState(false);
   const canReadSource = typeof file.content === "string";
@@ -145,6 +155,7 @@ export function FileContent({ file, revision, navigate, demo = false, extraMessa
   else if (file.format === "json" && isConversation(file.data)) content = <Conversation data={{ ...file.data, messages: [...file.data.messages, ...extraMessages] }} filePath={file.path} navigate={navigate} demo={demo} endNote={endNote} />;
   else if (file.format === "json" && object(file.data) && file.data.type === "collection" && Array.isArray(file.data.items) && file.data.items.every(item => object(item) && typeof item.title === "string")) content = <Collection data={file.data as ObjectValue & { items: ObjectValue[] }} navigate={navigate} />;
   else if (file.format === "json" && !file.error) content = <div className="document-card"><JsonNode value={file.data} /></div>;
+  else if (isHtml(file.path) && canReadSource && !file.error) content = <HtmlPreview src={src} name={file.name} />;
   else if (file.format === "markdown") content = <article className="document-card"><Markdown content={file.content || ""} filePath={file.path} navigate={navigate} /></article>;
   else if (file.format === "image") content = <ImagePreview src={src} name={file.name} />;
   else if (file.format === "video") content = <VideoPreview src={src} name={file.name} />;

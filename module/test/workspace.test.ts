@@ -5,7 +5,7 @@ import { ConnectionId } from 'spacetimedb';
 import { createModuleTestHarness, TestAuth } from 'spacetimedb/server/test-utils';
 import spacetimedb, * as mod from '../src/index';
 import { CHUNK_SIZE, objectKey, readObject, readObjectRange, type Db } from '../src/store';
-import { MAX_RANGE, byteRange, renderUi } from '../src/ui';
+import { HTML_CSP, MAX_RANGE, byteRange, renderUi } from '../src/ui';
 import { renderMarkdown } from '../src/markdown';
 import { hashObject, serializeTree } from '../src/chat';
 import { ACTIVITY_SHOWN, activityPage, avatarOf, codeView, parseQuery, parseTree, renderApi, workspace, type Meta, type Snapshot } from '../src/workspace';
@@ -233,6 +233,21 @@ describe('raw files', () => {
     expect(raw(db, 'Library/logo.png').headers['content-type']).toBe('image/png');
     expect(raw(db, 'Library/clip.mp4', 'bytes=0-1')).toMatchObject({ status: 206, body: MP4.slice(0, 2), headers: { 'content-type': 'video/mp4', 'content-range': `bytes 0-1/${MP4.length}` } });
     expect(raw(db, 'README.md').headers).toMatchObject({ 'content-type': 'text/plain; charset=utf-8', 'content-security-policy': "default-src 'none'; sandbox" });
+  });
+
+  it('serve a web page only inside a sandbox with an origin of its own, with its scripts and styles', () => {
+    const { db, push } = hub();
+    push({ 'README.md': '# quirq', 'site/index.html': '<!doctype html><script src="app.js"></script><h1>Hi</h1>', 'site/app.js': 'document.title = "hi";', 'site/app.css': 'h1 { color: red }' });
+    const page = raw(db, 'site/index.html');
+    expect(page.headers).toMatchObject({ 'content-type': 'text/html; charset=utf-8', 'content-security-policy': HTML_CSP });
+    // The sandbox gives the page an opaque origin: no allow-same-origin, no
+    // top navigation, and no posting forms anywhere.
+    expect(HTML_CSP).toMatch(/^sandbox allow-scripts /);
+    expect(HTML_CSP).not.toContain('allow-same-origin');
+    expect(HTML_CSP).not.toContain('allow-top-navigation');
+    expect(HTML_CSP).toContain("form-action 'none'");
+    expect(raw(db, 'site/app.js').headers).toMatchObject({ 'content-type': 'text/javascript; charset=utf-8', 'content-security-policy': "default-src 'none'; sandbox" });
+    expect(raw(db, 'site/app.css').headers['content-type']).toBe('text/css; charset=utf-8');
   });
 
   it('show a Markdown image link to a video as a player', () => {
