@@ -6,7 +6,6 @@ import { channelSeenKey, ChannelsContext, useChannels } from "@/hooks/use-channe
 import { channelCards, channelOf } from "@/lib/channels";
 import { recentProjects, rememberProject, useMe } from "@/hooks/use-me";
 import { hashOf, navigate, useRoute } from "@/router";
-import { AgentsGlyph, BuildersGlyph, OrgsGlyph } from "@/shell/dock-glyphs";
 import { Crumbs, Dock, InsetHeader, Inspector, Progress, Sidebar, type DockItem, type SideSection } from "@/shell/shell";
 import { PathBar } from "@/shell/path-bar";
 import { SearchPalette } from "@/shell/search";
@@ -172,9 +171,9 @@ export function App() {
   } else if (route.page === "home" && !recovery) {
     // The hub's own lists, one page each; Home is in the switcher's menu just before them.
     places = [
-      { key: "orgs", label: "Orgs", href: "/#" + hashOf("orgs"), icon: <OrgsGlyph />, tone: "orgs", active: route.tab === "orgs" },
-      { key: "agents", label: "Agents", href: "/#" + hashOf("agents"), icon: <AgentsGlyph />, tone: "agents", active: route.tab === "agents" },
-      { key: "builders", label: "Builders", href: "/#" + hashOf("builders"), icon: <BuildersGlyph />, tone: "builders", active: route.tab === "builders" },
+      { key: "orgs", label: "Orgs", href: "/#" + hashOf("orgs"), art: "orgs", active: route.tab === "orgs" },
+      { key: "agents", label: "Agents", href: "/#" + hashOf("agents"), art: "agents", active: route.tab === "agents" },
+      { key: "builders", label: "Builders", href: "/#" + hashOf("builders"), art: "builders", active: route.tab === "builders" },
     ];
   }
 
