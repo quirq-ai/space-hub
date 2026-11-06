@@ -9,6 +9,8 @@ import { parseJsonl, jsonlPost } from "@/lib/jsonl";
 import { parseUrlFile } from "@/lib/url-file";
 import { isConversation } from "@/lib/conversation";
 import { localLink, mediaOf } from "@/lib/media";
+import { isMermaid, isMermaidFence } from "@/lib/mermaid";
+import { MermaidDiagram } from "./mermaid-view";
 
 type ObjectValue = Record<string, unknown>;
 type Navigate = (path: string) => void;
@@ -36,6 +38,15 @@ export function Markdown({ content, filePath, navigate }: { content: string; fil
       if (href.startsWith("#")) return <a href={href}>{children}</a>;
       const path = localLink(href, filePath);
       return path === undefined ? <span>{children}</span> : <button className="inline-link" onClick={() => navigate(path)}>{children}</button>;
+    },
+    pre: ({ node, children }) => {
+      // A ```mermaid block draws its diagram; other code stays code.
+      const code = node?.children[0];
+      if (code?.type === "element" && code.tagName === "code" && Array.isArray(code.properties.className) && isMermaidFence(code.properties.className.join(" "))) {
+        const text = code.children.map(child => child.type === "text" ? child.value : "").join("");
+        return <MermaidDiagram source={text} name={filePath} inline />;
+      }
+      return <pre>{children}</pre>;
     },
     img: ({ src, alt }) => <MarkdownMedia src={typeof src === "string" ? src : ""} alt={alt} filePath={filePath} />,
     input: ({ checked }) => <input type="checkbox" checked={Boolean(checked)} disabled aria-label={checked ? "Completed item" : "Incomplete item"} />
@@ -156,6 +167,7 @@ export function FileContent({ file, revision, navigate, demo = false, extraMessa
   else if (file.format === "json" && object(file.data) && file.data.type === "collection" && Array.isArray(file.data.items) && file.data.items.every(item => object(item) && typeof item.title === "string")) content = <Collection data={file.data as ObjectValue & { items: ObjectValue[] }} navigate={navigate} />;
   else if (file.format === "json" && !file.error) content = <div className="document-card"><JsonNode value={file.data} /></div>;
   else if (isHtml(file.path) && canReadSource && !file.error) content = <HtmlPreview src={src} name={file.name} />;
+  else if (isMermaid(file.path) && canReadSource && !file.error) content = <MermaidDiagram source={file.content || ""} name={file.name} />;
   else if (file.format === "markdown") content = <article className="document-card"><Markdown content={file.content || ""} filePath={file.path} navigate={navigate} /></article>;
   else if (file.format === "image") content = <ImagePreview src={src} name={file.name} />;
   else if (file.format === "video") content = <VideoPreview src={src} name={file.name} />;

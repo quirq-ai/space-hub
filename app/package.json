@@ -13,6 +13,7 @@
     "@blobatar/react": "^2.7.0",
     "blobatar": "^2.7.0",
     "lucide-react": "^0.468.0",
+    "mermaid": "^11.17.2",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-markdown": "^10.1.0",
