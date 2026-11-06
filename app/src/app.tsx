@@ -32,6 +32,8 @@ export function App() {
   const route = useRoute();
   const me = useMe();
   const recoveryOnly = me.recoveryOnly;
+  // Sub-hubs and backups: hidden from everyone but hub operators.
+  const operator = me.operator;
   const recovery = recoveryOnly || (route.page === "home" && route.tab === "settings");
   const place = recovery || route.page === "home" || route.page === "subhub" ? HUB : route.place;
   const filesPath = route.page === "project" && route.tab === "files" ? route.path : "";
@@ -87,7 +89,8 @@ export function App() {
   }, [recoveryOnly]);
   useEffect(() => {
     if (recoveryOnly && (route.page !== "home" || route.tab !== "settings")) navigate("/#/settings");
-  }, [recoveryOnly, route]);
+    else if (me.checked && !operator && route.page === "subhub") navigate("/#/settings");
+  }, [recoveryOnly, route, me.checked, operator]);
   useEffect(() => {
     if (recoveryOnly) return;
     const key = (event: KeyboardEvent) => {
@@ -110,7 +113,7 @@ export function App() {
   }, [homeTab, route, placeKey, place.space, recovery]);
 
   const signIn = `/-/login?next=${encodeURIComponent(location.pathname + location.hash)}`;
-  const state = recovery ? recoveryState : live.error && view ? "offline" : !view ? "loading" : "live";
+  const state = recovery ? operator ? recoveryState : "live" : live.error && view ? "offline" : !view ? "loading" : "live";
 
   // The dock's space switcher; the sidebar: the main places, short lists of where you are and where you were, and a footer.
   const kindOf = (name: string) => me.spaces.find(s => s.space === name)?.kind ?? (meta?.level === "space" && meta.name === name ? meta.kind : space.data?.meta.name === name ? space.data.meta.kind : "personal");
@@ -196,8 +199,8 @@ export function App() {
       <InsetHeader crumbs={crumbs} live={state} rail={rail} onToggleSidebar={toggleSidebar} activity={hasActivity ? { open: activityOpen, onToggle: toggleActivity } : undefined} recoveryOnly={recoveryOnly} />
       <div className="main-scroll">
         {route.page === "home" && route.tab !== "settings" && !recovery && <HomePage tab={route.tab} view={view as View<HubMeta> | undefined} me={me.name} mySpaces={me.spaces.map(s => s.space)} seen={seen} />}
-        {recovery && <SettingsPage onConnectionState={setRecoveryState} signedIn={!recoveryOnly && !!me.name} />}
-        {!recovery && route.page === "subhub" && <SubhubPage name={route.name} backup={route.backup} />}
+        {recovery && <SettingsPage onConnectionState={setRecoveryState} signedIn={!recoveryOnly && !!me.name} operator={operator} />}
+        {!recovery && route.page === "subhub" && operator && <SubhubPage name={route.name} backup={route.backup} />}
         {!recovery && route.page === "space" && <SpacePage name={place.space} tab={route.tab} view={view as View<SpaceMeta> | undefined} error={live.error} me={me.name} signIn={signIn} seen={seen} />}
         {!recovery && route.page === "project" && <ChannelsContext.Provider value={channels}><ProjectPage route={route} view={view as View<ProjectMeta> | undefined} error={live.error} me={me.name} signIn={signIn} refresh={live.refresh} /></ChannelsContext.Provider>}
       </div>

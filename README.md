@@ -443,7 +443,7 @@ Once the new hub is in use, delete the old database with
 | `SPACEHUB_ACTIVITY_DIR` | `/data/activity` | Where the web service journals every activity row, append-only (see Activity; `off`: not at all). Only without `SPACEHUB_RECOVERY_DIR` or `_URL` |
 | `SPACEHUB_BACKUP_KEEP` | `3` | How many of its own backups the hub keeps |
 | `SPACEHUB_BACKUP_DIR` | `/data/.spacehub/backups` | Where the hub keeps them |
-| `SPACEHUB_RECOVERY_OPERATORS` | unset | Builders (comma-separated) who may connect Sub-hubs and open Settings → Sub-hubs; otherwise only the database's owner identity can |
+| `SPACEHUB_RECOVERY_OPERATORS` | unset | Builders (comma-separated) who see and use Sub-hubs and backups (Settings → Sub-hubs, `/subhub/<name>`); everyone else never sees them. When unset, only the database's owner identity can |
 | `SPACEHUB_VISITOR_HOME` | `quirq/quirq` | Where a visitor who is not signed in lands from the hub's address (`/`): a space or project, once it is on the hub (`off`: the home page for everyone). Signed in, `/` is the home page |
 | `SPACEHUB_SECRET_KEY` | unset | Turns on workers on your own runners (see below): base64 of at least 32 random bytes (`openssl rand -base64 32`). Runner tokens are sealed with it (AES-256-GCM) before they are stored. Keep it in the environment, not in `/data`; lose it and everyone connects their runners again. Needs `SPACEHUB_ADMIN_TOKEN` |
 | `SPACEHUB_RUNNER_ALLOW_LOCAL` | unset | `1`: runners at `http://127.0.0.1` or `http://localhost` may be connected. For local development only; on a deployed hub it would let people reach the container's own ports |
@@ -1075,8 +1075,10 @@ The web service exposes the same UI through the protected
 `SPACEHUB_RECOVERY_DIR`, an allowed restore parent with
 `SPACEHUB_RESTORE_ROOT`. `SPACEHUB_PUBLIC_URL` (or the database name) labels the
 source. Explicitly delegate access to registered builder usernames with
-comma-separated `SPACEHUB_RECOVERY_OPERATORS`; otherwise only the global
-administrator recorded by the module qualifies. The web service uses its
+comma-separated `SPACEHUB_RECOVERY_OPERATORS`; once any are named, only they
+qualify, and otherwise only the global administrator recorded by the module
+does. The app hides the Sub-hubs section and sub-hub pages from everyone
+else (`/-/api/me` reports `operator`), and the endpoints refuse them. The web service uses its
 private `SPACEHUB_ADMIN_TOKEN` to check that administrator identity.
 `SPACEHUB_RECOVERY_STATE_DIR` chooses the private connected-machine registry;
 otherwise it is stored under the server's persistent root or CLI home.

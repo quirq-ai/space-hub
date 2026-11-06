@@ -49,6 +49,8 @@ export interface AppDeps {
   /** Run `fn` on a connection made with `token`, closed afterwards. */
   withConn: <T>(token: string, fn: (conn: Conn, identity: Parameters<typeof findUser>[1]) => Promise<T>) => Promise<T>;
   sessionOf: (req: http.IncomingMessage) => Promise<{ token: string; username: string } | null>;
+  /** Whether the request comes from a hub operator (SPACEHUB_RECOVERY_OPERATORS), who alone sees Sub-hubs and backups. */
+  operator?: (req: http.IncomingMessage) => Promise<boolean>;
 }
 
 /** Where the built app lives: SPACEHUB_APP_DIR, else app/dist beside this checkout. */
@@ -169,7 +171,7 @@ export async function handleApp(deps: AppDeps, req: http.IncomingMessage, res: h
 
   if (req.method === 'GET' && route === '/-/api/me') {
     const session = await deps.sessionOf(req);
-    json(res, 200, { name: session?.username ?? null });
+    json(res, 200, { name: session?.username ?? null, operator: session && deps.operator ? await deps.operator(req) : false });
     return true;
   }
 
