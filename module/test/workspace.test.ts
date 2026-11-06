@@ -160,6 +160,13 @@ describe('workspace API', () => {
     expect(http({ activity: '', space: 'nobody' }).status).toBe(404);
   });
 
+  it('gives a Mermaid diagram file its source, so the app can draw it', () => {
+    const { view, push } = hub();
+    const source = 'graph TD\n  A --> B\n';
+    push({ 'flow.mmd': source, 'flow.mermaid': source });
+    for (const path of ['flow.mmd', 'flow.mermaid']) expect(view({ space: 'quirq', project: 'quirq', path }).snapshot.file).toMatchObject({ format: 'text', content: source });
+  });
+
   it('opens files the way open-chat does and refuses what it must not show', () => {
     const { view } = hub();
     const chat = view({ space: 'quirq', project: 'quirq', path: 'Chat/index.json' }).snapshot;
