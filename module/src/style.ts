@@ -151,8 +151,8 @@ function sidebar(): string {
   return `<nav class="sidebar" aria-label="Navigation"><div class="side-head">${brand}</div><div class="side-content"></div><button type="button" class="side-rail only-wide" tabindex="-1" data-frame="rail" aria-label="Fold or unfold the sidebar" title="Fold or unfold the sidebar"></button></nav>`;
 }
 
-// The dock's Home picture, the app's own (app/public/dock-home.svg), as in the app's DockArt.
-const HOME_ART = '<img class="dock-art" src="/-/app/dock-home.svg" width="40" height="40" alt="">';
+// The dock's Home picture, the app's own (app/public/dock-home-*.svg), as in the app's DockArt: black in light mode, white in dark.
+const HOME_ART = '<img class="dock-art on-light" src="/-/app/dock-home-black.svg" width="40" height="40" alt=""><img class="dock-art on-dark" src="/-/app/dock-home-white.svg" width="40" height="40" alt="">';
 
 function dock(viewer: string | null, current: Current): string {
   const me = viewer ? encodeURIComponent(viewer) : '';

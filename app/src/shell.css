@@ -250,10 +250,13 @@ button.dock-item { border: 0; background: none; font: inherit; cursor: pointer; 
 .dock-item:hover .dock-icon { transform: translateY(-3px) scale(1.12); }
 .dock-item.active .dock-icon { background: var(--accent-soft); border-color: transparent; color: var(--accent-text); }
 .dock-item.active::after { content: ""; position: absolute; bottom: -4px; width: 4px; height: 4px; border-radius: 50%; background: var(--text-2); }
-/* The hub's places (Home, Orgs, Agents, Builders) show their own little scenes, app/public/dock-*.svg, as the whole tile. */
-.dock-icon.art { border: 0; background: none; box-shadow: 0 3px 8px -3px rgba(10, 10, 40, .4); }
+/* The hub's places (Home, Orgs, Builders) show their own little scenes as the whole tile:
+   black with a white picture in light mode, white with a black one in dark mode (app/public/dock-*-black.svg / -white.svg). */
+.dock-icon.art { border: 0; background: none; box-shadow: 0 3px 8px -3px rgba(0, 0, 0, .45); }
 .dock-art { display: block; width: 40px; height: 40px; border-radius: 11px; }
-.dock-item:hover .dock-icon.art { box-shadow: 0 8px 16px -5px rgba(10, 10, 40, .45); }
+.dock-art.on-dark, :root[data-theme="dark"] .dock-art.on-light { display: none; }
+:root[data-theme="dark"] .dock-art.on-dark { display: block; }
+.dock-item:hover .dock-icon.art { box-shadow: 0 8px 16px -5px rgba(0, 0, 0, .5); }
 .dock-item.active .dock-icon.art, .dock-switcher[aria-expanded="true"] .dock-icon.art, .dock details[open] > .dock-switcher .dock-icon.art { background: none; box-shadow: 0 0 0 2px var(--panel), 0 0 0 3.5px var(--text-2); }
 .dock-item.active:has(.art)::after { background: var(--text); }
 :root[data-theme="dark"] .dock-item:not(.active):not([aria-expanded="true"]) .dock-icon.art { box-shadow: 0 3px 10px -3px rgba(0, 0, 0, .7); }

@@ -222,11 +222,19 @@ export function Crumbs({ items }: { items: { label: string; href?: string }[] })
   </nav>;
 }
 
-/** The hub's places with their own dock pictures: Home (all spaces) is a ringed planet, Orgs a constellation, Agents a satellite, Builders an astronaut. */
-export type DockArtName = "home" | "orgs" | "agents" | "builders";
-export const DockArt = ({ name }: { name: DockArtName }) => <img className="dock-art" src={`/-/app/dock-${name}.svg`} width={40} height={40} alt="" draggable={false} />;
+/**
+ * The hub's places with their own dock pictures: Home (all spaces) is a ringed
+ * planet, Orgs a constellation, Builders an astronaut. Each is a black tile
+ * with a white picture in light mode and a white tile with a black one in dark
+ * mode (app/public/dock-<name>-black.svg / -white.svg; shell.css shows one).
+ */
+export type DockArtName = "home" | "orgs" | "builders";
+export const DockArt = ({ name }: { name: DockArtName }) => <>
+  <img className="dock-art on-light" src={`/-/app/dock-${name}-black.svg`} width={40} height={40} alt="" draggable={false} />
+  <img className="dock-art on-dark" src={`/-/app/dock-${name}-white.svg`} width={40} height={40} alt="" draggable={false} />
+</>;
 
-export type DockItem = { key: string; label: string; href: string; icon?: ReactNode; active?: boolean; fresh?: boolean; /** One of the hub places' own pictures (app/public/dock-<art>.svg), drawn instead of `icon`. */ art?: DockArtName };
+export type DockItem = { key: string; label: string; href: string; icon?: ReactNode; active?: boolean; fresh?: boolean; /** One of the hub places' own pictures (app/public/dock-<art>-black.svg / -white.svg), drawn instead of `icon`. */ art?: DockArtName };
 
 /** The dock: the space you are in (its switcher), the places inside where you are (a project's sections, a space's projects, the hub's parts), and last you (your account). */
 export function Dock({ places, switcher, account }: {
