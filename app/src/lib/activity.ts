@@ -48,3 +48,20 @@ export function liveRows(here: Here[], agents: AgentInfo[] = [], known: string[]
     return { name, agent: running || isAgent.has(name), text: [doing, at].filter(Boolean).join(" · ") };
   }).sort((a, b) => Number(b.agent) - Number(a.agent) || a.name.localeCompare(b.name));
 }
+
+/**
+ * The newest rows a page polls for, then the older pages loaded after them,
+ * each row once, newest first (ids grow with time). New rows that arrive
+ * while older pages are open join the top without losing them.
+ */
+export function mergeActivity(newest: ActivityItem[], older: ActivityItem[]): ActivityItem[] {
+  const seen = new Set<string>();
+  const out: ActivityItem[] = [];
+  for (const item of [...newest, ...older]) {
+    if (item.id && seen.has(item.id)) continue;
+    if (item.id) seen.add(item.id);
+    out.push(item);
+  }
+  const key = (item: ActivityItem) => (item.id ? BigInt(item.id) : -1n);
+  return out.sort((a, b) => { const d = key(b) - key(a); return d > 0n ? 1 : d < 0n ? -1 : 0; });
+}

@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { History, Users } from "lucide-react";
-import { activityLine, groupActivity, placeUrl, pushedFiles, type ActivityItem, type AgentInfo, type Here, type Meta } from "@/api";
+import { activityLine, count, fetchActivity, groupActivity, placeUrl, pushedFiles, type ActivityItem, type AgentInfo, type Here, type Meta, type Place } from "@/api";
 import { hashOf, onLink } from "@/router";
 import { Ago, Avatar, AvatarStack, Empty, PersonLink, SkeletonRows } from "@/ui/primitives";
-import { dayOf, FILTERS, keepActivity, liveRows, MODES, type ActivityFilter } from "@/lib/activity";
+import { dayOf, FILTERS, keepActivity, liveRows, mergeActivity, MODES, type ActivityFilter } from "@/lib/activity";
 import { Browser } from "@/ui/cards";
 
 export function PageHeader({ crumbs, title, subtitle, leading, actions, children }: {
@@ -80,15 +80,53 @@ export function ActivityList({ items, empty = "Nothing has happened here yet.", 
 
 const NONE: Record<ActivityFilter, string> = { all: "", humans: "No builder has done anything here yet.", agents: "No agent has done anything here yet." };
 
-/** A place's activity with a filter (lib/activity.ts); `agents` names the agents, since an activity row only says who. */
-export function ActivityStream({ items, agents, compact = false, empty }: { items: ActivityItem[]; agents: string[]; compact?: boolean; empty?: string }) {
+/** Where a page's meta is: the hub, a space or a project. */
+export function placeOf(meta: Meta): Place {
+  return meta.level === "project" ? { space: meta.space, project: meta.name } : meta.level === "space" ? { space: meta.name, project: "" } : { space: "", project: "" };
+}
+
+const OLDER_PAGE = 100;
+
+/**
+ * A place's activity with a filter (lib/activity.ts); `agents` names the agents, since an activity row only says who.
+ * `items` are the newest rows the page polls for; with `place`, "Show older" pages back through the place's whole
+ * history (the hub keeps every row), `total` rows in all.
+ */
+export function ActivityStream({ items: newest, agents, compact = false, empty, place, total }: { items: ActivityItem[]; agents: string[]; compact?: boolean; empty?: string; place?: Place; total?: number }) {
   const [filter, setFilter] = useState<ActivityFilter>("all");
+  const [older, setOlder] = useState<{ key: string; items: ActivityItem[]; more: boolean; total: number | null }>({ key: "", items: [], more: true, total: null });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const key = place ? `${place.space}/${place.project}` : "";
+  // Older pages belong to one place; moving to another starts from its newest again.
+  const loaded = older.key === key ? older : { key, items: [], more: true, total: null };
+  const items = mergeActivity(newest, loaded.items);
+  const all = Math.max(total ?? 0, loaded.total ?? 0, items.length);
+  const canLoad = !!place && items.length > 0 && items.length < all && loaded.more && items.every(item => item.id);
+  const loadOlder = async () => {
+    if (!place || loading) return;
+    setLoading(true);
+    setError("");
+    try {
+      const page = await fetchActivity(place, items[items.length - 1].id, OLDER_PAGE);
+      setOlder({ key, items: [...loaded.items, ...page.items], more: page.more, total: page.total });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
   const isAgent = new Set(agents);
   const shown = items.filter(item => keepActivity(filter, item, isAgent));
   const counts = new Map(FILTERS.map(option => [option.key, option.key === filter ? shown.length : items.filter(item => keepActivity(option.key, item, isAgent)).length]));
   return <div className="activity-stream">
     {items.length > 0 && <div className="activity-filter-bar"><div className="segmented activity-filter" role="group" aria-label="Show">{FILTERS.map(option => <button key={option.key} type="button" className={filter === option.key ? "on" : undefined} aria-pressed={filter === option.key} onClick={() => setFilter(option.key)}>{option.label}<span className="tab-count">{counts.get(option.key)}</span></button>)}</div></div>}
     {shown.length || filter === "all" ? <ActivityList items={shown} compact={compact} empty={empty} /> : <p className="quiet activity-none">{NONE[filter]}</p>}
+    {canLoad && <div className="activity-older">
+      <button type="button" className="button ghost small" onClick={() => void loadOlder()} disabled={loading}>{loading ? "Loading…" : "Show older activity"}</button>
+      <span className="quiet">{count(items.length, "event")} of {all.toLocaleString("en-US")}</span>
+    </div>}
+    {error && <p className="quiet activity-none" role="alert">{error}</p>}
   </div>;
 }
 
@@ -98,7 +136,7 @@ export function ActivityPanel({ meta }: { meta: Meta | undefined }) {
   const agents = meta.level === "project" ? meta.agents : [...new Set([...meta.agentList.map(agent => agent.name), ...(meta.level === "space" ? meta.agents : [])])];
   return <div className="feed">
     <LiveNow variant="panel" title={meta.level === "hub" ? "Live now" : "Here now"} here={meta.here} agents={meta.level === "project" ? [] : meta.agentList} known={agents} place={meta.level === "project" ? meta.fullName : ""} />
-    <ActivityStream items={meta.activity} agents={agents} compact />
+    <ActivityStream items={meta.activity} agents={agents} compact place={placeOf(meta)} total={meta.activityTotal} />
   </div>;
 }
 

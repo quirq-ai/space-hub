@@ -738,6 +738,9 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
       case 'agent_registered':
         line = `${who} joined as a builder`;
         break;
+      case 'builder_deleted':
+        line = `${who} left the hub`;
+        break;
       case 'org_created':
         line = `${who} created the org ${top}`;
         break;

@@ -24,7 +24,11 @@ import { BUILTIN_ABOUT, BUILTIN_FILES, BUILTIN_TEMPLATE, BUILTIN_TITLE } from '.
 export const MAX_TEXT_BYTES = 2 * 1024 * 1024;
 export const MAX_PREVIEW_BYTES = 20 * 1024 * 1024;
 export const MAX_DIRECTORY_ENTRIES = 2000;
-const ACTIVITY_SHOWN = 30;
+// Every activity row is kept. A page's meta carries the newest ACTIVITY_SHOWN
+// and how many there are in all; the app pages back through the rest with
+// ?activity (activityPage), ACTIVITY_PAGE_MAX at a time.
+export const ACTIVITY_SHOWN = 50;
+export const ACTIVITY_PAGE_MAX = 500;
 /** Folders summarized from their READMEs, at most, in one listing. */
 const SUMMARIZED_FOLDERS = 200;
 const SUMMARY_BYTES = 64 * 1024;
@@ -104,6 +108,8 @@ export interface Here {
 }
 
 export interface ActivityItem {
+  /** The row's id: newer rows have larger ids. Paging goes `before` one. */
+  id: string;
   at: string;
   agent: string;
   kind: string;
@@ -141,7 +147,7 @@ export interface Membership {
 }
 
 export type Meta =
-  | { level: 'hub'; spaces: number; projects: number; bytes: number; events: number; humans: number; agents: number; activity: ActivityItem[]; here: Here[]; allProjects: ProjectCard[]; agentList: AgentInfo[] }
+  | { level: 'hub'; spaces: number; projects: number; bytes: number; events: number; humans: number; agents: number; activity: ActivityItem[]; activityTotal: number; here: Here[]; allProjects: ProjectCard[]; agentList: AgentInfo[] }
   | {
       level: 'space';
       name: string;
@@ -169,6 +175,7 @@ export type Meta =
       collaborates: string[];
       here: Here[];
       activity: ActivityItem[];
+      activityTotal: number;
     }
   | {
       level: 'project';
@@ -191,6 +198,7 @@ export type Meta =
       collaborators: string[];
       here: Here[];
       activity: ActivityItem[];
+      activityTotal: number;
       /** The project's SPACE.md, read: its goal, outcomes, owners, rules and routines. */
       goal: SpaceGoal | null;
       /** A repo room (explain.ts): its repository, caps and questions; absent elsewhere. */
@@ -511,9 +519,53 @@ function here(db: Db, now: number, keep: (row: { space: string; projectId: bigin
   return out.sort((a, b) => a.agent.localeCompare(b.agent));
 }
 
-function activity(db: Db, keep: (row: { path: string; projectId: bigint }) => boolean): ActivityItem[] {
-  const rows = [...db.activity.iter()].filter(keep).sort((a, b) => (a.id < b.id ? 1 : -1)).slice(0, ACTIVITY_SHOWN);
-  return rows.map(row => ({ at: iso(row.at), agent: row.agent, kind: row.kind, path: row.path, subject: row.subject, text: row.text, count: row.count, oid: row.oid }));
+type ActivityKeep = (row: { path: string; projectId: bigint }) => boolean;
+
+// A place's activity rows, newest first.
+function activityRows(db: Db, keep: ActivityKeep) {
+  return [...db.activity.iter()].filter(keep).sort((a, b) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+}
+
+function activityItem(row: { id: bigint; at: { microsSinceUnixEpoch: bigint }; agent: string; kind: string; path: string; subject: string; text: string; count: number; oid: string }): ActivityItem {
+  return { id: String(row.id), at: iso(row.at), agent: row.agent, kind: row.kind, path: row.path, subject: row.subject, text: row.text, count: row.count, oid: row.oid };
+}
+
+/** The newest of a place's activity, and how many rows it has in all. */
+function activity(db: Db, keep: ActivityKeep): { activity: ActivityItem[]; activityTotal: number } {
+  const rows = activityRows(db, keep);
+  return { activity: rows.slice(0, ACTIVITY_SHOWN).map(activityItem), activityTotal: rows.length };
+}
+
+const spaceKeep = (db: Db, name: string): ActivityKeep => {
+  const ids = new Set([...db.project.owner.filter(name)].map(project => project.id));
+  return row => row.path === name || row.path.startsWith(`${name}/`) || ids.has(row.projectId);
+};
+
+/**
+ * One page of a place's whole activity (?activity, with space and project as
+ * for the workspace): the `limit` rows older than `before` (a row id; none
+ * for the newest), newest first. `more` says older rows remain.
+ */
+export function activityPage(db: Db, req: ApiRequest): { items: ActivityItem[]; total: number; more: boolean } {
+  const space = (req.query.get('space') ?? '').toLowerCase();
+  const name = req.query.get('project') ?? '';
+  let keep: ActivityKeep = () => true;
+  if (space && name) {
+    const row = db.project.fullName.find(`${space}/${name}`);
+    if (!row) throw new ApiError(`There is no project ${space}/${name}.`, 404);
+    keep = r => r.projectId === row.id;
+  } else if (space) {
+    if (!db.space.name.find(space)) throw new ApiError(`There is no space named ${space}.`, 404);
+    keep = spaceKeep(db, space);
+  }
+  const rawBefore = req.query.get('before') ?? '';
+  if (rawBefore && !/^\d{1,20}$/.test(rawBefore)) throw new ApiError('before must be an activity id.', 400);
+  const before = rawBefore ? BigInt(rawBefore) : null;
+  const rawLimit = Number(req.query.get('limit') ?? 100);
+  const limit = Number.isSafeInteger(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, ACTIVITY_PAGE_MAX) : 100;
+  const rows = activityRows(db, keep);
+  const older = before === null ? rows : rows.filter(row => row.id < before);
+  return { items: older.slice(0, limit).map(activityItem), total: rows.length, more: older.length > limit };
 }
 
 function finish(snapshot: Omit<Snapshot, 'revision'>, meta: Meta) {
@@ -624,7 +676,7 @@ function hubLevel(db: Db, now: number) {
       events: Number(db.activity.count()),
       humans: spaces.filter(space => space.kind === 'personal').length,
       agents: spaces.filter(space => space.kind === 'agent').length,
-      activity: activity(db, () => true),
+      ...activity(db, () => true),
       here: here(db, now, () => true),
       allProjects: projects
         .map(project => ({ fullName: project.fullName, description: project.description, pushedAt: iso(project.pushedAt) }))
@@ -677,7 +729,7 @@ function spaceLevel(db: Db, name: string, now: number) {
       agentList,
       collaborates: [...db.projectMember.agent.filter(name)].map(row => db.project.id.find(row.projectId)?.fullName ?? '').filter(Boolean).sort(),
       here: here(db, now, row => (row.projectId === 0n ? row.space === name : ids.has(row.projectId)) || row.agent === name),
-      activity: activity(db, row => row.path === name || row.path.startsWith(`${name}/`) || ids.has(row.projectId)),
+      ...activity(db, spaceKeep(db, name)),
     }
   );
 }
@@ -740,7 +792,7 @@ function projectLevel(db: Db, project: Project, requested: string, viewer: strin
       canWrite,
       ...projectPeople(db, project),
       here: here(db, now, row => row.projectId === project.id),
-      activity: activity(db, row => row.projectId === project.id),
+      ...activity(db, row => row.projectId === project.id),
       goal: goalOf(db, project, rootTree),
       ...(isRoom(db, project) ? { room: roomOf(db, project, viewer, now) } : {}),
     }
@@ -901,6 +953,7 @@ export function renderApi(db: Db, req: ApiRequest): { status: number; headers: R
       if (name) req = { ...req, query: new Map([...req.query, [key, spaceFor(db, name.toLowerCase())]]) };
     }
     if (req.query.has('avatar')) return { status: 200, headers, body: JSON.stringify(avatarOf(db, (req.query.get('avatar') ?? '').toLowerCase())) };
+    if (req.query.has('activity')) return { status: 200, headers, body: JSON.stringify(activityPage(db, req)) };
     if (req.query.has('templates')) return { status: 200, headers, body: JSON.stringify({ templates: templatesView(db) }) };
     if (req.query.has('view')) {
       const body = JSON.stringify(codeView(db, req));

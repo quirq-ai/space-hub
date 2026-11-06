@@ -2,7 +2,7 @@ import { Bot, Boxes, Download, FolderGit2, GitBranch, HardDrive } from "lucide-r
 import { placeUrl, rawUrl, size, type Place, type ProjectMeta, type View } from "@/api";
 import { hashOf, onLink, type Route } from "@/router";
 import { Ago, Avatar, AvatarStack, CommandTabs, ErrorNote, Popover, Skeleton } from "@/ui/primitives";
-import { ActivityStream, HereNow, PageHeader, People, Tabs } from "./common";
+import { ActivityStream, HereNow, PageHeader, People, placeOf, Tabs } from "./common";
 import { ChatSection } from "./chat-section";
 import { BranchesTab, CodeTab, CommitTab, CommitsTab } from "./code";
 import { DepsTab } from "./deps";
@@ -48,7 +48,7 @@ export function ProjectPage({ route, view, error, me, signIn, refresh }: { route
     {route.tab === "deps" && <DepsTab place={place} />}
     {route.tab === "branches" && <BranchesTab place={place} />}
     {meta && route.tab === "chat" && <ChatSection place={place} me={me} signIn={signIn} canStart={!!me && meta.canWrite} />}
-    {meta && route.tab === "activity" && <ActivityStream items={meta.activity} agents={meta.agents} />}
+    {meta && route.tab === "activity" && <ActivityStream items={meta.activity} agents={meta.agents} place={placeOf(meta)} total={meta.activityTotal} />}
     {meta && route.tab === "people" && <>
       {meta.here.length > 0 && <><h2 className="section-title">Here now</h2><HereNow here={meta.here} /></>}
       <Contributors place={place} meta={meta} />

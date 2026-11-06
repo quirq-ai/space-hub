@@ -1,9 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { dayOf, keepActivity, liveRows } from "../src/lib/activity.ts";
+import { dayOf, keepActivity, liveRows, mergeActivity } from "../src/lib/activity.ts";
 
 const at = (y: number, m: number, d: number, h = 12) => new Date(y, m - 1, d, h).toISOString();
-const item = (kind: string, agent: string) => ({ at: at(2026, 11, 2), agent, kind, path: "quirq/quirq", subject: "refs/heads/main", text: "", count: 1, oid: "" });
+let nextId = 1;
+const item = (kind: string, agent: string, id = String(nextId++)) => ({ id, at: at(2026, 11, 2), agent, kind, path: "quirq/quirq", subject: "refs/heads/main", text: "", count: 1, oid: "" });
 
 test("day headings: today, yesterday, a weekday this week, else the date", () => {
   const now = new Date(2026, 10, 2, 9);
@@ -43,4 +44,14 @@ test("who is here: one row each, agents first with their machine, the viewed pro
   // Without the agent list (a project page), a running agent still counts as one.
   assert.deepEqual(liveRows([{ agent: "euler", mode: "agent", project: "" }]), [{ name: "euler", agent: true, text: "running" }]);
   assert.deepEqual(liveRows([]), []);
+});
+
+test("older activity pages join the newest rows: each row once, newest first", () => {
+  const rows = (...ids: number[]) => ids.map(id => item("ref_updated", "suraj", String(id)));
+  // The page polled 50..48 and loaded 47..45 before; now 52 and 51 arrived on top.
+  const merged = mergeActivity(rows(52, 51, 50, 49, 48), rows(48, 47, 46, 45));
+  assert.deepEqual(merged.map(row => row.id), ["52", "51", "50", "49", "48", "47", "46", "45"]);
+  // Ids past what a number holds still sort right.
+  const big = (id: string) => item("ref_updated", "suraj", id);
+  assert.deepEqual(mergeActivity([big("9007199254740992")], [big("9007199254740993"), big("10")]).map(row => row.id), ["9007199254740993", "9007199254740992", "10"]);
 });

@@ -8,7 +8,7 @@ import { CHUNK_SIZE, objectKey, readObject, readObjectRange, type Db } from '../
 import { MAX_RANGE, byteRange, renderUi } from '../src/ui';
 import { renderMarkdown } from '../src/markdown';
 import { hashObject, serializeTree } from '../src/chat';
-import { avatarOf, codeView, parseQuery, parseTree, workspace, type Meta, type Snapshot } from '../src/workspace';
+import { ACTIVITY_SHOWN, activityPage, avatarOf, codeView, parseQuery, parseTree, renderApi, workspace, type Meta, type Snapshot } from '../src/workspace';
 
 let nextConnection = 1n;
 function as(subject: string) {
@@ -122,6 +122,42 @@ describe('workspace API', () => {
     expect(meta.events).toBe([...db.activity.iter()].length);
     expect(meta.events).toBeGreaterThan(5);
     expect(meta).toMatchObject({ humans: 2, agents: 1, spaces: 4 });
+  });
+
+  it('keeps every activity row and pages back through all of them', () => {
+    const { db, call, alice, view } = hub();
+    for (let i = 0; i < 160; i++) call(alice, mod.editProject, { project: 'quirq/quirq', description: `edit ${i}`, defaultBranch: undefined });
+    const total = [...db.activity.iter()].length;
+    expect(total).toBeGreaterThan(ACTIVITY_SHOWN + 100);
+    const hubMeta = view({}).meta as Extract<Meta, { level: "hub" }>;
+    expect(hubMeta.activity).toHaveLength(ACTIVITY_SHOWN);
+    expect(hubMeta.activityTotal).toBe(total);
+    const project = view({ space: 'quirq', project: 'quirq' }).meta as Extract<Meta, { level: 'project' }>;
+    expect(project.activityTotal).toBe([...db.activity.iter()].filter(e => e.projectId === db.project.fullName.find('quirq/quirq')!.id).length);
+    const page = (query: Record<string, string>) => activityPage(db, { query: new Map(Object.entries(query)), viewer: null, now: 1_800_000_100 });
+    // Walk the whole hub feed, 37 at a time: every row once, newest first.
+    const seen: string[] = [];
+    let before = '';
+    for (;;) {
+      const next = page({ limit: '37', ...(before ? { before } : {}) });
+      expect(next.total).toBe(total);
+      seen.push(...next.items.map(item => item.id));
+      if (!next.more) break;
+      before = next.items[next.items.length - 1].id;
+    }
+    expect(seen).toHaveLength(total);
+    expect(new Set(seen).size).toBe(total);
+    expect(seen.map(BigInt)).toEqual([...seen.map(BigInt)].sort((a, b) => (a < b ? 1 : -1)));
+    expect(seen.slice(0, ACTIVITY_SHOWN)).toEqual(hubMeta.activity.map(item => item.id));
+    // A space's and a project's feeds page the same way.
+    const space = page({ space: 'quirq', limit: '500' });
+    expect(space.items.filter(item => item.kind === 'project_edited')).toHaveLength(160);
+    expect(page({ space: 'quirq', project: 'quirq', limit: '500' }).total).toBe(project.activityTotal);
+    // Over HTTP too, and bad cursors are refused.
+    const http = (query: Record<string, string>) => renderApi(db, { query: new Map(Object.entries(query)), viewer: null, now: 1_800_000_100 });
+    expect(JSON.parse(http({ activity: '', limit: '5' }).body).items).toHaveLength(5);
+    expect(http({ activity: '', before: 'x' }).status).toBe(400);
+    expect(http({ activity: '', space: 'nobody' }).status).toBe(404);
   });
 
   it('opens files the way open-chat does and refuses what it must not show', () => {
