@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { BookOpen, Boxes, ChevronRight, Code2, File, FileCode2, FileImage, FileText, FileVideo, Folder, FolderOpen, Lightbulb, MessageCircle, PanelsTopLeft, Shapes, SquareCheck, type LucideIcon } from "lucide-react";
+import { BookOpen, Boxes, ChevronRight, Clapperboard, Code2, EyeOff, File, FileCode2, FileImage, FileText, FileVideo, Folder, FolderOpen, Images, LayoutGrid, Lightbulb, MessageCircle, PanelsTopLeft, Shapes, SquareCheck, type LucideIcon } from "lucide-react";
 import type { Entry } from "@/lib/types";
 import { mediaOf } from "@/lib/media";
 import { isConversation } from "@/lib/conversation";
@@ -22,6 +22,11 @@ export const SECTION_ICONS = new Map<string, LucideIcon>([
   ["library", BookOpen], ["ideas", Lightbulb], ["goals", SquareCheck], ["files", FolderOpen], ["apps", Shapes],
 ]);
 export const SECTION_ORDER = ["chat", "activity", "insights", "vision", "library", "ideas", "goals", "files", "apps"];
+// The folders of an Instants library, in the dock, with the icons Instants uses.
+// Only icons: unlike the sections above, they do not change how Files lays them out.
+export const FOLDER_ICONS = new Map<string, LucideIcon>([
+  ["posts", LayoutGrid], ["media", Images], ["videos", Clapperboard], ["sources", FolderOpen], ["hidden", EyeOff],
+]);
 
 export function entryIcon(entry: Entry): LucideIcon {
   if (entry.kind === "directory") return SECTION_ICONS.get(entry.name.toLowerCase()) || Folder;

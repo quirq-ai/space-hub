@@ -8,7 +8,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 // Exercise the actual shell components without browser effects or production data.
 const appDirectory = fileURLToPath(new URL("..", import.meta.url));
-const built = await build({ absWorkingDir: appDirectory, stdin: { contents: 'export { AccountMenu, Dock, InsetHeader, Sidebar, SpaceMenu } from "./src/shell/shell"; export { SettingsPage } from "./src/pages/settings"; export { HomePage } from "./src/pages/home"; export { SubhubConnectionCard, RemoteBackupCatalog } from "./src/pages/instance-recovery";', resolveDir: appDirectory, loader: "tsx" }, bundle: true, write: false, platform: "node", format: "cjs", jsx: "automatic", external: ["react", "react/jsx-runtime", "react-dom", "react-dom/server"], logLevel: "silent" });
+const built = await build({ absWorkingDir: appDirectory, stdin: { contents: 'export { AccountMenu, Dock, InsetHeader, Sidebar, SpaceMenu } from "./src/shell/shell"; export { SettingsPage } from "./src/pages/settings"; export { FOLDER_ICONS, SECTION_ICONS } from "./src/pages/files"; export { HomePage } from "./src/pages/home"; export { SubhubConnectionCard, RemoteBackupCatalog } from "./src/pages/instance-recovery";', resolveDir: appDirectory, loader: "tsx" }, bundle: true, write: false, platform: "node", format: "cjs", jsx: "automatic", external: ["react", "react/jsx-runtime", "react-dom", "react-dom/server"], logLevel: "silent" });
 const compiled: { exports: Record<string, ComponentType<any>> } = { exports: {} };
 new Function("require", "module", "exports", built.outputFiles[0].text)(createRequire(import.meta.url), compiled, compiled.exports);
 const { AccountMenu, Dock, InsetHeader, Sidebar, SpaceMenu, SettingsPage, HomePage, SubhubConnectionCard, RemoteBackupCatalog } = compiled.exports;
@@ -147,4 +147,12 @@ test("the Orgs page lists only orgs, the ones you belong to first, with their pr
   assert.doesNotMatch(guest, /Your orgs|Other orgs|Member/);
   assert.match(guest, />acme</);
   assert.match(page(null, [], [entry("ada", "builder · 3 projects")]), /No orgs yet/);
+});
+
+test("the dock's folder icons change no layout: those folders do not become sections", () => {
+  const { FOLDER_ICONS, SECTION_ICONS } = compiled.exports as unknown as Record<string, Map<string, unknown>>;
+  for (const name of ["posts", "media", "videos", "sources", "hidden"]) {
+    assert.ok(FOLDER_ICONS.has(name), name);
+    assert.ok(!SECTION_ICONS.has(name), name);
+  }
 });
