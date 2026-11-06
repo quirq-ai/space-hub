@@ -109,6 +109,27 @@ const IMAGE_TYPES: Record<string, string> = {
   avif: 'image/avif', svg: 'image/svg+xml', bmp: 'image/bmp', ico: 'image/x-icon',
 };
 const VIDEO_TYPES: Record<string, string> = { mp4: 'video/mp4', m4v: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime', ogv: 'video/ogg' };
+// A web page pushed to a project, and the scripts and styles beside it, so
+// the page can be shown. The page runs only in a sandbox with an origin of
+// its own (HTML_CSP): never as this site, so it cannot read its cookies or
+// act as the signed-in builder.
+const PAGE_TYPES: Record<string, string> = { html: 'text/html; charset=utf-8', htm: 'text/html; charset=utf-8' };
+const ASSET_TYPES: Record<string, string> = { js: 'text/javascript; charset=utf-8', mjs: 'text/javascript; charset=utf-8', css: 'text/css; charset=utf-8' };
+export const HTML_CSP = [
+  'sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads',
+  "default-src 'none'",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https: data: blob:",
+  "style-src 'self' 'unsafe-inline' https:",
+  "img-src 'self' https: data: blob:",
+  "media-src 'self' https: data: blob:",
+  "font-src 'self' https: data:",
+  'connect-src https: data: blob:',
+  "frame-src 'self' https: data: blob:",
+  "worker-src 'self' blob:",
+  "form-action 'none'",
+  "base-uri 'self'",
+  "frame-ancestors 'self'",
+].join('; ');
 // The most one ranged answer carries; a player asks again for what follows.
 export const MAX_RANGE = 4 * 1024 * 1024;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -1161,11 +1182,16 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     const ext = extOf(rest[rest.length - 1]);
     // A real PDF opens in the browser's viewer (the app frames it); a viewer
     // will not run inside a sandbox, so it gets no scripts or fetches instead.
-    // Anything else is never text/html: a pushed file must not run as a page
-    // on this origin.
+    // Nothing is ever text/html without the sandbox: a pushed file must not
+    // run as a page on this origin.
     const pdf = ext === 'pdf' && decoder.decode(head.subarray(0, 5)) === '%PDF-';
+    // A text .html file is a page, sandboxed by HTML_CSP even when opened on
+    // its own; .js and .css beside it load into that page with their types.
+    const text = !head.includes(0);
     const headers: Record<string, string> = pdf
       ? { 'content-type': 'application/pdf', 'content-security-policy': "default-src 'none'; frame-ancestors 'self'" }
+      : text && PAGE_TYPES[ext] ? { 'content-type': PAGE_TYPES[ext], 'content-security-policy': HTML_CSP }
+      : text && ASSET_TYPES[ext] ? { 'content-type': ASSET_TYPES[ext], 'content-security-policy': "default-src 'none'; sandbox" }
       : {
           'content-type': IMAGE_TYPES[ext] ?? VIDEO_TYPES[ext] ?? (head.includes(0) ? 'application/octet-stream' : 'text/plain; charset=utf-8'),
           'content-security-policy': "default-src 'none'; sandbox",
