@@ -1,20 +1,14 @@
 import { Fragment, type ReactNode } from "react";
-import { Building2, FolderGit2, Plus, Rocket, Users } from "lucide-react";
+import { Building2, Plus, Rocket, Users } from "lucide-react";
 import { activeBy, count, kindLabel, latestOf, newestBy, placeUrl, size, type HubMeta, type View } from "@/api";
 import type { Entry } from "@/lib/types";
 import { hashOf, onLink } from "@/router";
-import { Browser, Glyph } from "@/ui/cards";
+import { Browser } from "@/ui/cards";
 import { Avatar, CommandTabs, Empty, Popover, SkeletonRows } from "@/ui/primitives";
 import { LiveNow, PageHeader } from "./common";
 import { AgentList } from "./space";
 
 const kindOf = (detail = "") => detail.startsWith("org") ? "org" : detail.startsWith("agent") ? "agent" : "personal";
-
-/** Home keeps the places to go: your spaces, the orgs, and where work lands. Orgs, agents and builders each have a page of their own too. */
-const GROUPS: { key: string; title: string; note: string; keep: (space: Entry, mine: Set<string>) => boolean }[] = [
-  { key: "mine", title: "Your spaces", note: "Your own space and the orgs you belong to.", keep: (space, mine) => mine.has(space.name) },
-  { key: "org", title: "Orgs", note: "Teams: their members push to every project they hold.", keep: (space, mine) => !mine.has(space.name) && kindOf(space.detail) === "org" },
-];
 
 type HomeProps = { tab: "home" | "orgs" | "agents" | "builders"; view: View<HubMeta> | undefined; me: string | null; mySpaces: string[]; seen: Record<string, string> };
 
@@ -29,22 +23,18 @@ export function HomePage({ tab, view, me, mySpaces, seen }: HomeProps) {
   if (tab === "builders") return <BuildersTab view={view} me={me} seen={seen} />;
   if (tab === "orgs") return <OrgsTab view={view} mySpaces={mySpaces} seen={seen} />;
 
-  const spaces = [...view.snapshot.directory.entries].sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
-  const recent = view.meta.allProjects.slice(0, 8);
   const mine = new Set(mySpaces);
   const bySpace = newestBy(view.meta.activity, item => item.path.split("/")[0]);
-  const byProject = newestBy(view.meta.activity, item => item.path.includes("/") ? item.path : "");
   const peopleBySpace = activeBy(view.meta.activity, item => item.path.split("/")[0]);
-  const peopleByProject = activeBy(view.meta.activity, item => item.path.includes("/") ? item.path : "");
-  const groups = GROUPS.map(group => ({ key: group.key, title: group.title, note: group.note, cards: spaces.filter(space => group.keep(space, mine)).map(space => {
+  // Home is the header and your spaces. Orgs have their own tab, and new pushes show in the activity panel.
+  const yours = view.snapshot.directory.entries.filter(space => mine.has(space.name)).map(space => {
     const kind = kindOf(space.detail);
     return {
       key: space.name, name: space.name, search: `${kindLabel(kind)} ${space.detail ?? ""}`, people: peopleBySpace.get(space.name), href: placeUrl({ space: space.name, project: "" }), time: space.modifiedAt,
       icon: <Avatar name={space.name} size={34} kind={kind} />, title: space.name, labels: <span className="label quiet-label">{kindLabel(kind)}</span>,
       detail: space.detail?.replace(/^\w+ · /, ""), latest: latestOf(bySpace.get(space.name)), fresh: !!seen[space.name] && space.modifiedAt > seen[space.name],
     };
-  }) }));
-  const shownSpaces = groups.reduce((sum, group) => sum + group.cards.length, 0);
+  });
   // Who builds here, by kind (agents and builders are spaces too, so "7 spaces" said little), then what they made.
   const orgs = view.meta.spaces - view.meta.humans - view.meta.agents;
   const stats: { text: string; href?: string }[] = [
@@ -65,12 +55,8 @@ export function HomePage({ tab, view, me, mySpaces, seen }: HomeProps) {
       </Popover>}</>}>
       <LiveNow variant="strip" here={view.meta.here} agents={view.meta.agentList} />
     </PageHeader>
-    <Browser head={<>{count(shownSpaces, "space")} · {recent.length} newest {recent.length === 1 ? "project" : "projects"}</>} groups={[...groups, { key: "recent", title: "Recently pushed", note: "The newest pushes across the hub, wherever they landed.", cards: recent.map(project => {
-      const [space, name] = project.fullName.split("/");
-      return { key: project.fullName, name: project.fullName, search: project.description, people: peopleByProject.get(project.fullName), href: placeUrl({ space, project: name }), time: project.pushedAt, icon: <Glyph><FolderGit2 size={17} /></Glyph>,
-        title: project.fullName, detail: project.description || undefined, latest: latestOf(byProject.get(project.fullName)), fresh: !!seen[project.fullName] && project.pushedAt > seen[project.fullName] };
-    }) }]} />
-    {!recent.length && <p className="quiet">No projects yet. <a href="/-/guide">Read the guide</a> to push the first one.</p>}
+    {yours.length > 0 && <Browser head={count(yours.length, "space")} groups={[{ key: "mine", title: "Your spaces", note: "Your own space and the orgs you belong to.", cards: yours }]} />}
+    {me && !yours.length && view.meta.spaces > 0 && <p className="quiet"><a href="/-/new">Create a project</a> to start your space, or browse <a href={"/#" + hashOf("orgs")} onClick={onLink}>Orgs</a>.</p>}
     {!view.meta.spaces && <p className="quiet"><Building2 size={14} /> Sign up and push a project to start the first space.</p>}
   </div>;
 }
