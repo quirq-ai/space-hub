@@ -151,6 +151,9 @@ function sidebar(): string {
   return `<nav class="sidebar" aria-label="Navigation"><div class="side-head">${brand}</div><div class="side-content"></div><button type="button" class="side-rail only-wide" tabindex="-1" data-frame="rail" aria-label="Fold or unfold the sidebar" title="Fold or unfold the sidebar"></button></nav>`;
 }
 
+// The dock's Home picture, the app's own (app/public/dock-home-*.svg), as in the app's DockArt: black in light mode, white in dark.
+const HOME_ART = '<img class="dock-art on-light" src="/-/app/dock-home-black.svg" width="40" height="40" alt=""><img class="dock-art on-dark" src="/-/app/dock-home-white.svg" width="40" height="40" alt="">';
+
 function dock(viewer: string | null, current: Current): string {
   const me = viewer ? encodeURIComponent(viewer) : '';
   const name = viewer ? esc(viewer) : 'Guest';
@@ -165,7 +168,7 @@ function dock(viewer: string | null, current: Current): string {
     ? `${link('me', `/${me}`, 'Your profile', 'user')}${link('', '/-/new', 'New project', 'plus')}<div class="menu-sep"></div>${hubPages}${appearance}<div class="menu-sep"></div><form method="post" action="/-/logout"><button role="menuitem" type="submit">${icon('out')}Sign out</button></form>`
     : `${link('', '/-/login', 'Sign in', 'login')}<div class="menu-sep"></div>${hubPages}${appearance}`;
   const hubMenu = `<a role="menuitem" href="/">${icon('home')}Home</a><a role="menuitem" href="/#search">${icon('search')}Search<kbd class="nav-kbd">⌘K</kbd></a><div class="menu-sep"></div>`;
-  const spaces = `<details class="dock-switch"><summary class="dock-item dock-switcher" aria-label="Space: All spaces. Switch space" title="Switch space"><span class="dock-icon">${icon('home')}${badge}</span><span class="dock-label">All spaces</span></summary><div class="menu dock-menu" role="menu">${hubMenu}<div class="menu-title">Spaces</div><a role="menuitem" class="on" href="/"><span class="menu-tile">${icon('home')}</span>All spaces${icon('check', 'menu-check')}</a>${viewer ? `<a role="menuitem" href="/${me}"><span class="menu-tile">${avatar(viewer, 18)}</span>${name}<span class="menu-note">Builder</span></a><div class="menu-sep"></div><a role="menuitem" class="menu-quiet" href="/-/new"><span class="menu-tile dashed">${icon('plus')}</span>New project</a>` : ''}</div></details>`;
+  const spaces = `<details class="dock-switch"><summary class="dock-item dock-switcher" aria-label="Space: All spaces. Switch space" title="Switch space"><span class="dock-icon art">${HOME_ART}${badge}</span><span class="dock-label">All spaces</span></summary><div class="menu dock-menu" role="menu">${hubMenu}<div class="menu-title">Spaces</div><a role="menuitem" class="on" href="/"><span class="menu-tile">${icon('home')}</span>All spaces${icon('check', 'menu-check')}</a>${viewer ? `<a role="menuitem" href="/${me}"><span class="menu-tile">${avatar(viewer, 18)}</span>${name}<span class="menu-note">Builder</span></a><div class="menu-sep"></div><a role="menuitem" class="menu-quiet" href="/-/new"><span class="menu-tile dashed">${icon('plus')}</span>New project</a>` : ''}</div></details>`;
   const you = `<details class="dock-switch"><summary class="dock-item dock-switcher" aria-label="Account: ${name}" title="${note}"><span class="dock-icon">${viewer ? avatar(viewer, 40) : icon('user')}${badge}</span><span class="dock-label">${viewer ? 'You' : 'Sign in'}</span></summary><div class="menu dock-menu end" role="menu"><div class="menu-head">${tile}<div><strong>${name}</strong><span>${note}</span></div></div>${account}</div></details>`;
   return `<div class="dock">${spaces}<span class="dock-sep" aria-hidden="true"></span>${you}</div>`;
 }

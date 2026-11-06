@@ -67,7 +67,7 @@ function SpaceSwitcher(info: SwitcherInfo) {
   const label = current ? current.name : "All spaces";
   return <div className="dock-switch" ref={box}>
     <button type="button" className="dock-item dock-switcher" aria-haspopup="menu" aria-expanded={open} aria-label={`Space: ${label}. Switch space`} title="Switch space" onClick={() => setOpen(value => !value)}>
-      <span className="dock-icon">{current ? <Avatar name={current.name} size={40} kind={current.kind} /> : <Home size={22} strokeWidth={1.7} />}<span className="dock-switch-badge"><ChevronsUpDown size={11} /></span></span>
+      <span className={`dock-icon${current ? "" : " art"}`}>{current ? <Avatar name={current.name} size={40} kind={current.kind} /> : <DockArt name="home" />}<span className="dock-switch-badge"><ChevronsUpDown size={11} /></span></span>
       <span className="dock-label">{label}</span>
     </button>
     {open && <SpaceMenu {...info} onClose={() => setOpen(false)} />}
@@ -222,7 +222,19 @@ export function Crumbs({ items }: { items: { label: string; href?: string }[] })
   </nav>;
 }
 
-export type DockItem = { key: string; label: string; href: string; icon: ReactNode; active?: boolean; fresh?: boolean };
+/**
+ * The hub's places with their own dock pictures: Home (all spaces) is a ringed
+ * planet, Orgs a constellation, Builders an astronaut. Each is a black tile
+ * with a white picture in light mode and a white tile with a black one in dark
+ * mode (app/public/dock-<name>-black.svg / -white.svg; shell.css shows one).
+ */
+export type DockArtName = "home" | "orgs" | "builders";
+export const DockArt = ({ name }: { name: DockArtName }) => <>
+  <img className="dock-art on-light" src={`/-/app/dock-${name}-black.svg`} width={40} height={40} alt="" draggable={false} />
+  <img className="dock-art on-dark" src={`/-/app/dock-${name}-white.svg`} width={40} height={40} alt="" draggable={false} />
+</>;
+
+export type DockItem = { key: string; label: string; href: string; icon?: ReactNode; active?: boolean; fresh?: boolean; /** One of the hub places' own pictures (app/public/dock-<art>-black.svg / -white.svg), drawn instead of `icon`. */ art?: DockArtName };
 
 /** The dock: the space you are in (its switcher), the places inside where you are (a project's sections, a space's projects, the hub's parts), and last you (your account). */
 export function Dock({ places, switcher, account }: {
@@ -232,7 +244,7 @@ export function Dock({ places, switcher, account }: {
 }) {
   if (!places.length && !switcher && !account) return null;
   const item = (entry: DockItem) => <a key={entry.key} className={`dock-item${entry.active ? " active" : ""}`} href={entry.href} onClick={onLink} aria-label={entry.label} aria-current={entry.active ? "page" : undefined}>
-    <span className="dock-icon">{entry.icon}</span><span className="dock-label">{entry.label}</span>{entry.fresh && <span className="dock-fresh" title="Changed since you last looked" />}
+    <span className={`dock-icon${entry.art ? " art" : ""}`}>{entry.art ? <DockArt name={entry.art} /> : entry.icon}</span><span className="dock-label">{entry.label}</span>{entry.fresh && <span className="dock-fresh" title="Changed since you last looked" />}
   </a>;
   const sep = <span className="dock-sep" aria-hidden="true" />;
   return <div className="dock">
