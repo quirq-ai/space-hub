@@ -54,9 +54,14 @@ code, kbd, .mono { font-family: var(--mono); font-size: 12px; }
 .side-trigger { width: 28px; height: 28px; margin-left: -4px; }
 .inset-sep { flex: none; width: 1px; height: 16px; margin-right: 4px; background: var(--line-strong); }
 .inset-crumbs { flex: 1; min-width: 0; }
-.inset-crumbs .path-bar { flex-wrap: nowrap; margin: 0; overflow: hidden; }
-.inset-crumbs .path-item { min-width: 0; }
+.inset-crumbs .path-bar { position: relative; flex-wrap: nowrap; margin: 0; }
+.inset-crumbs .path-item { flex: none; }
+.inset-crumbs .path-item:last-child { flex: 0 1 auto; min-width: 0; }
+.inset-crumbs .path-seg { min-width: 0; }
 .inset-crumbs .path-seg > a { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A copy of the bar at full width, measured to decide what folds into "…". */
+.path-ruler { position: absolute; display: flex; width: 0; height: 0; overflow: hidden; visibility: hidden; }
+.inset-crumbs .path-ruler .path-item { flex: none; }
 kbd { padding: 1px 6px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; color: var(--text-3); font-size: 11px; background: var(--panel); }
 .toolbar-spacer { flex: 1; }
 .live-pill { display: inline-flex; flex: none; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); padding: 3px 8px; border-radius: 20px; }
@@ -166,7 +171,8 @@ kbd { padding: 1px 6px; border: 1px solid var(--line); border-bottom-width: 2px;
 .path-seg > a:hover { text-decoration: none; color: var(--text); }
 .path-more { display: inline-flex; padding: 4px 4px; border: 0; border-radius: 6px; background: none; color: var(--text-3); cursor: pointer; }
 .path-more:hover { color: var(--text); }
-.path-menu { left: 0; right: auto; max-height: min(420px, 60vh); overflow-y: auto; }
+.path-fold { padding: 4px 6px; color: var(--text-2); }
+.path-menu { left: 0; right: auto; max-width: min(420px, calc(100vw - 16px)); max-height: min(420px, 60vh); overflow-y: auto; }
 .path-menu a span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The appearance choice inside the account menu: one segmented row. */
 .theme-choices { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 4px 4px 8px; color: var(--text); font-size: 13px; }
