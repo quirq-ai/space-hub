@@ -63,6 +63,11 @@ kbd { padding: 1px 6px; border: 1px solid var(--line); border-bottom-width: 2px;
 .live-pill i { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px var(--green-soft); }
 .live-pill.offline i { background: var(--amber); box-shadow: 0 0 0 3px var(--amber-soft); animation: pulse 1.2s ease-in-out infinite; }
 .live-pill.loading i { background: var(--text-3); box-shadow: none; }
+.live-count { flex: none; font-size: 12px; color: var(--text-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.live-count b { display: inline-block; font-weight: 600; color: var(--text); }
+.live-count b.tick { animation: count-tick .8s ease-out; }
+@keyframes count-tick { from { color: var(--green); transform: translateY(3px); } 35% { transform: none; } }
+@media (prefers-reduced-motion: reduce) { .live-count b.tick { animation: none; } }
 @keyframes pulse { 50% { opacity: .35; } }
 .icon-button { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border: 0; border-radius: 7px; background: none; color: var(--text-2); cursor: pointer; }
 .icon-button:hover, .icon-button.active { background: var(--hover); color: var(--text); }
@@ -197,6 +202,7 @@ kbd { padding: 1px 6px; border: 1px solid var(--line); border-bottom-width: 2px;
   .side-menu.up { top: auto; bottom: calc(100% + 4px); }
   .inset-header { padding: 0 12px; }
   .live-pill { display: none; }
+  .live-count span { display: none; }
 }
 
 /* The same frame on the server-rendered pages (module/src/style.ts): <body> is the grid, the inset's header and <main> its right column, and the menus are <details>. */

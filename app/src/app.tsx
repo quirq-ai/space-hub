@@ -193,7 +193,7 @@ export function App() {
     <Progress />
     <Sidebar sectionsTitle={sectionsTitle} sections={sideSections} settings={settingsLink} open={sidebarOpen} onClose={() => setSidebarOpen(false)} rail={rail} onRail={toggleRail} recoveryOnly={recoveryOnly} />
     <main className="main" id="main">
-      <InsetHeader crumbs={crumbs} live={state} rail={rail} onToggleSidebar={toggleSidebar} activity={hasActivity ? { open: activityOpen, onToggle: toggleActivity } : undefined} recoveryOnly={recoveryOnly} />
+      <InsetHeader crumbs={crumbs} live={state} activityTotal={hasActivity ? meta?.activityTotal : undefined} rail={rail} onToggleSidebar={toggleSidebar} activity={hasActivity ? { open: activityOpen, onToggle: toggleActivity } : undefined} recoveryOnly={recoveryOnly} />
       <div className="main-scroll">
         {route.page === "home" && route.tab !== "settings" && !recovery && <HomePage tab={route.tab} view={view as View<HubMeta> | undefined} me={me.name} mySpaces={me.spaces.map(s => s.space)} seen={seen} />}
         {recovery && <SettingsPage onConnectionState={setRecoveryState} signedIn={!recoveryOnly && !!me.name} operator={operator} />}

@@ -483,8 +483,8 @@ instead: `scripts/setup.sh maincloud`. Pick a unique name with `SPACEHUB_DB`.
 ## Web UI
 
 The server's URL opens **the app**, a desktop-style interface for the whole
-hub. A header holds the breadcrumb and the live state; a sidebar lists your
-spaces, recent projects and where you are; a strip under each title shows the
+hub. A header holds the breadcrumb, the live state and a running count of the
+place's activity; a sidebar lists your spaces, recent projects and where you are; a strip under each title shows the
 place's facts and who is here, beside a Clone menu; a dock at the bottom holds
 the place's sections and tools. The dock's first entry opens Home, search
 (⌘K: spaces, projects and the current project's files) and your spaces, and
