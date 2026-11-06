@@ -1,7 +1,7 @@
 // The frame's behaviour on the server-rendered pages (the guide, sign-in, new
 // project), as the app's shell does it: fold to icons with the app's own saved
 // choice, the drawer on phones, ⌘B, menus that close on a click outside, and
-// the appearance choice. Loaded as the first thing in <body>, so the folded
+// the appearance choice in the dock's account menu. Loaded as the first thing in <body>, so the folded
 // state is there before the first paint.
 (() => {
   const RAIL = "spacehub:rail:v1";
@@ -40,7 +40,7 @@
     try { localStorage.setItem(THEME, preference); } catch { /* The choice still holds on this page. */ }
     mark(preference);
   };
-  const closeMenus = except => document.querySelectorAll(".sidebar details[open]").forEach(menu => { if (!except || !menu.contains(except)) menu.open = false; });
+  const closeMenus = except => document.querySelectorAll(".sidebar details[open], .dock details[open]").forEach(menu => { if (!except || !menu.contains(except)) menu.open = false; });
   addEventListener("DOMContentLoaded", () => mark(document.documentElement.dataset.themePreference || "system"));
   addEventListener("click", event => {
     const target = event.target instanceof Element ? event.target : null;

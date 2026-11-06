@@ -25,25 +25,27 @@ test("the page header replaces the top bar: sidebar trigger, where you are, live
   assert.doesNotMatch(renderToStaticMarkup(createElement(InsetHeader, props)), /aria-label="Activity"/);
 });
 
-test("standalone recovery sidebar offers its own home and no hub search or sign-in", () => {
-  const props = { primary: [], sections: [], footer: [], me: { checked: true, name: null }, signIn: "/-/login", open: false, onClose: nothing, rail: false, onRail: nothing, onSearch: nothing };
+test("standalone recovery offers its own home and no hub search or sign-in; the account is the dock's last entry", () => {
+  const props = { primary: [], sections: [], footer: [], open: false, onClose: nothing, rail: false, onRail: nothing, onSearch: nothing };
   const standalone = renderToStaticMarkup(createElement(Sidebar, { ...props, recoveryOnly: true }));
   assert.match(standalone, /href="\/#\/settings"/);
-  assert.match(standalone, /Local recovery/);
   assert.doesNotMatch(standalone, /Sign in|Search|\/-\/login|Guest/);
-  const normal = renderToStaticMarkup(createElement(Sidebar, props));
-  assert.match(normal, /Search/);
-  assert.match(normal, /Guest/);
-  assert.match(normal, /Not signed in/);
-  const signedIn = renderToStaticMarkup(createElement(Sidebar, { ...props, me: { checked: true, name: "suraj" } }));
-  assert.match(signedIn, /Account: suraj/);
+  assert.match(renderToStaticMarkup(createElement(Sidebar, props)), /Search/);
+  const recoveryDock = renderToStaticMarkup(createElement(Dock, { places: [], account: { me: { checked: true, name: null }, signIn: "/-/login", recoveryOnly: true } }));
+  assert.match(recoveryDock, /Local recovery/);
+  assert.doesNotMatch(recoveryDock, /Sign in|\/-\/login|Guest/);
+  assert.match(renderToStaticMarkup(createElement(Dock, { places: [], account: { me: { checked: true, name: null }, signIn: "/-/login" } })), /Account: Guest/);
+  const places = [{ key: "chat", label: "Chat", href: "/org/project#files?path=Chat", icon: null }];
+  const switcher = { current: null, options: [], signedIn: true };
+  const dock = renderToStaticMarkup(createElement(Dock, { places, switcher, account: { me: { checked: true, name: "suraj" }, signIn: "/-/login" } }));
+  assert.ok(dock.indexOf("Switch space") < dock.indexOf(">Chat<"));
+  assert.ok(dock.indexOf(">Chat<") < dock.indexOf("Account: suraj"));
 });
 
 test("Settings sits below Guide, while standalone recovery hides nonfunctional hub links", () => {
   const props = {
     primary: [],
     sections: [{ key: "recent", title: "Recent", limit: 4, items: [{ key: "project", label: "org/project", href: "/org/project", icon: null }] }],
-    me: { checked: true, name: null }, signIn: "/-/login",
     footer: [{ key: "guide", label: "Guide", href: "/-/guide", icon: null }, { key: "settings", label: "Settings", href: "/#/settings", icon: null, active: true }, { key: "builders", label: "Builders", href: "/-/builders", icon: null }], open: false, onClose: nothing, rail: false, onRail: nothing, onSearch: nothing,
   };
   const standalone = renderToStaticMarkup(createElement(Sidebar, { ...props, recoveryOnly: true }));

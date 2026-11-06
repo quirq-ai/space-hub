@@ -63,23 +63,24 @@ function SpaceSwitcher({ current, options, signedIn }: { current: SpaceOption | 
   </div>;
 }
 
-/** The sidebar's footer: who you are, with your account, appearance and sign-out in one menu. */
-function NavUser({ me, signIn, rail, recoveryOnly }: { me: Viewer; signIn: string; rail: boolean; recoveryOnly: boolean }) {
+/** The dock's last entry: who you are, drawn like the space switcher, with your account, appearance and sign-out in one menu opening upward. */
+function DockAccount({ me, signIn, recoveryOnly }: { me: Viewer; signIn: string; recoveryOnly: boolean }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   useDismiss(open, setOpen, box);
-  if (!recoveryOnly && !me.checked) return <div className="nav-user"><span className="side-button large" aria-hidden="true"><span className="side-tile skeleton" /></span></div>;
+  if (!recoveryOnly && !me.checked) return <div className="dock-switch" aria-hidden="true"><span className="dock-item"><span className="dock-icon skeleton" /><span className="dock-label">&nbsp;</span></span></div>;
   const name = recoveryOnly ? "Local recovery" : me.name ?? "Guest";
   const note = recoveryOnly ? "This instance" : me.name ? "Signed in" : "Not signed in";
+  const picture = recoveryOnly ? <span className="side-tile brand"><QuirqMark size={20} /></span> : me.name ? <Avatar name={me.name} size={40} /> : <User size={22} strokeWidth={1.7} />;
   const tile = recoveryOnly ? <span className="side-tile brand"><QuirqMark size={20} /></span> : me.name ? <span className="side-tile"><Avatar name={me.name} size={32} /></span> : <span className="side-tile anon"><User size={16} /></span>;
-  const head = <div className="menu-head">{tile}<div><strong>{name}</strong><span>{note}</span></div></div>;
   const go = (event: ReactMouseEvent<HTMLAnchorElement>) => { setOpen(false); onLink(event); };
-  return <div className="nav-user" ref={box}>
-    <button type="button" className="side-button large" aria-haspopup="menu" aria-expanded={open} aria-label={`Account: ${name}`} title={rail ? name : undefined} onClick={() => setOpen(value => !value)}>
-      {tile}<span className="side-text"><strong>{name}</strong><span>{note}</span></span><ChevronsUpDown size={16} className="side-chevron" />
+  return <div className="dock-switch" ref={box}>
+    <button type="button" className="dock-item dock-switcher" aria-haspopup="menu" aria-expanded={open} aria-label={`Account: ${name}`} title={note} onClick={() => setOpen(value => !value)}>
+      <span className="dock-icon">{picture}<span className="dock-switch-badge"><ChevronsUpDown size={11} /></span></span>
+      <span className="dock-label">{recoveryOnly ? "Recovery" : me.name ? "You" : "Sign in"}</span>
     </button>
-    {open && <div className="menu side-menu up" role="menu">
-      {head}
+    {open && <div className="menu dock-menu end" role="menu">
+      <div className="menu-head">{tile}<div><strong>{name}</strong><span>{note}</span></div></div>
       {!recoveryOnly && me.name && <>
         <a role="menuitem" href={"/" + encodeURIComponent(me.name)} onClick={go}><User size={15} />Your profile</a>
         <a role="menuitem" href="/-/new"><Plus size={15} />New project</a>
@@ -100,13 +101,12 @@ function Item({ item, rail, onClose, sub = false }: { item: NavItem; rail: boole
 
 /**
  * The sidebar, after shadcn's sidebar-07: the hub in the header (the space
- * switcher is in the dock),
+ * switcher and your account are in the dock),
  * groups of places (the main ones, then where you are as collapsible lists),
  * the hub's own pages, and your account in the footer. It folds into icons.
  */
-export function Sidebar({ primary, sectionsTitle, sections, footer, me, signIn, open, onClose, rail, onRail, onSearch, recoveryOnly = false }: {
+export function Sidebar({ primary, sectionsTitle, sections, footer, open, onClose, rail, onRail, onSearch, recoveryOnly = false }: {
   primary: NavItem[]; sectionsTitle?: string; sections: SideSection[]; footer: NavItem[];
-  me: Viewer; signIn: string;
   open: boolean; onClose: () => void; rail: boolean; onRail: () => void; onSearch: () => void;
   recoveryOnly?: boolean;
 }) {
@@ -161,7 +161,6 @@ export function Sidebar({ primary, sectionsTitle, sections, footer, me, signIn, 
           {footer.filter(item => !recoveryOnly || item.key === "settings").map(item => <Item key={item.key} item={item} rail={rail} onClose={onClose} />)}
         </div>
       </div>
-      <div className="side-foot"><NavUser me={me} signIn={signIn} rail={rail} recoveryOnly={recoveryOnly} /></div>
       <button type="button" className="side-rail only-wide" tabIndex={-1} aria-label={rail ? "Expand the sidebar" : "Collapse the sidebar"} title={rail ? "Expand the sidebar" : "Collapse the sidebar"} onClick={onRail} />
     </nav>
     {open && <button className="scrim only-narrow" type="button" aria-label="Close navigation" onClick={onClose} />}
@@ -199,16 +198,23 @@ export function Crumbs({ items }: { items: { label: string; href?: string }[] })
 
 export type DockItem = { key: string; label: string; href: string; icon: ReactNode; active?: boolean; fresh?: boolean };
 
-/** The dock: the space you are in (its switcher), then the places inside where you are (a project's sections, a space's projects, the hub's parts). */
-export function Dock({ places, switcher }: { places: DockItem[]; switcher?: { current: SpaceOption | null; options: SpaceOption[]; signedIn: boolean } }) {
-  if (!places.length && !switcher) return null;
+/** The dock: the space you are in (its switcher), the places inside where you are (a project's sections, a space's projects, the hub's parts), and last you (your account). */
+export function Dock({ places, switcher, account }: {
+  places: DockItem[];
+  switcher?: { current: SpaceOption | null; options: SpaceOption[]; signedIn: boolean };
+  account?: { me: Viewer; signIn: string; recoveryOnly?: boolean };
+}) {
+  if (!places.length && !switcher && !account) return null;
   const item = (entry: DockItem) => <a key={entry.key} className={`dock-item${entry.active ? " active" : ""}`} href={entry.href} onClick={onLink} aria-label={entry.label} aria-current={entry.active ? "page" : undefined}>
     <span className="dock-icon">{entry.icon}</span><span className="dock-label">{entry.label}</span>{entry.fresh && <span className="dock-fresh" title="Changed since you last looked" />}
   </a>;
+  const sep = <span className="dock-sep" aria-hidden="true" />;
   return <div className="dock">
     {switcher && <SpaceSwitcher current={switcher.current} options={switcher.options} signedIn={switcher.signedIn} />}
-    {switcher && places.length > 0 && <span className="dock-sep" aria-hidden="true" />}
+    {switcher && places.length > 0 && sep}
     {places.length > 0 && <nav className="dock-places" aria-label="Dock">{places.map(item)}</nav>}
+    {account && (switcher || places.length > 0) && sep}
+    {account && <DockAccount me={account.me} signIn={account.signIn} recoveryOnly={!!account.recoveryOnly} />}
   </div>;
 }
 

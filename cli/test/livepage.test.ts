@@ -36,7 +36,7 @@ test('server pages draw the app frame: the shared stylesheet, the sidebar and th
   const html = shell('Guide · spacehub', '<h1>Guide</h1>', '', { viewer: 'ada', current: 'guide' });
   assert.match(html, /<link rel="stylesheet" href="\/-\/app\/shell.css">/);
   assert.match(html, /<script src="\/-\/app\/frame.js"><\/script>/);
-  for (const part of ['class="shell server"', 'class="sidebar"', 'class="side-head"', 'class="side-content"', 'class="side-foot"', 'class="inset-header"', 'data-frame="toggle"', 'data-theme-choice="dark"']) assert.ok(html.includes(part), part);
+  for (const part of ['class="shell server"', 'class="sidebar"', 'class="side-head"', 'class="side-content"', 'class="dock"', 'Switch space', 'class="inset-header"', 'data-frame="toggle"', 'data-theme-choice="dark"']) assert.ok(html.includes(part), part);
   assert.match(html, /class="nav-item active" href="\/-\/guide"/);
   assert.match(html, /aria-current="page">Guide</);
   assert.match(html, /Account: ada/);
