@@ -37,12 +37,20 @@ test('server pages draw the app frame: the shared stylesheet, the sidebar and th
   assert.match(html, /<link rel="stylesheet" href="\/-\/app\/shell.css">/);
   assert.match(html, /<script src="\/-\/app\/frame.js"><\/script>/);
   for (const part of ['class="shell server"', 'class="sidebar"', 'class="side-head"', 'class="side-content"', 'class="dock"', 'Switch space', 'class="inset-header"', 'data-frame="toggle"', 'data-theme-choice="dark"']) assert.ok(html.includes(part), part);
-  assert.match(html, /class="nav-item active" href="\/-\/guide"/);
+  // Home and Search open from the dock's switcher, and the hub's pages from its account, not the sidebar.
+  const bar = html.slice(html.indexOf('class="sidebar"'), html.indexOf('class="inset-header"'));
+  assert.doesNotMatch(bar, />Home<|>Search<|>Guide<|>Settings<|>Builders<|Your profile|Platform/);
+  const menus = html.slice(html.indexOf('class="dock"'), html.indexOf('<main>'));
+  assert.ok(menus.indexOf('>Home<') > 0 && menus.indexOf('>Home<') < menus.indexOf('>Spaces<'));
+  assert.ok(menus.indexOf('>Search<') > 0 && menus.indexOf('>Search<') < menus.indexOf('>Spaces<'));
+  assert.match(menus, /class="on" aria-current="page" href="\/-\/guide"/);
+  for (const page of ['Your profile', 'Guide', 'Settings', 'Builders', 'Sign out']) assert.ok(menus.includes(page), page);
   assert.match(html, /aria-current="page">Guide</);
   assert.match(html, /Account: ada/);
   assert.doesNotMatch(html, /Search spaces, projects, files|class="topbar"|<header><a class="home"/);
   const guest = shell('Sign in · spacehub', '<p>x</p>', '', { viewer: null });
   assert.match(guest, /href="\/-\/login"/);
   assert.match(guest, /Not signed in/);
+  for (const page of ['Sign in', 'Guide', 'Settings', 'Builders']) assert.ok(guest.includes(`${page}</a>`), page);
 });
 

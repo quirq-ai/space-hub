@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Bot, BookOpen, BrainCircuit, Hash, Folder, FolderGit2, History, Home, Settings, Users, User } from "lucide-react";
+import { Bot, BookOpen, BrainCircuit, Hash, Folder, FolderGit2, History, Home, Settings, Users } from "lucide-react";
 import { placeUrl, viewUrl, type HubMeta, type Place, type ProjectMeta, type SpaceMeta, type View } from "@/api";
 import { useLive } from "@/hooks/use-live";
 import { channelSeenKey, ChannelsContext, useChannels } from "@/hooks/use-channels";
@@ -115,16 +115,12 @@ export function App() {
   const signIn = `/-/login?next=${encodeURIComponent(location.pathname + location.hash)}`;
   const state = recovery ? operator ? recoveryState : "live" : live.error && view ? "offline" : !view ? "loading" : "live";
 
-  // The dock's space switcher; the sidebar: the main places, short lists of where you are and where you were, and a footer.
+  // The dock's space switcher; the sidebar: short lists of where you are and where you were.
   const kindOf = (name: string) => me.spaces.find(s => s.space === name)?.kind ?? (meta?.level === "space" && meta.name === name ? meta.kind : space.data?.meta.name === name ? space.data.meta.kind : "personal");
   const switcher = {
     current: route.page === "home" || route.page === "subhub" ? null : { name: place.space, kind: kindOf(place.space), href: placeUrl({ space: place.space, project: "" }) },
     options: me.spaces.map(s => ({ name: s.space, kind: s.kind, href: placeUrl({ space: s.space, project: "" }) })),
   };
-  const primary = [
-    ...(!recoveryOnly ? [{ key: "home", label: "Home", href: "/", icon: <Home size={16} />, active: homeTab === "home" }] : []),
-    ...(me.name && !recoveryOnly ? [{ key: "me", label: "Your profile", href: placeUrl({ space: me.name, project: "" }), icon: <User size={16} />, active: route.page === "space" && place.space === me.name }] : []),
-  ];
   const sideSections: SideSection[] = [];
   if (channels && meta?.level === "project") {
     const seenHere = Object.fromEntries(Object.entries(seen).filter(([key]) => key.startsWith(channelSeenKey(place, ""))).map(([key, at]) => [key.slice(channelSeenKey(place, "").length), at]));
@@ -149,11 +145,12 @@ export function App() {
   });
   const recent = recoveryOnly ? [] : recentProjects().filter(name => name !== placeKey);
   if (recent.length) sideSections.push({ key: "recent", title: "Recent", icon: <History size={16} />, limit: 4, items: recent.map(name => { const [s, p] = name.split("/"); return { key: "r:" + name, label: name, href: placeUrl({ space: s, project: p }), icon: <History size={16} /> }; }) });
-  // The hub's own pages, rendered by the server in this same frame.
-  const footer = [
-    { key: "guide", label: "Guide", href: "/-/guide", icon: <BookOpen size={16} /> },
-    { key: "settings", label: "Settings", href: "/#/settings", icon: <Settings size={16} />, active: recovery },
-    { key: "builders", label: "Builders", href: "/#" + hashOf("builders"), icon: <Users size={16} />, active: homeTab === "builders" },
+  // The hub's own pages, in the dock's account menu.
+  const settingsLink = { key: "settings", label: "Settings", href: "/#/settings", icon: <Settings size={15} />, active: recovery };
+  const hubLinks = [
+    { key: "guide", label: "Guide", href: "/-/guide", icon: <BookOpen size={15} /> },
+    settingsLink,
+    { key: "builders", label: "Builders", href: "/#" + hashOf("builders"), icon: <Users size={15} />, active: homeTab === "builders" },
   ];
 
   // Navigation has one job per piece: the breadcrumb goes up, the dock goes
@@ -194,7 +191,7 @@ export function App() {
 
   return <div className={`shell${activity ? " with-inspector" : ""}${rail ? " rail" : ""}`}>
     <Progress />
-    <Sidebar primary={primary} sectionsTitle={sectionsTitle} sections={sideSections} footer={footer} open={sidebarOpen} onClose={() => setSidebarOpen(false)} rail={rail} onRail={toggleRail} onSearch={() => setSearching(true)} recoveryOnly={recoveryOnly} />
+    <Sidebar sectionsTitle={sectionsTitle} sections={sideSections} settings={settingsLink} open={sidebarOpen} onClose={() => setSidebarOpen(false)} rail={rail} onRail={toggleRail} recoveryOnly={recoveryOnly} />
     <main className="main" id="main">
       <InsetHeader crumbs={crumbs} live={state} rail={rail} onToggleSidebar={toggleSidebar} activity={hasActivity ? { open: activityOpen, onToggle: toggleActivity } : undefined} recoveryOnly={recoveryOnly} />
       <div className="main-scroll">
@@ -204,7 +201,7 @@ export function App() {
         {!recovery && route.page === "space" && <SpacePage name={place.space} tab={route.tab} view={view as View<SpaceMeta> | undefined} error={live.error} me={me.name} signIn={signIn} seen={seen} />}
         {!recovery && route.page === "project" && <ChannelsContext.Provider value={channels}><ProjectPage route={route} view={view as View<ProjectMeta> | undefined} error={live.error} me={me.name} signIn={signIn} refresh={live.refresh} /></ChannelsContext.Provider>}
       </div>
-      <Dock places={places} switcher={recovery ? undefined : { ...switcher, signedIn: !!me.name }} account={{ me, signIn, recoveryOnly }} />
+      <Dock places={places} switcher={recoveryOnly ? undefined : { ...switcher, signedIn: !!me.name, onSearch: () => setSearching(true) }} account={{ me, signIn, recoveryOnly, links: hubLinks }} />
     </main>
     {activity && <Inspector title="Activity" note={route.page === "project" ? placeKey : route.page === "space" ? place.space : undefined} onClose={toggleActivity}><ActivityPanel meta={activityOf} /></Inspector>}
     {searching && !recoveryOnly && <SearchPalette place={place} onClose={() => setSearching(false)} />}

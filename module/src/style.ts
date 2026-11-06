@@ -140,24 +140,18 @@ export function shell(title: string, body: string, head = '', frame: Frame | nul
   const top = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><script src="/-/app/theme.js"></script><script src="/-/app/copy.js" defer></script>${head}<title>${esc(title)}</title><link rel="icon" href="/-/app/quirq-icon.svg">${css}</head>`;
   if (!frame) return `${top}<body class="bare"><main>${body}</main></body></html>`;
   const crumb = title.replace(/ · spacehub$/, '') || 'spacehub';
-  return `${top}<body class="shell server"><script src="/-/app/frame.js"></script>${sidebar(frame.viewer, frame.current ?? '')}<header class="inset-header"><button class="icon-button side-trigger" type="button" data-frame="toggle" aria-label="Toggle the sidebar" title="Toggle the sidebar (⌘B)">${icon('panel')}</button><span class="inset-sep" aria-hidden="true"></span><div class="inset-crumbs"><nav class="path-bar" aria-label="Where you are"><span class="path-item"><span class="path-seg"><a href="/">Home</a></span></span><span class="path-item">${icon('right', 'crumb-sep')}<span class="path-seg"><a class="current" aria-current="page">${esc(crumb)}</a></span></span></nav></div></header>${dock(frame.viewer)}<main>${body}</main></body></html>`;
+  return `${top}<body class="shell server"><script src="/-/app/frame.js"></script>${sidebar()}<header class="inset-header"><button class="icon-button side-trigger" type="button" data-frame="toggle" aria-label="Toggle the sidebar" title="Toggle the sidebar (⌘B)">${icon('panel')}</button><span class="inset-sep" aria-hidden="true"></span><div class="inset-crumbs"><nav class="path-bar" aria-label="Where you are"><span class="path-item"><span class="path-seg"><a href="/">Home</a></span></span><span class="path-item">${icon('right', 'crumb-sep')}<span class="path-seg"><a class="current" aria-current="page">${esc(crumb)}</a></span></span></nav></div></header>${dock(frame.viewer, frame.current ?? '')}<main>${body}</main></body></html>`;
 }
 
 const MARK = '<svg class="quirq-mark" width="20" height="20" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="currentColor"/><path class="quirq-mark-q" transform="translate(15 9) scale(.34)" d="M50 0A50 50 0 0 1 100 50V118A14 14 0 0 1 86 132A14 14 0 0 1 72 118V94.87A50 50 0 1 1 50 0ZM50 33A17 17 0 1 0 50 67A17 17 0 1 0 50 33Z"/></svg>';
 
 // The sidebar, the same markup as the app's Sidebar.
-function sidebar(viewer: string | null, current: Current): string {
-  const me = viewer ? encodeURIComponent(viewer) : '';
-  const item = (key: string, href: string, label: string, iconName: string, extra = '') =>
-    `<a class="nav-item${key && key === current ? ' active' : ''}" href="${href}"${key && key === current ? ' aria-current="page"' : ''}><span class="nav-icon">${icon(iconName)}</span><span class="nav-label">${esc(label)}</span>${extra}</a>`;
+function sidebar(): string {
   const brand = `<a class="side-button large" href="/" aria-label="spacehub home"><span class="side-tile brand">${MARK}</span><span class="side-text"><strong>spacehub</strong><span>This hub</span></span></a>`;
-  return `<nav class="sidebar" aria-label="Navigation"><div class="side-head">${brand}</div><div class="side-content"><div class="side-group"><div class="side-label">Platform</div>${item('home', '/', 'Home', 'home')}${item('', '/#search', 'Search', 'search', '<kbd class="nav-kbd">⌘K</kbd>')}${viewer ? item('me', `/${me}`, 'Your profile', 'user') : ''}</div><div class="side-group side-secondary">${item('guide', '/-/guide', 'Guide', 'guide')}${item('settings', '/#/settings', 'Settings', 'settings')}${item('builders', '/#builders', 'Builders', 'builders')}</div></div><button type="button" class="side-rail only-wide" tabindex="-1" data-frame="rail" aria-label="Fold or unfold the sidebar" title="Fold or unfold the sidebar"></button></nav>`;
+  return `<nav class="sidebar" aria-label="Navigation"><div class="side-head">${brand}</div><div class="side-content"></div><button type="button" class="side-rail only-wide" tabindex="-1" data-frame="rail" aria-label="Fold or unfold the sidebar" title="Fold or unfold the sidebar"></button></nav>`;
 }
 
-// The dock, the same markup as the app's Dock: the space switcher first and
-// your account last, each a picture with an up-down badge whose menu
-// (<details>) opens upward. These pages have no places of their own.
-function dock(viewer: string | null): string {
+function dock(viewer: string | null, current: Current): string {
   const me = viewer ? encodeURIComponent(viewer) : '';
   const name = viewer ? esc(viewer) : 'Guest';
   const note = viewer ? 'Signed in' : 'Not signed in';
@@ -165,10 +159,13 @@ function dock(viewer: string | null): string {
   const tile = viewer ? `<span class="side-tile">${avatar(viewer, 32)}</span>` : `<span class="side-tile anon">${icon('user')}</span>`;
   const choice = (value: string, label: string, iconName: string) => `<button type="button" role="radio" aria-checked="false" aria-label="${label}" title="${value === 'system' ? 'System: follows your device' : label}" data-theme-choice="${value}">${icon(iconName)}</button>`;
   const appearance = `<div class="theme-choices" role="radiogroup" aria-label="Appearance"><span class="theme-choices-label">Appearance</span><span class="theme-choices-row">${choice('light', 'Light', 'sun')}${choice('dark', 'Dark', 'moon')}${choice('system', 'System', 'monitor')}</span></div>`;
+  const link = (key: Current, href: string, label: string, iconName: string) => `<a role="menuitem"${key && key === current ? ' class="on" aria-current="page"' : ''} href="${href}">${icon(iconName)}${label}</a>`;
+  const hubPages = `${link('guide', '/-/guide', 'Guide', 'guide')}${link('', '/#/settings', 'Settings', 'settings')}${link('builders', '/#builders', 'Builders', 'builders')}<div class="menu-sep"></div>`;
   const account = viewer
-    ? `<a role="menuitem" href="/${me}">${icon('user')}Your profile</a><a role="menuitem" href="/-/new">${icon('plus')}New project</a><div class="menu-sep"></div>${appearance}<div class="menu-sep"></div><form method="post" action="/-/logout"><button role="menuitem" type="submit">${icon('out')}Sign out</button></form>`
-    : `<a role="menuitem" href="/-/login">${icon('login')}Sign in</a><div class="menu-sep"></div>${appearance}`;
-  const spaces = `<details class="dock-switch"><summary class="dock-item dock-switcher" aria-label="Space: All spaces. Switch space" title="Switch space"><span class="dock-icon">${icon('home')}${badge}</span><span class="dock-label">All spaces</span></summary><div class="menu dock-menu" role="menu"><div class="menu-title">Spaces</div><a role="menuitem" class="on" href="/"><span class="menu-tile">${icon('home')}</span>All spaces${icon('check', 'menu-check')}</a>${viewer ? `<a role="menuitem" href="/${me}"><span class="menu-tile">${avatar(viewer, 18)}</span>${name}<span class="menu-note">Builder</span></a><div class="menu-sep"></div><a role="menuitem" class="menu-quiet" href="/-/new"><span class="menu-tile dashed">${icon('plus')}</span>New project</a>` : ''}</div></details>`;
+    ? `${link('me', `/${me}`, 'Your profile', 'user')}${link('', '/-/new', 'New project', 'plus')}<div class="menu-sep"></div>${hubPages}${appearance}<div class="menu-sep"></div><form method="post" action="/-/logout"><button role="menuitem" type="submit">${icon('out')}Sign out</button></form>`
+    : `${link('', '/-/login', 'Sign in', 'login')}<div class="menu-sep"></div>${hubPages}${appearance}`;
+  const hubMenu = `<a role="menuitem" href="/">${icon('home')}Home</a><a role="menuitem" href="/#search">${icon('search')}Search<kbd class="nav-kbd">⌘K</kbd></a><div class="menu-sep"></div>`;
+  const spaces = `<details class="dock-switch"><summary class="dock-item dock-switcher" aria-label="Space: All spaces. Switch space" title="Switch space"><span class="dock-icon">${icon('home')}${badge}</span><span class="dock-label">All spaces</span></summary><div class="menu dock-menu" role="menu">${hubMenu}<div class="menu-title">Spaces</div><a role="menuitem" class="on" href="/"><span class="menu-tile">${icon('home')}</span>All spaces${icon('check', 'menu-check')}</a>${viewer ? `<a role="menuitem" href="/${me}"><span class="menu-tile">${avatar(viewer, 18)}</span>${name}<span class="menu-note">Builder</span></a><div class="menu-sep"></div><a role="menuitem" class="menu-quiet" href="/-/new"><span class="menu-tile dashed">${icon('plus')}</span>New project</a>` : ''}</div></details>`;
   const you = `<details class="dock-switch"><summary class="dock-item dock-switcher" aria-label="Account: ${name}" title="${note}"><span class="dock-icon">${viewer ? avatar(viewer, 40) : icon('user')}${badge}</span><span class="dock-label">${viewer ? 'You' : 'Sign in'}</span></summary><div class="menu dock-menu end" role="menu"><div class="menu-head">${tile}<div><strong>${name}</strong><span>${note}</span></div></div>${account}</div></details>`;
   return `<div class="dock">${spaces}<span class="dock-sep" aria-hidden="true"></span>${you}</div>`;
 }
