@@ -1,6 +1,6 @@
 
-import { useEffect, useId, useRef, useSyncExternalStore } from "react";
-import { Check, Monitor, Moon, Sun } from "lucide-react";
+import { useSyncExternalStore } from "react";
+import { Monitor, Moon, Sun } from "lucide-react";
 import { THEME_CHANGE_EVENT, THEME_STORAGE_KEY, themePreference, type ThemePreference } from "@/lib/theme";
 
 function currentPreference(): ThemePreference {
@@ -39,42 +39,21 @@ const choices = [
   { value: "system", label: "System", Icon: Monitor }
 ] as const;
 
-export function ThemePicker() {
+export function selectTheme(value: ThemePreference) {
+  applyTheme(value);
+  try { localStorage.setItem(THEME_STORAGE_KEY, value); } catch { /* The in-memory choice still works when browser storage is unavailable. */ }
+  window.dispatchEvent(new Event(THEME_CHANGE_EVENT));
+}
+
+/** Light, dark or system, as one segmented row: it sits inside the sidebar's account menu. */
+export function ThemeChoices() {
   const preference = useSyncExternalStore(subscribe, currentPreference, serverPreference);
-  const picker = useRef<HTMLDetailsElement>(null);
-  const group = useId();
-  const Icon = preference === "dark" ? Moon : preference === "light" ? Sun : Monitor;
-
-  useEffect(() => {
-    const dismiss = (event: PointerEvent) => {
-      if (event.target instanceof Node && picker.current?.open && !picker.current.contains(event.target)) picker.current.open = false;
-    };
-    const escape = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && picker.current?.open) {
-        picker.current.open = false;
-        picker.current.querySelector("summary")?.focus();
-      }
-    };
-    document.addEventListener("pointerdown", dismiss);
-    document.addEventListener("keydown", escape);
-    return () => { document.removeEventListener("pointerdown", dismiss); document.removeEventListener("keydown", escape); };
-  }, []);
-
-  function selectTheme(value: ThemePreference) {
-    applyTheme(value);
-    try { localStorage.setItem(THEME_STORAGE_KEY, value); } catch { /* The in-memory choice still works when browser storage is unavailable. */ }
-    window.dispatchEvent(new Event(THEME_CHANGE_EVENT));
-  }
-
-  return <details className="theme-picker" ref={picker}>
-    <summary className="icon-button" aria-label={`Appearance: ${preference}`} title="Appearance"><Icon size={17} strokeWidth={1.8} /></summary>
-    <fieldset className="theme-menu">
-      <legend>Appearance</legend>
-      {choices.map(({ value, label, Icon: OptionIcon }) => <label className="theme-option" key={value}>
-        <input type="radio" name={group} value={value} checked={preference === value} onChange={() => selectTheme(value)} />
-        <OptionIcon size={17} strokeWidth={1.8} /><span>{label}</span>{preference === value && <Check size={15} className="theme-check" />}
-      </label>)}
-      <p className="theme-hint">Saved in this browser. System follows your device.</p>
-    </fieldset>
-  </details>;
+  return <div className="theme-choices" role="radiogroup" aria-label="Appearance">
+    <span className="theme-choices-label">Appearance</span>
+    <span className="theme-choices-row">
+      {choices.map(({ value, label, Icon }) => <button key={value} type="button" role="radio" aria-checked={preference === value} aria-label={label} title={value === "system" ? "System: follows your device" : label} className={preference === value ? "on" : undefined} onClick={() => selectTheme(value)}>
+        <Icon size={14} strokeWidth={1.9} />
+      </button>)}
+    </span>
+  </div>;
 }

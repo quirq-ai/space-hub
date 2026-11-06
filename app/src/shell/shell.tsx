@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Activity, BookOpen, Check, ChevronDown, ChevronRight, ChevronsUpDown, Home, LogIn, LogOut, Menu, PanelLeftClose, PanelLeftOpen, Plus, Search, User, X } from "lucide-react";
-import { ThemePicker } from "@/components/theme-picker";
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { Activity, Check, ChevronRight, ChevronsUpDown, Home, LogIn, LogOut, PanelLeft, Plus, Search, User, X } from "lucide-react";
+import { ThemeChoices } from "@/components/theme-picker";
 import { useLoading } from "@/hooks/use-live";
 import { onLink } from "@/router";
 import { Avatar, QuirqMark } from "@/ui/primitives";
@@ -17,9 +17,8 @@ export function Progress() {
   return <div className={`progress${shown ? " on" : ""}`} role="progressbar" aria-hidden={!shown} aria-label="Loading" />;
 }
 
-function UserMenu({ name }: { name: string }) {
-  const [open, setOpen] = useState(false);
-  const box = useRef<HTMLDivElement>(null);
+/** Close a menu on Escape or a click outside it. */
+function useDismiss(open: boolean, setOpen: (open: boolean) => void, box: { current: HTMLElement | null }) {
   useEffect(() => {
     if (!open) return;
     const close = (event: MouseEvent | KeyboardEvent) => {
@@ -29,133 +28,172 @@ function UserMenu({ name }: { name: string }) {
     addEventListener("keydown", close);
     return () => { removeEventListener("mousedown", close); removeEventListener("keydown", close); };
   }, [open]);
-  return <div className="menu-anchor" ref={box}>
-    <button className="user-button" type="button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(value => !value)}><Avatar name={name} size={26} /><ChevronDown size={14} /></button>
-    {open && <div className="menu" role="menu">
-      <div className="menu-head"><Avatar name={name} size={32} /><div><strong>{name}</strong><span>Signed in</span></div></div>
-      <a role="menuitem" href={"/" + encodeURIComponent(name)} onClick={event => { setOpen(false); onLink(event); }}><User size={15} />Your profile</a>
-      <a role="menuitem" href="/-/new"><Plus size={15} />New project</a>
-      <a role="menuitem" href="/-/guide"><BookOpen size={15} />Guide</a>
-      <form method="post" action="/-/logout"><button role="menuitem" type="submit"><LogOut size={15} />Sign out</button></form>
-    </div>}
-  </div>;
-}
-
-export function TopBar({ me, signIn, live, onSearch, onMenu, activity, recoveryOnly = false }: {
-  me: { checked: boolean; name: string | null }; signIn: string; live: "live" | "offline" | "loading"; onSearch: () => void; onMenu: () => void;
-  /** The right-hand Activity panel, where the page has one. */
-  activity?: { open: boolean; onToggle: () => void };
-  recoveryOnly?: boolean;
-}) {
-  return <header className="topbar">
-    <button className="icon-button only-narrow" type="button" aria-label="Open navigation" onClick={onMenu}><Menu size={18} /></button>
-    <a className="logo" href={recoveryOnly ? "/#/settings" : "/"} onClick={onLink} aria-label={recoveryOnly ? "Settings home" : "spacehub home"}><QuirqMark /><span>spacehub</span></a>
-    {!recoveryOnly && <button className="search-trigger" type="button" onClick={onSearch} aria-label="Search spaces, projects and files"><Search size={15} /><span>Search spaces, projects, files</span><kbd>⌘K</kbd></button>}
-    <span className="topbar-spacer" />
-    <span className={`live-pill ${live}`} title={live === "offline" ? recoveryOnly ? "Reconnecting to recovery" : "Reconnecting to the hub" : recoveryOnly ? "Full-instance recovery connection" : "Changes appear as they happen"}><i />{live === "offline" ? "Reconnecting" : "Live"}</span>
-    {activity && <button className={`icon-button${activity.open ? " active" : ""}`} type="button" aria-pressed={activity.open} aria-label="Activity" title={activity.open ? "Hide activity" : "Show activity"} onClick={activity.onToggle}><Activity size={17} /></button>}
-    <ThemePicker />
-    {recoveryOnly ? <span className="label">Local recovery</span> : !me.checked ? <span className="user-placeholder" aria-hidden="true" /> : me.name ? <UserMenu name={me.name} /> : <a className="button" href={signIn}><LogIn size={15} />Sign in</a>}
-  </header>;
 }
 
 export type NavItem = { key: string; label: string; href: string; icon: ReactNode; active?: boolean; badge?: string; fresh?: boolean; dim?: boolean };
-export type SideSection = { key: string; title: string; items: NavItem[]; limit: number; more?: { label: string; href: string } };
+export type SideSection = { key: string; title: string; icon: ReactNode; items: NavItem[]; limit: number; more?: { label: string; href: string } };
 export type SpaceOption = { name: string; kind: string; href: string };
+export type Viewer = { checked: boolean; name: string | null };
 
 const SIDE = "spacehub:side:v1";
 function readSide(): { collapsed: Record<string, boolean> } { try { return { collapsed: {}, ...JSON.parse(localStorage.getItem(SIDE) || "{}") }; } catch { return { collapsed: {} }; } }
 
-/** Which space you are in, and a menu to jump to any of yours. */
-function SpaceSwitcher({ current, options, rail }: { current: SpaceOption | null; options: SpaceOption[]; rail: boolean }) {
+const kindLabel = (kind: string) => kind === "org" ? "Org" : kind === "agent" ? "Agent" : "Builder";
+
+/** The sidebar's header: which space you are in, and a menu to jump to any of yours. */
+function SpaceSwitcher({ current, options, rail, signedIn }: { current: SpaceOption | null; options: SpaceOption[]; rail: boolean; signedIn: boolean }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const close = (event: MouseEvent | KeyboardEvent) => {
-      if (event instanceof KeyboardEvent ? event.key === "Escape" : !box.current?.contains(event.target as Node)) setOpen(false);
-    };
-    addEventListener("mousedown", close);
-    addEventListener("keydown", close);
-    return () => { removeEventListener("mousedown", close); removeEventListener("keydown", close); };
-  }, [open]);
-  const label = current ? current.name : "All spaces";
+  useDismiss(open, setOpen, box);
+  const label = current ? current.name : "spacehub";
+  const go = (event: ReactMouseEvent<HTMLAnchorElement>) => { setOpen(false); onLink(event); };
   return <div className="switcher" ref={box}>
-    <button type="button" className="switcher-button" aria-haspopup="menu" aria-expanded={open} title={rail ? label : undefined} onClick={() => setOpen(value => !value)}>
-      {current ? <Avatar name={current.name} size={24} kind={current.kind} /> : <span className="switcher-all"><Home size={15} /></span>}
-      <span className="switcher-text"><strong>{label}</strong><span>{current ? (current.kind === "org" ? "Org" : current.kind === "agent" ? "Agent" : "Builder") : "This hub"}</span></span>
-      <ChevronsUpDown size={15} className="switcher-chevron" />
+    <button type="button" className="side-button large" aria-haspopup="menu" aria-expanded={open} title={rail ? label : undefined} onClick={() => setOpen(value => !value)}>
+      {current ? <span className="side-tile"><Avatar name={current.name} size={32} kind={current.kind} /></span> : <span className="side-tile brand"><QuirqMark size={20} /></span>}
+      <span className="side-text"><strong>{label}</strong><span>{current ? kindLabel(current.kind) : "All spaces"}</span></span>
+      <ChevronsUpDown size={16} className="side-chevron" />
     </button>
-    {open && <div className="menu switcher-menu" role="menu">
-      <a role="menuitem" href="/" onClick={event => { setOpen(false); onLink(event); }} className={!current ? "on" : undefined}><span className="switcher-all small"><Home size={13} /></span>All spaces</a>
-      {options.length > 0 && <div className="menu-title">Your spaces</div>}
-      {options.map(option => <a role="menuitem" key={option.name} href={option.href} onClick={event => { setOpen(false); onLink(event); }} className={current?.name === option.name ? "on" : undefined}>
-        <Avatar name={option.name} size={20} kind={option.kind} />{option.name}{current?.name === option.name && <Check size={14} className="menu-check" />}
+    {open && <div className="menu side-menu" role="menu">
+      <div className="menu-title">Spaces</div>
+      <a role="menuitem" href="/" onClick={go} className={!current ? "on" : undefined}><span className="menu-tile"><Home size={13} /></span>All spaces{!current && <Check size={14} className="menu-check" />}</a>
+      {options.map(option => <a role="menuitem" key={option.name} href={option.href} onClick={go} className={current?.name === option.name ? "on" : undefined}>
+        <span className="menu-tile"><Avatar name={option.name} size={18} kind={option.kind} /></span>{option.name}{current?.name === option.name && <Check size={14} className="menu-check" />}
       </a>)}
+      {signedIn && <><div className="menu-sep" /><a role="menuitem" href="/-/new" className="menu-quiet"><span className="menu-tile dashed"><Plus size={13} /></span>New project</a></>}
     </div>}
   </div>;
 }
 
-function Item({ item, rail, onClose }: { item: NavItem; rail: boolean; onClose: () => void }) {
-  return <a className={`nav-item${item.active ? " active" : ""}${item.dim ? " dim" : ""}`} href={item.href} onClick={event => { onClose(); onLink(event); }} aria-current={item.active ? "page" : undefined} title={rail ? item.label : undefined}>
+/** The sidebar's footer: who you are, with your account, appearance and sign-out in one menu. */
+function NavUser({ me, signIn, rail, recoveryOnly }: { me: Viewer; signIn: string; rail: boolean; recoveryOnly: boolean }) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  useDismiss(open, setOpen, box);
+  if (!recoveryOnly && !me.checked) return <div className="nav-user"><span className="side-button large" aria-hidden="true"><span className="side-tile skeleton" /></span></div>;
+  const name = recoveryOnly ? "Local recovery" : me.name ?? "Guest";
+  const note = recoveryOnly ? "This instance" : me.name ? "Signed in" : "Not signed in";
+  const tile = recoveryOnly ? <span className="side-tile brand"><QuirqMark size={20} /></span> : me.name ? <span className="side-tile"><Avatar name={me.name} size={32} /></span> : <span className="side-tile anon"><User size={16} /></span>;
+  const head = <div className="menu-head">{tile}<div><strong>{name}</strong><span>{note}</span></div></div>;
+  const go = (event: ReactMouseEvent<HTMLAnchorElement>) => { setOpen(false); onLink(event); };
+  return <div className="nav-user" ref={box}>
+    <button type="button" className="side-button large" aria-haspopup="menu" aria-expanded={open} aria-label={`Account: ${name}`} title={rail ? name : undefined} onClick={() => setOpen(value => !value)}>
+      {tile}<span className="side-text"><strong>{name}</strong><span>{note}</span></span><ChevronsUpDown size={16} className="side-chevron" />
+    </button>
+    {open && <div className="menu side-menu up" role="menu">
+      {head}
+      {!recoveryOnly && me.name && <>
+        <a role="menuitem" href={"/" + encodeURIComponent(me.name)} onClick={go}><User size={15} />Your profile</a>
+        <a role="menuitem" href="/-/new"><Plus size={15} />New project</a>
+        <div className="menu-sep" />
+      </>}
+      {!recoveryOnly && !me.name && <><a role="menuitem" href={signIn}><LogIn size={15} />Sign in</a><div className="menu-sep" /></>}
+      <ThemeChoices />
+      {!recoveryOnly && me.name && <><div className="menu-sep" /><form method="post" action="/-/logout"><button role="menuitem" type="submit"><LogOut size={15} />Sign out</button></form></>}
+    </div>}
+  </div>;
+}
+
+function Item({ item, rail, onClose, sub = false }: { item: NavItem; rail: boolean; onClose: () => void; sub?: boolean }) {
+  return <a className={`${sub ? "nav-sub-item" : "nav-item"}${item.active ? " active" : ""}${item.dim ? " dim" : ""}`} href={item.href} onClick={event => { onClose(); onLink(event); }} aria-current={item.active ? "page" : undefined} title={rail ? item.label : undefined}>
     <span className="nav-icon">{item.icon}</span><span className="nav-label">{item.label}</span>{item.badge && <span className="nav-badge">{item.badge}</span>}{item.fresh && <i className="unread-dot" title="New since you last looked" />}
   </a>;
 }
 
 /**
- * The sidebar fits the window: a space switcher, the main places, short
- * collapsible lists (the current space's projects, recent ones) that expand
- * on request, and a footer pinned to the bottom. It folds into an icon rail.
+ * The sidebar, after shadcn's sidebar-07: a space switcher in the header,
+ * groups of places (the main ones, then where you are as collapsible lists),
+ * the hub's own pages, and your account in the footer. It folds into icons.
  */
-export function Sidebar({ switcher, primary, sections, footer, open, onClose, rail, onRail, onSearch, recoveryOnly = false }: {
-  switcher: { current: SpaceOption | null; options: SpaceOption[] }; primary: NavItem[]; sections: SideSection[]; footer: NavItem[];
+export function Sidebar({ switcher, primary, sectionsTitle, sections, footer, me, signIn, open, onClose, rail, onRail, onSearch, recoveryOnly = false }: {
+  switcher: { current: SpaceOption | null; options: SpaceOption[] }; primary: NavItem[]; sectionsTitle?: string; sections: SideSection[]; footer: NavItem[];
+  me: Viewer; signIn: string;
   open: boolean; onClose: () => void; rail: boolean; onRail: () => void; onSearch: () => void;
   recoveryOnly?: boolean;
 }) {
   const [state, setState] = useState(readSide);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const toggle = (key: string) => setState(current => {
-    const next = { ...current, collapsed: { ...current.collapsed, [key]: !current.collapsed[key] } };
+  const setCollapsed = (key: string, collapsed: boolean) => setState(current => {
+    const next = { ...current, collapsed: { ...current.collapsed, [key]: collapsed } };
     try { localStorage.setItem(SIDE, JSON.stringify(next)); } catch { /* Storage may be blocked. */ }
     return next;
   });
+  const shownSections = recoveryOnly ? [] : sections.filter(section => section.items.length);
   return <>
     <nav className={`sidebar${open ? " open" : ""}`} aria-label="Navigation">
-      {!recoveryOnly && <SpaceSwitcher current={switcher.current} options={switcher.options} rail={rail} />}
-      <div className="nav-group">
-        {primary.slice(0, 1).map(item => <Item key={item.key} item={item} rail={rail} onClose={onClose} />)}
-        {!recoveryOnly && <button type="button" className="nav-item" onClick={() => { onClose(); onSearch(); }} title={rail ? "Search" : undefined}><span className="nav-icon"><Search size={16} /></span><span className="nav-label">Search</span><kbd className="nav-kbd">⌘K</kbd></button>}
-        {primary.slice(1).map(item => <Item key={item.key} item={item} rail={rail} onClose={onClose} />)}
+      <div className="side-head">
+        {recoveryOnly ? <a className="side-button large" href="/#/settings" onClick={onLink} aria-label="Settings home"><span className="side-tile brand"><QuirqMark size={20} /></span><span className="side-text"><strong>spacehub</strong><span>Recovery</span></span></a>
+          : <SpaceSwitcher current={switcher.current} options={switcher.options} rail={rail} signedIn={!!me.name} />}
       </div>
-      <div className="side-scroll">
-        {!recoveryOnly && sections.filter(section => section.items.length).map(section => {
-          const collapsed = !!state.collapsed[section.key];
-          const all = expanded[section.key];
-          const active = section.items.find(item => item.active);
-          let shown = all ? section.items : section.items.slice(0, section.limit);
-          // The place you are in stays visible even when it is further down the list.
-          if (!all && active && !shown.includes(active)) shown = [...shown.slice(0, section.limit - 1), active];
-          return <div className="nav-section" key={section.key}>
-            <button type="button" className="nav-title" aria-expanded={!collapsed} onClick={() => toggle(section.key)}>
-              <ChevronRight size={12} className={`nav-caret${collapsed ? "" : " open"}`} /><span>{section.title}</span><span className="nav-count">{section.items.length}</span>
-            </button>
-            {!collapsed && <>
-              {shown.map(item => <Item key={item.key} item={item} rail={rail} onClose={onClose} />)}
-              {section.items.length > section.limit && <button type="button" className="nav-more" onClick={() => setExpanded(current => ({ ...current, [section.key]: !all }))}>{all ? "Show fewer" : `Show all ${section.items.length}`}</button>}
-              {section.more && <a className="nav-more" href={section.more.href} onClick={event => { onClose(); onLink(event); }}>{section.more.label}</a>}
-            </>}
-          </div>;
-        })}
+      <div className="side-content">
+        {!recoveryOnly && <div className="side-group">
+          <div className="side-label">Platform</div>
+          {primary.slice(0, 1).map(item => <Item key={item.key} item={item} rail={rail} onClose={onClose} />)}
+          <button type="button" className="nav-item" onClick={() => { onClose(); onSearch(); }} title={rail ? "Search" : undefined}><span className="nav-icon"><Search size={16} /></span><span className="nav-label">Search</span><kbd className="nav-kbd">⌘K</kbd></button>
+          {primary.slice(1).map(item => <Item key={item.key} item={item} rail={rail} onClose={onClose} />)}
+        </div>}
+        {shownSections.length > 0 && <div className="side-group">
+          <div className="side-label">{sectionsTitle ?? "Places"}</div>
+          {shownSections.map(section => {
+            const collapsed = !!state.collapsed[section.key];
+            const all = expanded[section.key];
+            const active = section.items.find(item => item.active);
+            let shown = all ? section.items : section.items.slice(0, section.limit);
+            // The place you are in stays visible even when it is further down the list.
+            if (!all && active && !shown.includes(active)) shown = [...shown.slice(0, section.limit - 1), active];
+            const fresh = section.items.some(item => item.fresh);
+            return <div className="nav-section" key={section.key}>
+              <button type="button" className={`nav-item${active && (collapsed || rail) ? " active" : ""}`} aria-expanded={!collapsed} title={rail ? section.title : undefined}
+                onClick={() => { if (rail) { setCollapsed(section.key, false); onRail(); } else setCollapsed(section.key, !collapsed); }}>
+                <span className="nav-icon">{section.icon}</span><span className="nav-label">{section.title}</span>
+                {fresh && collapsed && <i className="unread-dot" title="New since you last looked" />}
+                <span className="nav-count">{section.items.length}</span><ChevronRight size={14} className={`nav-caret${collapsed ? "" : " open"}`} />
+              </button>
+              {!collapsed && <div className="nav-sub">
+                {shown.map(item => <Item key={item.key} item={item} rail={rail} onClose={onClose} sub />)}
+                {section.items.length > section.limit && <button type="button" className="nav-sub-item more" onClick={() => setExpanded(current => ({ ...current, [section.key]: !all }))}><span className="nav-label">{all ? "Show fewer" : `Show all ${section.items.length}`}</span></button>}
+                {section.more && <a className="nav-sub-item more" href={section.more.href} onClick={event => { onClose(); onLink(event); }}><span className="nav-label">{section.more.label}</span></a>}
+              </div>}
+            </div>;
+          })}
+        </div>}
+        <div className="side-group side-secondary">
+          {footer.filter(item => !recoveryOnly || item.key === "settings").map(item => <Item key={item.key} item={item} rail={rail} onClose={onClose} />)}
+        </div>
       </div>
-      <div className="side-foot">
-        {footer.filter(item => !recoveryOnly || item.key === "settings").map(item => <Item key={item.key} item={item} rail={rail} onClose={onClose} />)}
-        <button type="button" className="nav-item rail-toggle only-wide" onClick={onRail} aria-label={rail ? "Expand the sidebar" : "Collapse the sidebar"} title={rail ? "Expand the sidebar" : "Collapse the sidebar"}>
-          <span className="nav-icon">{rail ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</span><span className="nav-label">Collapse</span>
-        </button>
-      </div>
+      <div className="side-foot"><NavUser me={me} signIn={signIn} rail={rail} recoveryOnly={recoveryOnly} /></div>
+      <button type="button" className="side-rail only-wide" tabIndex={-1} aria-label={rail ? "Expand the sidebar" : "Collapse the sidebar"} title={rail ? "Expand the sidebar" : "Collapse the sidebar"} onClick={onRail} />
     </nav>
     {open && <button className="scrim only-narrow" type="button" aria-label="Close navigation" onClick={onClose} />}
   </>;
+}
+
+/**
+ * The page's header inside the inset, as in sidebar-07: the sidebar trigger,
+ * where you are, and the place's live state and Activity on the right.
+ */
+export function InsetHeader({ crumbs, live, onToggleSidebar, rail, activity, recoveryOnly = false }: {
+  crumbs: ReactNode; live: "live" | "offline" | "loading"; onToggleSidebar: () => void; rail: boolean;
+  /** The right-hand Activity panel, where the page has one. */
+  activity?: { open: boolean; onToggle: () => void };
+  recoveryOnly?: boolean;
+}) {
+  return <header className="inset-header">
+    <button className="icon-button side-trigger" type="button" aria-label="Toggle the sidebar" title={`${rail ? "Expand" : "Collapse"} the sidebar (⌘B)`} onClick={onToggleSidebar}><PanelLeft size={16} /></button>
+    <span className="inset-sep" aria-hidden="true" />
+    <div className="inset-crumbs">{crumbs}</div>
+    <span className={`live-pill ${live}`} title={live === "offline" ? recoveryOnly ? "Reconnecting to recovery" : "Reconnecting to the hub" : recoveryOnly ? "Full-instance recovery connection" : "Changes appear as they happen"}><i />{live === "offline" ? "Reconnecting" : "Live"}</span>
+    {activity && <button className={`icon-button${activity.open ? " active" : ""}`} type="button" aria-pressed={activity.open} aria-label="Activity" title={activity.open ? "Hide activity" : "Show activity"} onClick={activity.onToggle}><Activity size={16} /></button>}
+  </header>;
+}
+
+/** Crumbs for the hub's own pages, in the same look as the path bar. */
+export function Crumbs({ items }: { items: { label: string; href?: string }[] }) {
+  return <nav className="path-bar" aria-label="Where you are">
+    {items.map((item, i) => <span key={item.label} className="path-item">
+      {i > 0 && <ChevronRight size={14} className="crumb-sep" />}
+      {item.href && i < items.length - 1 ? <span className="path-seg"><a href={item.href} onClick={onLink}>{item.label}</a></span> : <span className="path-seg"><a aria-current="page" className="current">{item.label}</a></span>}
+    </span>)}
+  </nav>;
 }
 
 export type DockItem = { key: string; label: string; href: string; icon: ReactNode; active?: boolean; fresh?: boolean };

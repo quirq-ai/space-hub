@@ -4,7 +4,6 @@ import { Meter } from "./goal";
 import { activeBy, activityLine, kindLabel, latestOf, newestBy, placeUrl, setSpacePicture, size, type AgentInfo, type SpaceMeta, type View } from "@/api";
 import type { Entry } from "@/lib/types";
 import { Browser, Glyph } from "@/ui/cards";
-import { PathBar } from "@/shell/path-bar";
 import { hashOf, onLink } from "@/router";
 import { Ago, Avatar, AvatarStack, CommandTabs, Empty, Popover, SkeletonRows } from "@/ui/primitives";
 import { ActivityStream, HereNow, PageHeader, People, Tabs } from "./common";
@@ -27,7 +26,6 @@ export function SpacePage({ name, tab, view, error, me, signIn, seen }: { name: 
   const byProject = newestBy(meta.activity, item => item.path);
   const peopleByProject = activeBy(meta.activity, item => item.path);
   return <div className="page">
-    <PathBar place={{ space: name, project: "" }} path="" />
     <PageHeader
       leading={<Avatar name={name} size={72} kind={meta.kind} />}
       title={<>{meta.displayName}<span className="kind-badge">{KIND_ICON[meta.kind]}{kindLabel(meta.kind)}</span></>}
