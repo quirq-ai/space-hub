@@ -349,7 +349,8 @@ a.overview-tile:hover { border-color: var(--line-strong); text-decoration: none;
 .command code { flex: 1; min-width: 0; padding-top: 4px; font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .command-note { margin: 2px 0 0; color: var(--text-2); font-size: 12.5px; line-height: 1.5; }
 .command-note code { padding: 1px 5px; border-radius: 4px; background: var(--fill); overflow-wrap: anywhere; }
-@media (max-width: 760px) { .page-actions { width: 100%; } .popover { right: auto; left: 0; } }
+/* On a phone the button may sit anywhere in its row, so the panel spans the screen just under it. */
+@media (max-width: 760px) { .page-actions { width: 100%; } .popover { position: fixed; top: auto; left: 16px; right: 16px; width: auto !important; margin-top: 6px; max-height: calc(100dvh - 140px); overflow-y: auto; } }
 
 /* Agents: a list of cards, with what each may do here and where it runs. */
 .list-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 10px; color: var(--text-2); font-size: 13px; }
@@ -730,3 +731,21 @@ a.overview-tile:hover { border-color: var(--line-strong); text-decoration: none;
 .room-bar a, .room-bar button { display: inline-flex; align-items: center; gap: 5px; color: var(--accent-text); font: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
 .room-bar .room-agents { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; color: var(--text-2); }
 .message-state { margin-top: 4px; }
+
+/* Onboard with Claude, under the Add an agent commands. */
+.claude-onboard { --clay: #d97757; --clay-deep: #c6613f; margin-top: 12px; }
+.claude-onboard-note { margin: 6px 0 0; color: var(--text-3); font-size: 12px; text-align: center; }
+.claude-spark line { stroke: var(--clay); stroke-width: 3.1; stroke-linecap: round; }
+.claude-button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 8px 7px 7px; border: 1px solid rgba(217, 119, 87, .35); border-radius: 10px; background: linear-gradient(180deg, #fbf3ee, #f6e7de); color: #3d2a20; font: inherit; font-weight: 600; font-size: 13.5px; cursor: pointer; box-shadow: 0 1px 0 rgba(255, 255, 255, .7) inset, 0 1px 2px rgba(120, 60, 30, .08); transition: border-color .15s, box-shadow .15s, transform .15s; }
+.claude-button:hover { border-color: var(--clay); box-shadow: 0 1px 0 rgba(255, 255, 255, .7) inset, 0 4px 14px rgba(217, 119, 87, .22); }
+.claude-button:active { transform: translateY(1px); }
+.claude-button:focus-visible { outline: 2px solid var(--clay); outline-offset: 2px; }
+.claude-button-mark { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; background: #fff; box-shadow: 0 0 0 1px rgba(217, 119, 87, .25); }
+.claude-button-mark .claude-spark { transition: transform .5s cubic-bezier(.2, .8, .2, 1); }
+.claude-button:hover .claude-button-mark .claude-spark { transform: rotate(60deg); }
+.claude-button-text { flex: 1; }
+.claude-button-arrow { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 7px; background: var(--clay); color: #fff; transition: transform .15s, background .15s; }
+.claude-button:hover .claude-button-arrow { transform: translate(1px, -1px); background: var(--clay-deep); }
+.claude-button.done .claude-button-arrow { background: var(--green); transform: none; }
+:root[data-theme="dark"] .claude-button { border-color: rgba(217, 119, 87, .4); background: linear-gradient(180deg, #2c211c, #261c18); color: #f3e4db; box-shadow: none; }
+:root[data-theme="dark"] .claude-button-mark { background: #1d1d1c; }
