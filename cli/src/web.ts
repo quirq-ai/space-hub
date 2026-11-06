@@ -32,7 +32,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { connectTo, errorMessage, findProject, findUser, quietSdkLogs, snapshot, tables, type Conn } from './conn';
 import { configFile, githubLogin, normalizeServer } from './config';
-import { esc, navFor, PAGE_CSP, shell, sideFor } from '../../module/src/style';
+import { esc, PAGE_CSP, shell } from '../../module/src/style';
 import { signInButtons, signInWays, step, steps, type Hub } from '../../module/src/howto';
 import { Fail, GithubSync, githubApi, githubBuilder as builderOf, githubInfo as infoOf, mirrorProject } from './github';
 import { LiveHub } from './live';
@@ -129,7 +129,7 @@ function redirect(res: http.ServerResponse, to: string, cookies: string[] = [], 
 
 // A form page in a narrow card; wide pages (the sign-in steps) use the page's width, like the guide.
 function page(title: string, viewer: string | null, body: string, wide = false) {
-  return shell(title, navFor(viewer), wide ? `<div class="wide-page">${body}</div>` : `<div class="narrow">${body}</div>`, '', '/', sideFor(viewer));
+  return shell(title, wide ? `<div class="wide-page">${body}</div>` : `<div class="narrow">${body}</div>`, '', { viewer });
 }
 
 function cookieValue(req: http.IncomingMessage, name: string): string | null {

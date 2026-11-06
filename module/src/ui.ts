@@ -29,7 +29,7 @@
 import { PRESENCE_STALE_SECONDS, inSpace, objectSize, ownsSpace, readObject, readObjectRange, spaceFor, type Db } from './store';
 import { DELETE, INSERT, diffLines, toHunks } from './diff';
 import { renderMarkdown, type Resolve } from './markdown';
-import { esc, navFor, PAGE_CSP, shell, sideFor } from './style';
+import { esc, PAGE_CSP, shell, type Current } from './style';
 import { guideHome, guidePage } from './guide';
 
 export interface UiRequest {
@@ -309,7 +309,7 @@ export class Renderer {
   // Set by route() for pages the web service keeps live.
   live = false;
   // Which place of the sidebar the page belongs to (set by route()).
-  current: 'home' | 'guide' | 'builders' | 'me' | '' = '';
+  current: Current = '';
 
   constructor(
     private db: Db,
@@ -354,14 +354,12 @@ export class Renderer {
   }
 
   page(title: string, body: string, status = 200): UiResponse {
-    const nav = this.base === null ? '' : navFor(this.viewer);
-    const side = this.base === null ? '' : sideFor(this.viewer, this.current);
     // Live pages update themselves; without JavaScript they fall back to
     // reloading while an import runs.
     const live = this.live && this.base !== null;
     const refresh = '<meta http-equiv="refresh" content="4">';
     const head = `${this.refreshing ? (live ? `<noscript>${refresh}</noscript>` : refresh) : ''}${live ? '<script src="/-/live.js" defer></script>' : ''}`;
-    return { status, headers: { 'content-type': 'text/html; charset=utf-8' }, body: shell(title, nav, body, head, this.link(''), side) };
+    return { status, headers: { 'content-type': 'text/html; charset=utf-8' }, body: shell(title, body, head, this.base === null ? null : { viewer: this.viewer, current: this.current }) };
   }
 
   notFound(message: string) {
@@ -650,7 +648,7 @@ ${sp.description ? `<p class="desc">${esc(sp.description)}</p>` : ''}${this.buil
     const branches = refs.filter(r => r.name.startsWith('refs/heads/')).map(r => item(shortRef(r.name)));
     const tags = refs.filter(r => r.name.startsWith('refs/tags/')).map(r => item(shortRef(r.name)));
     const label = /^[0-9a-f]{40}$/.test(current) ? current.slice(0, 7) : current;
-    return `<details class="menu"><summary class="btn">${esc(label)} &#9662;</summary><div class="pop"><div class="h">Branches</div>${branches.join('') || '<div class="h">none</div>'}${
+    return `<details class="pick"><summary class="btn">${esc(label)} &#9662;</summary><div class="pop"><div class="h">Branches</div>${branches.join('') || '<div class="h">none</div>'}${
       tags.length ? `<div class="h">Tags</div>${tags.join('')}` : ''
     }</div></details>`;
   }
