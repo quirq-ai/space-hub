@@ -23,6 +23,10 @@ test("the page header replaces the top bar: sidebar trigger, where you are, live
   assert.match(header, /aria-label="Activity"/);
   assert.doesNotMatch(header, /Search spaces|Sign in/);
   assert.doesNotMatch(renderToStaticMarkup(createElement(InsetHeader, props)), /aria-label="Activity"/);
+  assert.doesNotMatch(header, /live-count/);
+  assert.match(renderToStaticMarkup(createElement(InsetHeader, { ...props, activityTotal: 1234 })), /live-count[\s\S]*>1,234<\/b> <span>activities</);
+  assert.match(renderToStaticMarkup(createElement(InsetHeader, { ...props, activityTotal: 1 })), />1<\/b> <span>activity</);
+  assert.match(renderToStaticMarkup(createElement(InsetHeader, { ...props, activityTotal: 0 })), />0<\/b> <span>activities</);
 });
 
 test("standalone recovery offers its own home and no hub search or sign-in; the account is the dock's last entry", () => {

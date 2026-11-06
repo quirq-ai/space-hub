@@ -186,8 +186,18 @@ export function Sidebar({ sectionsTitle, sections, settings, open, onClose, rail
  * The page's header inside the inset, as in sidebar-07: the sidebar trigger,
  * where you are, and the place's live state and Activity on the right.
  */
-export function InsetHeader({ crumbs, live, onToggleSidebar, rail, activity, recoveryOnly = false }: {
-  crumbs: ReactNode; live: "live" | "offline" | "loading"; onToggleSidebar: () => void; rail: boolean;
+/** The total activity where you are; it ticks as each new one comes in. */
+function ActivityCount({ total }: { total: number }) {
+  const last = useRef(total);
+  const grew = total > last.current;
+  useEffect(() => { last.current = total; }, [total]);
+  const shown = total.toLocaleString("en-US");
+  const word = total === 1 ? "activity" : "activities";
+  return <span className="live-count" title={`${shown} ${word} here so far`}><b key={total} className={grew ? "tick" : undefined}>{shown}</b> <span>{word}</span></span>;
+}
+
+export function InsetHeader({ crumbs, live, activityTotal, onToggleSidebar, rail, activity, recoveryOnly = false }: {
+  crumbs: ReactNode; live: "live" | "offline" | "loading"; activityTotal?: number; onToggleSidebar: () => void; rail: boolean;
   /** The right-hand Activity panel, where the page has one. */
   activity?: { open: boolean; onToggle: () => void };
   recoveryOnly?: boolean;
@@ -197,6 +207,7 @@ export function InsetHeader({ crumbs, live, onToggleSidebar, rail, activity, rec
     <span className="inset-sep" aria-hidden="true" />
     <div className="inset-crumbs">{crumbs}</div>
     <span className={`live-pill ${live}`} title={live === "offline" ? recoveryOnly ? "Reconnecting to recovery" : "Reconnecting to the hub" : recoveryOnly ? "Full-instance recovery connection" : "Changes appear as they happen"}><i />{live === "offline" ? "Reconnecting" : "Live"}</span>
+    {activityTotal !== undefined && <ActivityCount total={activityTotal} />}
     {activity && <button className={`icon-button${activity.open ? " active" : ""}`} type="button" aria-pressed={activity.open} aria-label="Activity" title={activity.open ? "Hide activity" : "Show activity"} onClick={activity.onToggle}><Activity size={16} /></button>}
   </header>;
 }
