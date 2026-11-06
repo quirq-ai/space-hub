@@ -89,3 +89,13 @@ test('fed from a connection: the catch-up in one append, then live changes', asy
   assert.deepEqual(readJournal(dir).map(line => `${line.op} ${line.id}`), ['insert 1', 'insert 2', 'insert 3', 'insert 4', 'update 2']);
   assert.deepEqual(errors, []);
 });
+
+test('no code deletes an activity row: not a reducer, a command or an admin path', () => {
+  const root = path.resolve(import.meta.dirname, '..', '..');
+  const files = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap(e =>
+    e.isDirectory() ? (['node_modules', 'module_bindings', 'dist'].includes(e.name) ? [] : files(path.join(dir, e.name))) : /\.(ts|tsx|sh|mjs)$/.test(e.name) ? [path.join(dir, e.name)] : []);
+  const sources = ['module/src', 'cli/src', 'app/src', 'scripts', 'docker'].flatMap(dir => files(path.join(root, dir)));
+  assert.ok(sources.length > 20);
+  const offenders = sources.filter(file => /\.activity\.(\w+\.)?delete\(|activity\.clear\(|delete\s+from\s+activity|truncate\s+activity|drop\s+table\s+activity/i.test(fs.readFileSync(file, 'utf8')));
+  assert.deepEqual(offenders, []);
+});
