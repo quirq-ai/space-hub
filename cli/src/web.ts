@@ -267,7 +267,9 @@ async function recoveryOperator(req: http.IncomingMessage): Promise<boolean> {
     return await withConn(token, async (conn, identity) => {
       const user = await findUser(conn, identity);
       if (user && RECOVERY_OPERATORS.has(user.username)) return true;
-      if (!ADMIN_TOKEN) return false;
+      // Once operators are named, only they qualify; the module's global
+      // administrator is the fallback for a hub that names none.
+      if (RECOVERY_OPERATORS.size || !ADMIN_TOKEN) return false;
       const rows = await select({ adminToken: ADMIN_TOKEN, http: INTERNAL_HTTP, db: DB }, "SELECT value FROM hub_state WHERE key = 'admin'");
       return rows[0]?.value === identity.toHexString();
     });
@@ -533,7 +535,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   if (req.method === 'POST' && !sameOrigin(req)) return send(res, 403, page('Forbidden', null, '<h1>Forbidden</h1><p class="desc">This form must be sent from this site.</p>'));
   if (await handleWorkers(WORKERS, { sessionOf, placesOf, appendChat, sameOrigin, callbackUrl: r => callbackOf(r, CONNECT_CALLBACK) }, req, res, url)) return;
   if (await handleRooms(ROOMS, req, res, url)) return;
-  if (await handleApp({ dir: APP_DIR, internalHttp: INTERNAL_HTTP, db: DB, withConn, sessionOf }, req, res, url)) return;
+  if (await handleApp({ dir: APP_DIR, internalHttp: INTERNAL_HTTP, db: DB, withConn, sessionOf, operator: recoveryOperator }, req, res, url)) return;
 
   if (route === '/-/login') {
     const session = await sessionOf(req);

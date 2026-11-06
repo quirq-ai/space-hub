@@ -71,8 +71,16 @@ test("the space switcher leads the dock, before the places inside where you are"
   assert.equal(renderToStaticMarkup(createElement(Dock, { places: [] })), "");
 });
 
-test("Settings embeds full-instance Sub-hubs as a section with the three recovery views", () => {
-  const markup = renderToStaticMarkup(createElement(SettingsPage));
+test("Settings hides Sub-hubs and backups from everyone but hub operators", () => {
+  for (const props of [{}, { signedIn: true }]) {
+    const markup = renderToStaticMarkup(createElement(SettingsPage, props));
+    assert.match(markup, /<h1>Settings<\/h1>/);
+    assert.doesNotMatch(markup, /Sub-hubs|[Bb]ackup|spacehub subhub/);
+  }
+});
+
+test("Settings embeds full-instance Sub-hubs for operators as a section with the three recovery views", () => {
+  const markup = renderToStaticMarkup(createElement(SettingsPage, { operator: true }));
   assert.match(markup, /<h1>Settings<\/h1>/);
   assert.match(markup, /<h2>[\s\S]*?Sub-hubs<\/h2>/);
   assert.match(markup, /Automatic backups of this entire Spacehub instance/);

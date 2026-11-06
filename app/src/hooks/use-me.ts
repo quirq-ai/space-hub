@@ -4,13 +4,14 @@ import { viewUrl, type View, type SpaceMeta } from "@/api";
 
 /** Who is signed in (checked by the web service), and the spaces they belong to. */
 export function useMe() {
-  const [me, setMe] = useState<{ name: string | null; recoveryOnly?: boolean }>();
+  const [me, setMe] = useState<{ name: string | null; recoveryOnly?: boolean; operator?: boolean }>();
   useEffect(() => {
     void fetch("/-/api/me", { cache: "no-store" }).then(response => (response.ok ? response.json() : { name: null })).then(setMe).catch(() => setMe({ name: null }));
   }, []);
   const profile = useLive<View<SpaceMeta>>(me?.name && !me.recoveryOnly ? viewUrl({ space: me.name, project: "" }) : undefined, 30_000);
   const spaces = me?.name ? [{ space: me.name, kind: "personal", role: "owner" }, ...(profile.data?.meta.memberOf ?? [])] : [];
-  return { checked: !!me, name: me?.name ?? null, spaces, recoveryOnly: me?.recoveryOnly === true };
+  // Sub-hubs and backups are for hub operators (SPACEHUB_RECOVERY_OPERATORS) only; the standalone recovery UI is theirs by definition.
+  return { checked: !!me, name: me?.name ?? null, spaces, recoveryOnly: me?.recoveryOnly === true, operator: me?.recoveryOnly === true || me?.operator === true };
 }
 
 const RECENT = "spacehub:recent:v1";
