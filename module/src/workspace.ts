@@ -43,7 +43,7 @@ const TEXT_EXTENSIONS = new Set([
   'yml', 'toml', 'ini', 'conf', 'config', 'sql', 'py', 'rb', 'rs', 'go', 'java',
   'kt', 'kts', 'swift', 'sh', 'bash', 'zsh', 'fish', 'ps1', 'bat', 'c', 'cpp',
   'cc', 'h', 'hpp', 'cs', 'vue', 'svelte', 'astro', 'prisma', 'graphql', 'gql',
-  'proto', 'diff', 'patch', 'r', 'rmd', 'tex', 'dockerfile', 'lock',
+  'proto', 'diff', 'patch', 'r', 'rmd', 'tex', 'dockerfile', 'lock', 'mmd', 'mermaid',
 ]);
 const TEXT_NAMES = new Set(['dockerfile', 'makefile', 'license', 'readme', 'changelog']);
 const IMAGES = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg', 'bmp', 'ico']);
