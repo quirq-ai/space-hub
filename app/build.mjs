@@ -16,6 +16,9 @@ await build({
   minify: !watch,
   sourcemap: watch ? 'inline' : false,
   outdir: 'dist',
+  // Large pieces (Mermaid) load as their own chunks, from these same files, only when needed.
+  splitting: true,
+  chunkNames: 'chunk-[hash]',
   define: { 'process.env.NODE_ENV': JSON.stringify(watch ? 'development' : 'production') },
   logLevel: 'warning',
 });
