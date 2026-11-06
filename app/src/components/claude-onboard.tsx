@@ -24,14 +24,12 @@ export function ClaudeOnboard({ space, kind }: Omit<OnboardTarget, "server">) {
     if (!navigator.clipboard) setState(tab === null ? "idle" : "opened");
     setTimeout(() => setState("idle"), 2600);
   };
-  return <section className="claude-onboard" aria-label="Onboard with Claude">
-    <div className="claude-onboard-head"><span className="claude-onboard-title">Onboard with Claude</span><span className="claude-onboard-or">or let Claude do it</span></div>
-    <p className="command-note">Claude Code installs the CLI, signs you in, creates and connects the agent, writes its home and starts it, asking you only for a name and a sign-in.</p>
-    <button type="button" className={`claude-button${state !== "idle" ? " done" : ""}`} onClick={open}>
+  return <div className="claude-onboard">
+    <button type="button" className={`claude-button${state !== "idle" ? " done" : ""}`} onClick={open} title="Copies the prompt and opens Claude Code with it">
       <span className="claude-button-mark"><ClaudeSpark size={18} /></span>
-      <span className="claude-button-text">Open in Claude Code</span>
+      <span className="claude-button-text" role="status">{state === "idle" ? "Onboard with Claude Code" : "Copied, opening Claude Code"}</span>
       <span className="claude-button-arrow">{state === "idle" ? <ArrowUpRight size={16} /> : <Check size={16} />}</span>
     </button>
-    <p className="claude-onboard-status" role="status">{state === "copied" ? "Prompt copied. Claude Code opened in a new tab with it filled in." : state === "opened" ? "Claude Code opened in a new tab with the prompt filled in." : "Copies the prompt too, so you can paste it into claude in your terminal."}</p>
-  </section>;
+    <p className="claude-onboard-note">Claude Code sets up the agent for you: create, connect and run.</p>
+  </div>;
 }
