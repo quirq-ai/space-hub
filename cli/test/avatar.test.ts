@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { test } from 'node:test';
-import { defaultSvg, forgetAvatar, handleAvatar } from '../src/avatar.ts';
+import { agentSvg, defaultSvg, forgetAvatar, handleAvatar } from '../src/avatar.ts';
 
 function serve(handler: http.RequestListener): Promise<{ url: string; close: () => void }> {
   return new Promise(resolve => {
@@ -53,4 +53,20 @@ test('a GitHub-backed name gets its picture, others and failures get initials, b
   assert.match((await get('/-/avatar/plain')).body.toString(), />PL</);
   forgetAvatar('plain');
   assert.deepEqual((await get('/-/avatar/plain')).body, png);
+});
+
+test('an agent gets its blobatar: the same creature every time, different per name, no GitHub needed', async t => {
+  const app = await serve(async (req, res) => {
+    const url = new URL(req.url ?? '/', 'http://local');
+    await handleAvatar({ lookup: async name => ({ kind: name.startsWith('bot') ? 'agent' : 'personal', githubLogin: '' }) }, req, res, url);
+  });
+  t.after(app.close);
+  const body = async (path: string) => { const r = await fetch(app.url + path); assert.equal(r.headers.get('content-type'), 'image/svg+xml'); return r.text(); };
+  const euler = await body('/-/avatar/bot-euler');
+  assert.equal(euler, agentSvg('bot-euler'));
+  assert.equal(agentSvg('bot-euler'), agentSvg('bot-euler'));
+  assert.notEqual(agentSvg('bot-euler'), agentSvg('bot-curie'));
+  assert.match(euler, /^<svg xmlns="http:\/\/www.w3.org\/2000\/svg" viewBox="0 0 100 100">/);
+  assert.doesNotMatch(euler, /<text|<script|href=/);
+  assert.match(await body('/-/avatar/person'), />PE</);
 });
