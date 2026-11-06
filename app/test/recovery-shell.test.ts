@@ -8,10 +8,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 // Exercise the actual shell components without browser effects or production data.
 const appDirectory = fileURLToPath(new URL("..", import.meta.url));
-const built = await build({ absWorkingDir: appDirectory, stdin: { contents: 'export { InsetHeader, Sidebar } from "./src/shell/shell"; export { SettingsPage } from "./src/pages/settings"; export { SubhubConnectionCard, RemoteBackupCatalog } from "./src/pages/instance-recovery";', resolveDir: appDirectory, loader: "tsx" }, bundle: true, write: false, platform: "node", format: "cjs", jsx: "automatic", external: ["react", "react/jsx-runtime", "react-dom", "react-dom/server"], logLevel: "silent" });
+const built = await build({ absWorkingDir: appDirectory, stdin: { contents: 'export { Dock, InsetHeader, Sidebar } from "./src/shell/shell"; export { SettingsPage } from "./src/pages/settings"; export { SubhubConnectionCard, RemoteBackupCatalog } from "./src/pages/instance-recovery";', resolveDir: appDirectory, loader: "tsx" }, bundle: true, write: false, platform: "node", format: "cjs", jsx: "automatic", external: ["react", "react/jsx-runtime", "react-dom", "react-dom/server"], logLevel: "silent" });
 const compiled: { exports: Record<string, ComponentType<any>> } = { exports: {} };
 new Function("require", "module", "exports", built.outputFiles[0].text)(createRequire(import.meta.url), compiled, compiled.exports);
-const { InsetHeader, Sidebar, SettingsPage, SubhubConnectionCard, RemoteBackupCatalog } = compiled.exports;
+const { Dock, InsetHeader, Sidebar, SettingsPage, SubhubConnectionCard, RemoteBackupCatalog } = compiled.exports;
 const nothing = () => {};
 
 test("the page header replaces the top bar: sidebar trigger, where you are, live state and Activity", () => {
@@ -26,7 +26,7 @@ test("the page header replaces the top bar: sidebar trigger, where you are, live
 });
 
 test("standalone recovery sidebar offers its own home and no hub search or sign-in", () => {
-  const props = { switcher: { current: null, options: [] }, primary: [], sections: [], footer: [], me: { checked: true, name: null }, signIn: "/-/login", open: false, onClose: nothing, rail: false, onRail: nothing, onSearch: nothing };
+  const props = { primary: [], sections: [], footer: [], me: { checked: true, name: null }, signIn: "/-/login", open: false, onClose: nothing, rail: false, onRail: nothing, onSearch: nothing };
   const standalone = renderToStaticMarkup(createElement(Sidebar, { ...props, recoveryOnly: true }));
   assert.match(standalone, /href="\/#\/settings"/);
   assert.match(standalone, /Local recovery/);
@@ -41,7 +41,7 @@ test("standalone recovery sidebar offers its own home and no hub search or sign-
 
 test("Settings sits below Guide, while standalone recovery hides nonfunctional hub links", () => {
   const props = {
-    switcher: { current: null, options: [] }, primary: [],
+    primary: [],
     sections: [{ key: "recent", title: "Recent", limit: 4, items: [{ key: "project", label: "org/project", href: "/org/project", icon: null }] }],
     me: { checked: true, name: null }, signIn: "/-/login",
     footer: [{ key: "guide", label: "Guide", href: "/-/guide", icon: null }, { key: "settings", label: "Settings", href: "/#/settings", icon: null, active: true }, { key: "builders", label: "Builders", href: "/-/builders", icon: null }], open: false, onClose: nothing, rail: false, onRail: nothing, onSearch: nothing,
@@ -50,12 +50,23 @@ test("Settings sits below Guide, while standalone recovery hides nonfunctional h
   assert.match(standalone, /Settings/);
   assert.doesNotMatch(standalone, /All spaces|Search|Recent|org\/project|Guide|Builders|Sub-hubs/);
   const normal = renderToStaticMarkup(createElement(Sidebar, props));
-  assert.match(normal, /All spaces/);
+  assert.match(normal, /spacehub home/);
+  assert.doesNotMatch(normal, /Switch space/);
   assert.match(normal, /Search/);
   assert.match(normal, /org\/project/);
   assert.match(normal, /Guide/);
   assert.ok(normal.indexOf(">Guide<") < normal.indexOf(">Settings<"));
   assert.ok(normal.indexOf(">Settings<") < normal.indexOf(">Builders<"));
+});
+
+test("the space switcher leads the dock, before the places inside where you are", () => {
+  const places = [{ key: "chat", label: "Chat", href: "/org/project#files?path=Chat", icon: null, active: true }];
+  const switcher = { current: { name: "quirq", kind: "org", href: "/quirq" }, options: [], signedIn: true };
+  const dock = renderToStaticMarkup(createElement(Dock, { places, switcher }));
+  assert.match(dock, /Space: quirq\. Switch space/);
+  assert.ok(dock.indexOf("Switch space") < dock.indexOf(">Chat<"));
+  assert.match(renderToStaticMarkup(createElement(Dock, { places: [], switcher: { ...switcher, current: null } })), /All spaces/);
+  assert.equal(renderToStaticMarkup(createElement(Dock, { places: [] })), "");
 });
 
 test("Settings embeds full-instance Sub-hubs as a section with the three recovery views", () => {

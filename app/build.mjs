@@ -7,7 +7,8 @@ const watch = process.argv.includes('--dev');
 rmSync('dist', { recursive: true, force: true });
 mkdirSync('dist', { recursive: true });
 await build({
-  entryPoints: { app: 'src/main.tsx' },
+  // shell.css also on its own: the server-rendered pages link it for the same frame.
+  entryPoints: { app: 'src/main.tsx', shell: 'src/shell.css' },
   bundle: true,
   format: 'esm',
   target: 'es2022',

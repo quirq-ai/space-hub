@@ -13,37 +13,10 @@ export const CSS = `
 :root[data-theme=dark]{--bg:#161616;--panel:#1d1d1c;--side:#191918;--fill:#2a2a28;--hover:rgba(255,255,255,.05);--selected:rgba(255,255,255,.09);--line:rgba(255,255,255,.09);--line-strong:rgba(255,255,255,.17);--fg:#ececea;--muted:#a8a8a2;--faint:#7b7b76;--link:#8fb3f6;--accent:#6b9bf2;--accent-soft:rgba(107,155,242,.15);--on-accent:#0d1424;--A:#5cc58a;--D:#f07167;--M:#e1b45a;--addbg:rgba(92,197,138,.14);--delbg:rgba(240,113,103,.13);--hunkbg:rgba(107,155,242,.15);--hl:rgba(225,180,90,.18);--shadow:0 1px 2px rgba(0,0,0,.3),0 8px 28px rgba(0,0,0,.35);--shadow-lg:0 2px 8px rgba(0,0,0,.4),0 20px 56px rgba(0,0,0,.5);color-scheme:dark}
 *{box-sizing:border-box}
 html,body{height:100%}
-body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 var(--font);-webkit-font-smoothing:antialiased;display:grid;grid-template:"top top" 52px "side main" minmax(0,1fr)/236px minmax(0,1fr);height:100vh;overflow:hidden}
-body.no-side{grid-template:"top" 52px "main" minmax(0,1fr)/minmax(0,1fr)}
 a{color:var(--link);text-decoration:none}a:hover{text-decoration:underline}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
 svg.ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none;vertical-align:-3px}
-header{grid-area:top;display:flex;align-items:center;gap:10px;padding:0 14px;background:var(--panel);border-bottom:1px solid var(--line);min-width:0}
-header .home{display:flex;align-items:center;gap:8px;color:var(--fg);font-weight:650;letter-spacing:-.2px;padding:4px 6px;border-radius:6px}
-header .home svg.mark{width:22px;height:22px;flex:none}header .home svg.mark rect{fill:var(--fg)}header .home svg.mark path{fill:var(--panel)}header .home:hover{text-decoration:none;background:var(--hover)}
-header .search{display:flex;align-items:center;gap:8px;width:min(420px,40vw);height:32px;margin-left:18px;padding:0 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--faint)}
-header .search:hover{text-decoration:none;border-color:var(--line-strong)}header .search span{flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-kbd{padding:1px 6px;border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;color:var(--faint);font:11px ui-monospace,Menlo,monospace;background:var(--panel)}
-header .spacer{flex:1}
-header nav{display:flex;align-items:center;gap:10px}header nav form{margin:0}
-header .live{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
-header .live::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--A);box-shadow:0 0 0 3px var(--addbg)}header .live.off::before{background:var(--faint);box-shadow:none}
-details.acct{position:relative}details.acct>summary{list-style:none;display:flex;align-items:center;gap:2px;padding:2px 4px 2px 2px;border-radius:20px;cursor:pointer;color:var(--faint)}
-details.acct>summary::-webkit-details-marker{display:none}details.acct>summary:hover,details.acct[open]>summary{background:var(--hover)}
-.av{border-radius:50%;background:var(--fill);vertical-align:middle;flex:none;object-fit:cover}
-details.acct .pop{position:absolute;right:0;top:calc(100% + 6px);z-index:20;min-width:220px;padding:6px;border:1px solid var(--line);border-radius:12px;background:var(--panel);box-shadow:var(--shadow-lg)}
-.acct-head{display:flex;align-items:center;gap:10px;padding:8px 8px 10px;margin-bottom:4px;border-bottom:1px solid var(--line)}.acct-head span{display:block;color:var(--faint);font-size:12px}
-details.acct .pop a,details.acct .pop button{display:flex;align-items:center;gap:9px;width:100%;padding:7px 8px;border:0;border-radius:6px;background:none;color:var(--fg);font:13px var(--font);text-align:left;cursor:pointer}
-details.acct .pop a:hover,details.acct .pop button:hover{text-decoration:none;background:var(--hover)}
-aside.side{grid-area:side;display:flex;flex-direction:column;min-height:0;padding:10px 8px 8px;background:var(--side);border-right:1px solid var(--line)}
-.side-title{padding:6px 10px 4px;color:var(--faint);font-size:11.5px;font-weight:600}
-.side a{display:flex;align-items:center;gap:9px;height:30px;padding:0 10px;border-radius:7px;color:var(--muted);font-size:13px}
-.side a:hover{text-decoration:none;background:var(--hover);color:var(--fg)}.side a.on{background:var(--selected);color:var(--fg);font-weight:550}
-.side .group{display:grid;gap:1px}.side .grow{flex:1}.side .foot{display:grid;gap:1px;padding-top:6px;border-top:1px solid var(--line)}
-.side .hub{display:flex;align-items:center;gap:9px;padding:6px 8px;margin-bottom:8px;border-radius:9px;color:var(--fg);line-height:1.25}.side .hub:hover{background:var(--panel);text-decoration:none}
-.side .hub b{display:block;font-size:13px}.side .hub span{display:block;color:var(--faint);font-size:11.5px}.side .hub i{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:7px;background:var(--fill);color:var(--muted)}
-.side .group{padding-bottom:8px;border-bottom:1px solid var(--line)}.side kbd{margin-left:auto;font-size:10.5px;padding:0 5px}
-main{grid-area:main;overflow-y:auto;padding:22px max(36px,calc((100% - 1060px) / 2)) 48px;min-width:0}
+main{grid-area:main;overflow-y:auto;padding:22px max(36px,calc((100% - 1060px) / 2)) 48px;min-width:0}body.bare{height:100vh;overflow:hidden;display:grid}
 h1{font-size:22px;font-weight:650;letter-spacing:-.4px;line-height:1.25;margin:0 0 4px;word-break:break-word}h1 b{font-weight:650}
 h2{font-size:15px;font-weight:600;margin:0 0 8px}
 .desc{color:var(--muted);margin:0 0 14px}
@@ -87,8 +60,8 @@ textarea{font:12px ui-monospace,Menlo,monospace;min-height:90px}
 .narrow form .btn{margin-top:18px}
 .banner{border:1px solid var(--line);border-radius:10px;padding:12px 16px;margin:0 0 16px;background:var(--panel)}
 .banner.err{border-color:transparent;background:var(--delbg);color:var(--D)}.banner.ok{border-color:transparent;background:var(--addbg);color:var(--A)}.banner form{margin-top:8px}
-details.menu{position:relative;display:inline-block}details.menu>summary{list-style:none;cursor:pointer}details.menu>summary::-webkit-details-marker{display:none}
-details.menu .pop{position:absolute;z-index:10;top:calc(100% + 6px);left:0;min-width:240px;max-width:340px;max-height:360px;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow-lg);padding:6px}
+details.pick{position:relative;display:inline-block}details.pick>summary{list-style:none;cursor:pointer}details.pick>summary::-webkit-details-marker{display:none}
+details.pick .pop{position:absolute;z-index:10;top:calc(100% + 6px);left:0;min-width:240px;max-width:340px;max-height:360px;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow-lg);padding:6px}
 .pop .h{padding:6px 10px 4px;font-size:11.5px;color:var(--faint);font-weight:600}.pop a{display:block;padding:6px 10px;border-radius:6px;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.pop a.on{font-weight:600;background:var(--selected)}.pop a:hover{background:var(--hover);text-decoration:none}
 .md{padding:8px 32px 24px;word-wrap:break-word;line-height:1.65;font-size:15px}
 .md h1,.md h2{border-bottom:1px solid var(--line);padding-bottom:.3em;margin:24px 0 16px;font-weight:650}.md h1{font-size:1.8em}.md h2{font-size:1.4em}.md h3{font-size:1.2em}
@@ -124,7 +97,7 @@ details.menu .pop{position:absolute;z-index:10;top:calc(100% + 6px);left:0;min-w
 .wide-page .page-title{margin:0 0 6px}.wide-page>.banner{margin:14px 0 0}.xo-signin{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;max-width:560px;margin:16px 0 6px;padding:14px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}.xo-signin .btn{height:34px;padding:0 16px;font-size:14px}.xo-signin span{color:var(--muted);font-size:13px}.or-terminal{margin-top:26px}.signin-form{max-width:560px;margin:4px 0 0;padding:14px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}.signin-form label{margin-top:0}.signin-form textarea{width:100%;min-height:64px}.signin-form p{margin:10px 0 0}
 .guide{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.7fr) minmax(0,1fr);gap:12px 28px}@media (max-width:980px){.guide{grid-template-columns:minmax(0,1fr)}}
 .guide h3{font-size:13px;font-weight:600;margin:0 0 6px}.guide ul,.guide ol{margin:0;padding-left:18px}.guide li{margin:0 0 6px}.guide p{margin:6px 0 0}.guide .clone{margin:4px 0 6px;white-space:pre-wrap;overflow-wrap:anywhere}
-@media (max-width:760px){body{grid-template:"top" 52px "main" minmax(0,1fr)/minmax(0,1fr)}aside.side{display:none}header .search{width:auto;margin-left:auto}header .search span,header .search kbd,header .spacer{display:none}main{padding:16px 16px 32px}.narrow{padding:18px}}
+@media (max-width:760px){main{padding:16px 16px 32px}.narrow{padding:18px}}
 `;
 
 const ICONS: Record<string, string> = {
@@ -138,32 +111,56 @@ const ICONS: Record<string, string> = {
   out: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/>',
   down: '<path d="m6 9 6 6 6-6"/>',
   login: '<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="m10 17 5-5-5-5M15 12H3"/>',
+  updown: '<path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  right: '<path d="m9 18 6-6-6-6"/>',
+  panel: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/>',
+  settings: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2m-7.07-14.07 1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>',
+  moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
+  monitor: '<rect width="20" height="14" x="2" y="3" rx="2"/><path d="M8 21h8M12 17v4"/>',
 };
-const icon = (name: string) => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
-const avatar = (name: string, size: number) => `<img class="av" src="/-/avatar/${encodeURIComponent(name)}" width="${size}" height="${size}" alt="">`;
+const icon = (name: string, cls = '') => `<svg class="ic${cls ? ` ${cls}` : ''}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
+const avatar = (name: string, size: number) => `<img class="avatar" src="/-/avatar/${encodeURIComponent(name.toLowerCase())}" width="${size}" height="${size}" alt="">`;
 
-// The page frame, the app's own: a top bar (home, search, `nav`), the
-// sidebar (`side`, '' for none) and <main>, which stays last in <body> for
-// the live pages (cli/src/livepage.ts).
-export function shell(title: string, nav: string, body: string, head = '', home = '/', side = ''): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><script src="/-/app/theme.js"></script><script src="/-/app/copy.js" defer></script>${head}<title>${esc(title)}</title><link rel="icon" href="/-/app/quirq-icon.svg"><style>${CSS}</style></head><body${side ? '' : ' class="no-side"'}><header><a class="home" href="${esc(home)}" aria-label="spacehub home"><svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14"/><path transform="translate(15 9) scale(.34)" d="M50 0A50 50 0 0 1 100 50V118A14 14 0 0 1 86 132A14 14 0 0 1 72 118V94.87A50 50 0 1 1 50 0ZM50 33A17 17 0 1 0 50 67A17 17 0 1 0 50 33Z"/></svg>spacehub</a>${nav ? `<a class="search" href="/#search">${icon('search')}<span>Search spaces, projects, files</span><kbd>⌘K</kbd></a>` : ''}<span class="spacer"></span><nav>${nav}</nav></header>${side}<main>${body}</main></body></html>`;
+// The page frame, the app's own (app/src/shell/shell.tsx), after shadcn's
+// sidebar-07: the sidebar (the hub, Platform, the hub's pages, you)
+// and the inset's header (the sidebar trigger and where you are). Its look is
+// app/src/shell.css, linked as /-/app/shell.css, and /-/app/frame.js gives it
+// the app's behaviour (fold to icons, the phone drawer, ⌘B, appearance), so
+// these pages and the app share one frame. <main> stays last in <body> for
+// the live pages (cli/src/livepage.ts). Without `frame` (a page not behind the
+// hub's proxy) the page has no sidebar.
+export type Frame = { viewer: string | null; current?: Current };
+export type Current = 'home' | 'guide' | 'builders' | 'me' | '';
+
+export function shell(title: string, body: string, head = '', frame: Frame | null = null): string {
+  const css = `<link rel="stylesheet" href="/-/app/shell.css"><style>${CSS}</style>`;
+  const top = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><script src="/-/app/theme.js"></script><script src="/-/app/copy.js" defer></script>${head}<title>${esc(title)}</title><link rel="icon" href="/-/app/quirq-icon.svg">${css}</head>`;
+  if (!frame) return `${top}<body class="bare"><main>${body}</main></body></html>`;
+  const crumb = title.replace(/ · spacehub$/, '') || 'spacehub';
+  return `${top}<body class="shell server"><script src="/-/app/frame.js"></script>${sidebar(frame.viewer, frame.current ?? '')}<header class="inset-header"><button class="icon-button side-trigger" type="button" data-frame="toggle" aria-label="Toggle the sidebar" title="Toggle the sidebar (⌘B)">${icon('panel')}</button><span class="inset-sep" aria-hidden="true"></span><div class="inset-crumbs"><nav class="path-bar" aria-label="Where you are"><span class="path-item"><span class="path-seg"><a href="/">Home</a></span></span><span class="path-item">${icon('right', 'crumb-sep')}<span class="path-seg"><a class="current" aria-current="page">${esc(crumb)}</a></span></span></nav></div></header><main>${body}</main></body></html>`;
 }
 
-// The top bar's right side for a viewer: a signed-in builder (its name) or anonymous (null).
-export function navFor(viewer: string | null): string {
-  if (!viewer) return `<a class="btn" href="/-/login">${icon('login')}Sign in</a>`;
-  const me = encodeURIComponent(viewer);
-  return `<details class="acct"><summary aria-label="Account">${avatar(viewer, 26)}${icon('down')}</summary><div class="pop"><div class="acct-head">${avatar(viewer, 32)}<div><b>${esc(viewer)}</b><span>Signed in</span></div></div><a href="/${me}">${icon('user')}Your profile</a><a href="/-/new">${icon('plus')}New project</a><a href="/-/guide">${icon('guide')}Guide</a><form method="post" action="/-/logout"><button type="submit">${icon('out')}Sign out</button></form></div></details>`;
-}
+const MARK = '<svg class="quirq-mark" width="20" height="20" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="currentColor"/><path class="quirq-mark-q" transform="translate(15 9) scale(.34)" d="M50 0A50 50 0 0 1 100 50V118A14 14 0 0 1 86 132A14 14 0 0 1 72 118V94.87A50 50 0 1 1 50 0ZM50 33A17 17 0 1 0 50 67A17 17 0 1 0 50 33Z"/></svg>';
 
-// The sidebar of the server-rendered pages, built like the app's: where you
-// are, the main places, and the hub's pages pinned to the bottom.
-export function sideFor(viewer: string | null, current: 'home' | 'guide' | 'builders' | 'me' | '' = ''): string {
-  const item = (key: string, href: string, label: string, iconName: string, extra = '') => `<a href="${href}"${key === current ? ' class="on" aria-current="page"' : ''}>${icon(iconName)}${esc(label)}${extra}</a>`;
-  const mine = viewer ? item('me', `/${encodeURIComponent(viewer)}`, 'Your profile', 'user') : '';
-  return `<aside class="side" aria-label="Navigation"><a class="hub" href="/"><i>${icon('home')}</i><span><b>All spaces</b><span>This hub</span></span></a><div class="group">${item('home', '/', 'Home', 'home')}${item('', '/#search', 'Search', 'search', '<kbd>⌘K</kbd>')}${mine}</div><div class="grow"></div><div class="foot">${item('guide', '/-/guide', 'Guide', 'guide')}${item('builders', '/-/builders', 'Builders', 'builders')}</div></aside>`;
+// The sidebar, the same markup as the app's Sidebar; its menus are <details>.
+function sidebar(viewer: string | null, current: Current): string {
+  const me = viewer ? encodeURIComponent(viewer) : '';
+  const item = (key: string, href: string, label: string, iconName: string, extra = '') =>
+    `<a class="nav-item${key && key === current ? ' active' : ''}" href="${href}"${key && key === current ? ' aria-current="page"' : ''}><span class="nav-icon">${icon(iconName)}</span><span class="nav-label">${esc(label)}</span>${extra}</a>`;
+  const tile = viewer ? `<span class="side-tile">${avatar(viewer, 32)}</span>` : `<span class="side-tile anon">${icon('user')}</span>`;
+  const name = viewer ? esc(viewer) : 'Guest';
+  const note = viewer ? 'Signed in' : 'Not signed in';
+  const choice = (value: string, label: string, iconName: string) => `<button type="button" role="radio" aria-checked="false" aria-label="${label}" title="${value === 'system' ? 'System: follows your device' : label}" data-theme-choice="${value}">${icon(iconName)}</button>`;
+  const appearance = `<div class="theme-choices" role="radiogroup" aria-label="Appearance"><span class="theme-choices-label">Appearance</span><span class="theme-choices-row">${choice('light', 'Light', 'sun')}${choice('dark', 'Dark', 'moon')}${choice('system', 'System', 'monitor')}</span></div>`;
+  const account = viewer
+    ? `<a role="menuitem" href="/${me}">${icon('user')}Your profile</a><a role="menuitem" href="/-/new">${icon('plus')}New project</a><div class="menu-sep"></div>${appearance}<div class="menu-sep"></div><form method="post" action="/-/logout"><button role="menuitem" type="submit">${icon('out')}Sign out</button></form>`
+    : `<a role="menuitem" href="/-/login">${icon('login')}Sign in</a><div class="menu-sep"></div>${appearance}`;
+  const brand = `<a class="side-button large" href="/" aria-label="spacehub home"><span class="side-tile brand">${MARK}</span><span class="side-text"><strong>spacehub</strong><span>This hub</span></span></a>`;
+  return `<nav class="sidebar" aria-label="Navigation"><div class="side-head">${brand}</div><div class="side-content"><div class="side-group"><div class="side-label">Platform</div>${item('home', '/', 'Home', 'home')}${item('', '/#search', 'Search', 'search', '<kbd class="nav-kbd">⌘K</kbd>')}${viewer ? item('me', `/${me}`, 'Your profile', 'user') : ''}</div><div class="side-group side-secondary">${item('guide', '/-/guide', 'Guide', 'guide')}${item('settings', '/#/settings', 'Settings', 'settings')}${item('builders', '/#builders', 'Builders', 'builders')}</div></div><div class="side-foot"><details class="nav-user"><summary class="side-button large" aria-label="Account: ${name}">${tile}<span class="side-text"><strong>${name}</strong><span>${note}</span></span>${icon('updown', 'side-chevron')}</summary><div class="menu side-menu up" role="menu"><div class="menu-head">${tile}<div><strong>${name}</strong><span>${note}</span></div></div>${account}</div></details></div><button type="button" class="side-rail only-wide" tabindex="-1" data-frame="rail" aria-label="Fold or unfold the sidebar" title="Fold or unfold the sidebar"></button></nav>`;
 }
 
 // Scripts and connections only to this site: /-/live.js and its stream.
 export const PAGE_CSP =
-  "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; media-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+  "default-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";

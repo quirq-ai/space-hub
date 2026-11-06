@@ -112,7 +112,7 @@ export function App() {
   const signIn = `/-/login?next=${encodeURIComponent(location.pathname + location.hash)}`;
   const state = recovery ? recoveryState : live.error && view ? "offline" : !view ? "loading" : "live";
 
-  // Sidebar: a space switcher, the main places, short lists of where you are and where you were, and a footer.
+  // The dock's space switcher; the sidebar: the main places, short lists of where you are and where you were, and a footer.
   const kindOf = (name: string) => me.spaces.find(s => s.space === name)?.kind ?? (meta?.level === "space" && meta.name === name ? meta.kind : space.data?.meta.name === name ? space.data.meta.kind : "personal");
   const switcher = {
     current: route.page === "home" || route.page === "subhub" ? null : { name: place.space, kind: kindOf(place.space), href: placeUrl({ space: place.space, project: "" }) },
@@ -191,7 +191,7 @@ export function App() {
 
   return <div className={`shell${activity ? " with-inspector" : ""}${rail ? " rail" : ""}`}>
     <Progress />
-    <Sidebar switcher={switcher} primary={primary} sectionsTitle={sectionsTitle} sections={sideSections} footer={footer} me={me} signIn={signIn} open={sidebarOpen} onClose={() => setSidebarOpen(false)} rail={rail} onRail={toggleRail} onSearch={() => setSearching(true)} recoveryOnly={recoveryOnly} />
+    <Sidebar primary={primary} sectionsTitle={sectionsTitle} sections={sideSections} footer={footer} me={me} signIn={signIn} open={sidebarOpen} onClose={() => setSidebarOpen(false)} rail={rail} onRail={toggleRail} onSearch={() => setSearching(true)} recoveryOnly={recoveryOnly} />
     <main className="main" id="main">
       <InsetHeader crumbs={crumbs} live={state} rail={rail} onToggleSidebar={toggleSidebar} activity={hasActivity ? { open: activityOpen, onToggle: toggleActivity } : undefined} recoveryOnly={recoveryOnly} />
       <div className="main-scroll">
@@ -201,7 +201,7 @@ export function App() {
         {!recovery && route.page === "space" && <SpacePage name={place.space} tab={route.tab} view={view as View<SpaceMeta> | undefined} error={live.error} me={me.name} signIn={signIn} seen={seen} />}
         {!recovery && route.page === "project" && <ChannelsContext.Provider value={channels}><ProjectPage route={route} view={view as View<ProjectMeta> | undefined} error={live.error} me={me.name} signIn={signIn} refresh={live.refresh} /></ChannelsContext.Provider>}
       </div>
-      <Dock places={places} />
+      <Dock places={places} switcher={recovery ? undefined : { ...switcher, signedIn: !!me.name }} />
     </main>
     {activity && <Inspector title="Activity" note={route.page === "project" ? placeKey : route.page === "space" ? place.space : undefined} onClose={toggleActivity}><ActivityPanel meta={activityOf} /></Inspector>}
     {searching && !recoveryOnly && <SearchPalette place={place} onClose={() => setSearching(false)} />}

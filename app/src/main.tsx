@@ -2,6 +2,7 @@
 import "blobatar/motion.css";
 import "blobatar/gaze.css";
 import "./content.css";
+import "./shell.css";
 import "./app.css";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
