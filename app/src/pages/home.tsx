@@ -1,5 +1,5 @@
 import { Fragment } from "react";
-import { Building2, FolderGit2, Github, Plus, Rocket, Users } from "lucide-react";
+import { Building2, FolderGit2, Plus, Rocket, Users } from "lucide-react";
 import { activeBy, count, kindLabel, latestOf, newestBy, placeUrl, size, type HubMeta, type View } from "@/api";
 import type { Entry } from "@/lib/types";
 import { hashOf, onLink } from "@/router";
@@ -64,12 +64,6 @@ export function HomePage({ tab, view, me, mySpaces, seen }: HomeProps) {
       </Popover>}</>}>
       <LiveNow variant="strip" here={view.meta.here} agents={view.meta.agentList} />
     </PageHeader>
-    <form className="room-open" method="get" action="/-/gh">
-      <Github size={16} />
-      <label htmlFor="room-repo">Explain any GitHub repository</label>
-      <input id="room-repo" name="repo" required placeholder="owner/repo or a github.com link" spellCheck={false} autoCapitalize="off" />
-      <button className="button primary small" type="submit">Open its room</button>
-    </form>
     <Browser head={<>{count(shownSpaces, "space")} · {recent.length} newest {recent.length === 1 ? "project" : "projects"}</>} groups={[...groups, { key: "recent", title: "Recently pushed", note: "The newest pushes across the hub, wherever they landed.", cards: recent.map(project => {
       const [space, name] = project.fullName.split("/");
       return { key: project.fullName, name: project.fullName, search: project.description, people: peopleByProject.get(project.fullName), href: placeUrl({ space, project: name }), time: project.pushedAt, icon: <Glyph><FolderGit2 size={17} /></Glyph>,

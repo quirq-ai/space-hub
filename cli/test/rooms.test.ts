@@ -4,7 +4,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { forgetOpens, handleRooms, OPENS_PER_MINUTE, parseRepo, roomUrl, type RoomsDeps } from '../src/rooms.ts';
+import { forgetOpens, handleRooms, OPENS_PER_MINUTE, parseGithubUrl, parseRepo, roomUrl, type RoomsDeps } from '../src/rooms.ts';
 
 beforeEach(() => forgetOpens());
 
@@ -49,7 +49,8 @@ async function serve(deps: RoomsDeps) {
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const get = (path: string, cookie = '') => fetch(base + path, { redirect: 'manual', headers: cookie ? { cookie } : {} });
   const post = (body: unknown, cookie = 'spacehub_session=tok') => fetch(base + '/-/api/ask', { method: 'POST', headers: { 'content-type': 'application/json', cookie }, body: JSON.stringify(body) });
-  return { server, get, post };
+  const explain = (body: unknown, type = 'application/json') => fetch(base + '/-/api/explain', { method: 'POST', headers: { 'content-type': type }, body: JSON.stringify(body) });
+  return { server, get, post, explain };
 }
 
 test('repository names come as owner/repo or GitHub links', () => {
@@ -68,7 +69,7 @@ test('the first visit opens the room, with GitHub\'s spelling; later visits go s
   assert.equal(first.status, 303);
   assert.equal(first.headers.get('location'), '/explain/octo.hello-world#/files?path=Chat%2Fgeneral');
   assert.deepEqual(opened, [{ owner: 'Octo', repo: 'Hello-World', description: 'Hi', openedBy: 'bob' }]);
-  const again = await s.get('/-/gh?repo=https://github.com/Octo/Hello-World');
+  const again = await s.get('/gh/Octo/Hello-World');
   assert.equal(again.status, 303);
   assert.equal(opened.length, 1);
   // Signed out opens too.
@@ -112,4 +113,53 @@ test('asking needs a session and passes the module\'s caps on', async () => {
   assert.equal(capped.status, 429);
   assert.match((await capped.json()).error, /Ask again tomorrow/);
   s.server.close();
+});
+
+test('the explain chat takes a GitHub repository URL and nothing else', () => {
+  for (const url of ['https://github.com/octo/hello-world', 'http://github.com/octo/hello-world', 'github.com/octo/hello-world', 'https://www.github.com/octo/hello-world', '  https://github.com/octo/hello-world\n', 'https://GitHub.com/octo/hello-world/', 'https://github.com/octo/hello-world.git', 'https://github.com/octo/hello-world/tree/main/src?x=1#y']) {
+    assert.deepEqual(parseGithubUrl(url), { owner: 'octo', repo: 'hello-world' }, url);
+  }
+  for (const text of ['', 'octo/hello-world', 'hello', 'https://github.com/octo', 'https://github.com/', 'https://gitlab.com/octo/hello-world', 'https://github.com.evil.example/octo/hello-world', 'https://evil.example/github.com/octo/hello-world', 'https://gist.github.com/octo/hello-world', 'git@github.com:octo/hello-world.git', 'look at https://github.com/octo/hello-world', 'https://github.com/octo/hello-world please', 'https://github.com/octo/..', 'javascript:alert(1)//github.com/octo/x']) {
+    assert.equal(parseGithubUrl(text), null, text);
+  }
+});
+
+test('POST /-/api/explain opens the room from a URL and says why when it cannot', async () => {
+  const { deps, opened } = fake();
+  const s = await serve(deps);
+  const first = await s.explain({ url: 'https://github.com/octo/hello-world' });
+  assert.equal(first.status, 200);
+  assert.deepEqual(await first.json(), { project: 'octo.hello-world' });
+  assert.deepEqual(opened, [{ owner: 'Octo', repo: 'Hello-World', description: 'Hi', openedBy: '' }]);
+  // The room is there now, so nothing opens again.
+  assert.equal((await s.explain({ url: 'github.com/Octo/Hello-World/tree/main' })).status, 200);
+  assert.equal(opened.length, 1);
+  for (const body of [{ url: 'octo/hello-world' }, { url: 'hello' }, { url: 5 }, {}, null, 'text']) {
+    const refused = await s.explain(body);
+    assert.equal(refused.status, 400, JSON.stringify(body));
+    assert.match(((await refused.json()) as { error: string }).error, /Only a GitHub repository URL/);
+  }
+  const statusOf = async (url: string) => {
+    const reply = await s.explain({ url });
+    return [reply.status, ((await reply.json()) as { error?: string }).error ?? ''];
+  };
+  assert.deepEqual(await statusOf('https://github.com/octo/secret'), [404, 'GitHub has no public repository octo/secret.']);
+  assert.deepEqual(await statusOf('https://github.com/octo/missing'), [404, 'GitHub has no public repository octo/missing.']);
+  assert.equal((await statusOf('https://github.com/octo/quiet'))[0], 503);
+  assert.equal(opened.length, 1);
+  assert.equal((await s.explain({ url: 'https://github.com/octo/x' }, 'text/plain')).status, 415);
+  s.server.close();
+});
+
+test('POST /-/api/explain shares the limit on new rooms, and is off without the admin token', async () => {
+  const { deps } = fake();
+  const s = await serve(deps);
+  for (let i = 0; i < OPENS_PER_MINUTE; i++) assert.equal((await s.explain({ url: `https://github.com/octo/r${i}` })).status, 200);
+  assert.equal((await s.explain({ url: 'https://github.com/octo/one-more' })).status, 429);
+  // A room already there still answers.
+  assert.equal((await s.explain({ url: 'https://github.com/octo/r0' })).status, 200);
+  s.server.close();
+  const off = await serve(fake({ canOpen: false }).deps);
+  assert.equal((await off.explain({ url: 'https://github.com/octo/x' })).status, 503);
+  off.server.close();
 });

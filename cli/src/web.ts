@@ -24,6 +24,7 @@
 //                                with SPACEHUB_XO_KEY set
 //   GET      /gh/<owner>/<repo>  a public GitHub repository's room: its explainer and group
 //   POST     /-/api/ask          chat, opened on the first visit; asking there (rooms.ts)
+//   POST     /-/api/explain      open a room from a GitHub URL, for the explain org's chat (rooms.ts)
 //
 // Pages are read by the module (ui.ts); this service only acts. A session is
 // the user's identity token in an HttpOnly cookie, so every action runs as
