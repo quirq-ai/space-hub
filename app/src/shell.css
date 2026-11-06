@@ -250,6 +250,22 @@ button.dock-item { border: 0; background: none; font: inherit; cursor: pointer; 
 .dock-item:hover .dock-icon { transform: translateY(-3px) scale(1.12); }
 .dock-item.active .dock-icon { background: var(--accent-soft); border-color: transparent; color: var(--accent-text); }
 .dock-item.active::after { content: ""; position: absolute; bottom: -4px; width: 4px; height: 4px; border-radius: 50%; background: var(--text-2); }
+/* The hub's places (Home, Orgs, Agents, Builders) wear app-icon tiles: a two-tone white picture on a lit gradient. */
+.dock-icon.tone { --t1: #6366f1; --t2: #a855f7; --glow: rgba(124, 92, 246, .45); border: 0; color: #fff;
+  background: radial-gradient(120% 90% at 28% 0%, rgba(255, 255, 255, .42), rgba(255, 255, 255, 0) 58%), linear-gradient(150deg, var(--t1), var(--t2));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .4), inset 0 -2px 3px rgba(0, 0, 0, .14), 0 4px 10px -3px var(--glow); }
+.dock-icon.tone-home { --t1: #5b6cff; --t2: #b44dff; --glow: rgba(120, 90, 255, .5); }
+.dock-icon.tone-orgs { --t1: #ffb224; --t2: #ff6a3d; --glow: rgba(255, 128, 50, .5); }
+.dock-icon.tone-agents { --t1: #22d3b4; --t2: #0b8fe0; --glow: rgba(20, 170, 200, .5); }
+.dock-icon.tone-builders { --t1: #ff5f8f; --t2: #e8368f; --glow: rgba(240, 70, 140, .5); }
+.dock-icon .dock-glyph { width: 24px; height: 24px; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, .2)); }
+.dock-item:hover .dock-icon.tone { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .4), inset 0 -2px 3px rgba(0, 0, 0, .14), 0 8px 18px -4px var(--glow); }
+.dock-item.active .dock-icon.tone, .dock-switcher[aria-expanded="true"] .dock-icon.tone, .dock details[open] > .dock-switcher .dock-icon.tone {
+  background: radial-gradient(120% 90% at 28% 0%, rgba(255, 255, 255, .42), rgba(255, 255, 255, 0) 58%), linear-gradient(150deg, var(--t1), var(--t2));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .4), 0 0 0 2px var(--panel), 0 0 0 3.5px var(--t2), 0 6px 14px -4px var(--glow); }
+.dock-item.active:has(.tone)::after { background: var(--text); }
+:root[data-theme="dark"] .dock-icon.tone { --glow: rgba(0, 0, 0, .55); }
+:root[data-theme="dark"] .dock-item:hover .dock-icon.tone { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35), inset 0 -2px 3px rgba(0, 0, 0, .18), 0 8px 18px -4px rgba(0, 0, 0, .6), 0 0 14px -2px color-mix(in srgb, var(--t2) 55%, transparent); }
 .dock-label { max-width: 58px; overflow: hidden; font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
 .dock-fresh { position: absolute; top: 2px; right: 10px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); border: 2px solid var(--panel); }
 @media (prefers-reduced-motion: reduce) { .dock-icon { transition: none; } .dock-item:hover .dock-icon { transform: none; } }

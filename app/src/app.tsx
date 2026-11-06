@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { Bot, BookOpen, BrainCircuit, Building2, Hash, Folder, FolderGit2, History, Settings, Users } from "lucide-react";
+import { Bot, BookOpen, Hash, Folder, FolderGit2, History, Settings, Users } from "lucide-react";
 import { placeUrl, viewUrl, type HubMeta, type Place, type ProjectMeta, type SpaceMeta, type View } from "@/api";
 import { useLive } from "@/hooks/use-live";
 import { channelSeenKey, ChannelsContext, useChannels } from "@/hooks/use-channels";
 import { channelCards, channelOf } from "@/lib/channels";
 import { recentProjects, rememberProject, useMe } from "@/hooks/use-me";
 import { hashOf, navigate, useRoute } from "@/router";
+import { AgentsGlyph, BuildersGlyph, OrgsGlyph } from "@/shell/dock-glyphs";
 import { Crumbs, Dock, InsetHeader, Inspector, Progress, Sidebar, type DockItem, type SideSection } from "@/shell/shell";
 import { PathBar } from "@/shell/path-bar";
 import { SearchPalette } from "@/shell/search";
@@ -171,9 +172,9 @@ export function App() {
   } else if (route.page === "home" && !recovery) {
     // The hub's own lists, one page each; Home is in the switcher's menu just before them.
     places = [
-      { key: "orgs", label: "Orgs", href: "/#" + hashOf("orgs"), icon: <Building2 size={22} strokeWidth={1.7} />, active: route.tab === "orgs" },
-      { key: "agents", label: "Agents", href: "/#" + hashOf("agents"), icon: <BrainCircuit size={22} strokeWidth={1.7} />, active: route.tab === "agents" },
-      { key: "builders", label: "Builders", href: "/#" + hashOf("builders"), icon: <Users size={22} strokeWidth={1.7} />, active: route.tab === "builders" },
+      { key: "orgs", label: "Orgs", href: "/#" + hashOf("orgs"), icon: <OrgsGlyph />, tone: "orgs", active: route.tab === "orgs" },
+      { key: "agents", label: "Agents", href: "/#" + hashOf("agents"), icon: <AgentsGlyph />, tone: "agents", active: route.tab === "agents" },
+      { key: "builders", label: "Builders", href: "/#" + hashOf("builders"), icon: <BuildersGlyph />, tone: "builders", active: route.tab === "builders" },
     ];
   }
 

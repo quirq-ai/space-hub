@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { Activity, Check, ChevronRight, ChevronsUpDown, Home, LogIn, LogOut, PanelLeft, Plus, Search, User, X } from "lucide-react";
 import { ThemeChoices } from "@/components/theme-picker";
+import { HomeGlyph, type DockTone } from "@/shell/dock-glyphs";
 import { useLoading } from "@/hooks/use-live";
 import { onLink } from "@/router";
 import { Avatar, QuirqMark } from "@/ui/primitives";
@@ -67,7 +68,7 @@ function SpaceSwitcher(info: SwitcherInfo) {
   const label = current ? current.name : "All spaces";
   return <div className="dock-switch" ref={box}>
     <button type="button" className="dock-item dock-switcher" aria-haspopup="menu" aria-expanded={open} aria-label={`Space: ${label}. Switch space`} title="Switch space" onClick={() => setOpen(value => !value)}>
-      <span className="dock-icon">{current ? <Avatar name={current.name} size={40} kind={current.kind} /> : <Home size={22} strokeWidth={1.7} />}<span className="dock-switch-badge"><ChevronsUpDown size={11} /></span></span>
+      <span className={`dock-icon${current ? "" : " tone tone-home"}`}>{current ? <Avatar name={current.name} size={40} kind={current.kind} /> : <HomeGlyph />}<span className="dock-switch-badge"><ChevronsUpDown size={11} /></span></span>
       <span className="dock-label">{label}</span>
     </button>
     {open && <SpaceMenu {...info} onClose={() => setOpen(false)} />}
@@ -222,7 +223,7 @@ export function Crumbs({ items }: { items: { label: string; href?: string }[] })
   </nav>;
 }
 
-export type DockItem = { key: string; label: string; href: string; icon: ReactNode; active?: boolean; fresh?: boolean };
+export type DockItem = { key: string; label: string; href: string; icon: ReactNode; active?: boolean; fresh?: boolean; /** Draws the icon on its coloured tile (shell.css .tone-<name>). */ tone?: DockTone };
 
 /** The dock: the space you are in (its switcher), the places inside where you are (a project's sections, a space's projects, the hub's parts), and last you (your account). */
 export function Dock({ places, switcher, account }: {
@@ -232,7 +233,7 @@ export function Dock({ places, switcher, account }: {
 }) {
   if (!places.length && !switcher && !account) return null;
   const item = (entry: DockItem) => <a key={entry.key} className={`dock-item${entry.active ? " active" : ""}`} href={entry.href} onClick={onLink} aria-label={entry.label} aria-current={entry.active ? "page" : undefined}>
-    <span className="dock-icon">{entry.icon}</span><span className="dock-label">{entry.label}</span>{entry.fresh && <span className="dock-fresh" title="Changed since you last looked" />}
+    <span className={`dock-icon${entry.tone ? ` tone tone-${entry.tone}` : ""}`}>{entry.icon}</span><span className="dock-label">{entry.label}</span>{entry.fresh && <span className="dock-fresh" title="Changed since you last looked" />}
   </a>;
   const sep = <span className="dock-sep" aria-hidden="true" />;
   return <div className="dock">
