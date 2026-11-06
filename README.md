@@ -491,7 +491,8 @@ the place's sections and tools. The dock's first entry opens Home, search
 its last opens your account, Guide, Settings, Builders and appearance. On a
 phone the sidebar becomes a drawer and the dock a tab bar.
 
-- `/` lists every space and recently pushed projects. Its **Activity** button
+- `/` lists every space and recently pushed projects; its dock switches to the
+  hub's lists of **Orgs**, **Agents** and **Builders**. Its **Activity** button
   opens the hub's activity in a right-hand panel (over the page on narrower
   windows): the entries come in one after another, then each new one slides
   in at the top as it happens. The panel remembers, per browser, whether it

@@ -7,7 +7,7 @@ import type { Place } from "@/api";
  * server and its proxy only ever see those three paths.
  */
 export type Route =
-  | { page: "home"; tab: "home" | "agents" | "builders" | "settings" }
+  | { page: "home"; tab: "home" | "orgs" | "agents" | "builders" | "settings" }
   // A connected sub-hub's storage, read live (/subhub/<name>, #/backup?id= one backup).
   | { page: "subhub"; name: string; backup: string }
   | { page: "space"; place: Place; tab: "projects" | "agents" | "chat" | "activity" | "people" }
@@ -27,7 +27,7 @@ export function parseRoute(pathname: string, hash: string): Route {
   const params = new URLSearchParams(qs);
   if (!project && (tab === "settings" || tab === "subhubs")) return { page: "home", tab: "settings" };
   if (space === "subhub" && project) return { page: "subhub", name: project, backup: tab === "backup" ? params.get("id") ?? "" : "" };
-  if (!space) return { page: "home", tab: tab === "agents" || tab === "builders" ? tab : "home" };
+  if (!space) return { page: "home", tab: tab === "orgs" || tab === "agents" || tab === "builders" ? tab : "home" };
   if (!project) return { page: "space", place, tab: tab === "activity" || tab === "people" || tab === "agents" || tab === "chat" ? tab : "projects" };
   switch (tab) {
     case "code": return { page: "project", place, tab: "code", ref: params.get("ref") ?? "", path: params.get("path") ?? "" };

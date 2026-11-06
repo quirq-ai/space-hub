@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Bot, BookOpen, BrainCircuit, Hash, Folder, FolderGit2, History, Home, Settings, Users } from "lucide-react";
+import { Bot, BookOpen, BrainCircuit, Building2, Hash, Folder, FolderGit2, History, Settings, Users } from "lucide-react";
 import { placeUrl, viewUrl, type HubMeta, type Place, type ProjectMeta, type SpaceMeta, type View } from "@/api";
 import { useLive } from "@/hooks/use-live";
 import { channelSeenKey, ChannelsContext, useChannels } from "@/hooks/use-channels";
@@ -109,7 +109,7 @@ export function App() {
     setSeen(readSeen());
   }, [route.page, placeKey, place.space, own, recoveryOnly]);
   useEffect(() => {
-    document.title = recovery ? "Settings · spacehub" : route.page === "subhub" ? `Sub-hub ${route.name} · spacehub` : homeTab === "agents" ? "Agents · spacehub" : homeTab === "builders" ? "Builders · spacehub" : homeTab ? "spacehub" : `${route.page === "project" ? placeKey : place.space} · spacehub`;
+    document.title = recovery ? "Settings · spacehub" : route.page === "subhub" ? `Sub-hub ${route.name} · spacehub` : homeTab === "orgs" ? "Orgs · spacehub" : homeTab === "agents" ? "Agents · spacehub" : homeTab === "builders" ? "Builders · spacehub" : homeTab ? "spacehub" : `${route.page === "project" ? placeKey : place.space} · spacehub`;
   }, [homeTab, route, placeKey, place.space, recovery]);
 
   const signIn = `/-/login?next=${encodeURIComponent(location.pathname + location.hash)}`;
@@ -169,9 +169,9 @@ export function App() {
     places = [...(view?.snapshot.directory.entries ?? [])].sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt)).slice(0, 8)
       .map(entry => ({ key: entry.name, label: entry.name, href: placeUrl({ space: place.space, project: entry.name }), icon: <FolderGit2 size={22} strokeWidth={1.7} />, fresh: !!seen[`${place.space}/${entry.name}`] && entry.modifiedAt > seen[`${place.space}/${entry.name}`] }));
   } else if (route.page === "home" && !recovery) {
-    // The hub's front page in three parts; the page shows one at a time.
+    // The hub's own lists, one page each; Home is in the switcher's menu just before them.
     places = [
-      { key: "home", label: "Home", href: "/", icon: <Home size={22} strokeWidth={1.7} />, active: route.tab === "home" },
+      { key: "orgs", label: "Orgs", href: "/#" + hashOf("orgs"), icon: <Building2 size={22} strokeWidth={1.7} />, active: route.tab === "orgs" },
       { key: "agents", label: "Agents", href: "/#" + hashOf("agents"), icon: <BrainCircuit size={22} strokeWidth={1.7} />, active: route.tab === "agents" },
       { key: "builders", label: "Builders", href: "/#" + hashOf("builders"), icon: <Users size={22} strokeWidth={1.7} />, active: route.tab === "builders" },
     ];
@@ -180,7 +180,7 @@ export function App() {
   // The page header says where you are; a space's or project's segments open the places beside them.
   const crumbs = recovery ? <Crumbs items={[{ label: "Settings" }]} />
     : route.page === "subhub" ? <Crumbs items={[{ label: "Settings", href: "/#/settings" }, { label: `Sub-hub ${route.name}` }]} />
-    : route.page === "home" ? <Crumbs items={[{ label: "Home", href: "/" }, ...(route.tab === "agents" ? [{ label: "Agents" }] : route.tab === "builders" ? [{ label: "Builders" }] : [])]} />
+    : route.page === "home" ? <Crumbs items={[{ label: "Home", href: "/" }, ...(route.tab === "orgs" ? [{ label: "Orgs" }] : route.tab === "agents" ? [{ label: "Agents" }] : route.tab === "builders" ? [{ label: "Builders" }] : [])]} />
     : <PathBar place={place} path={filesPath} />;
   const sectionsTitle = route.page === "project" ? placeKey : route.page === "space" ? place.space : "Your hub";
 
