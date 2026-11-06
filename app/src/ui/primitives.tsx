@@ -4,10 +4,14 @@ import { Blobatar } from "@blobatar/react";
 import { ago, avatarUrl } from "@/api";
 import { onLink } from "@/router";
 
-/** A person, org or agent. The hub serves a picture for every name (GitHub's, or initials). */
+/**
+ * A person, org or agent. The hub serves a picture for every name (GitHub's, an
+ * agent's blobatar, or initials); an agent known to be one here is drawn inline
+ * as the same blobatar, so it can wake up on hover.
+ */
 export function Avatar({ name, size = 24, kind, title }: { name: string; size?: number; kind?: string; title?: string }) {
-  if (name === "quirqy") return <span className="avatar quirqy" style={{ width: size, height: size }} title={title ?? "quirqy"}><Blobatar name="quirqy" size={size} animate="hover" aria-hidden="true" /></span>;
-  const square = kind === "org" || kind === "agent";
+  if (name === "quirqy" || kind === "agent") return <span className="avatar blob" style={{ width: size, height: size }} title={title ?? name}><Blobatar name={name.toLowerCase()} size={size} animate="hover" aria-hidden="true" /></span>;
+  const square = kind === "org";
   return <img className={`avatar${square ? " square" : ""}`} src={avatarUrl(name)} width={size} height={size} alt="" title={title ?? name} loading="lazy" decoding="async" />;
 }
 

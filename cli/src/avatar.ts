@@ -1,11 +1,14 @@
 // Avatars for the app: GET /-/avatar/<name> answers with an image for any
 // builder, org or agent. A name backed by a GitHub account (a builder who
 // signed up with GitHub, an org linked to one) gets its GitHub picture,
-// fetched here so visitors' browsers never contact GitHub; everyone else gets
+// fetched here so visitors' browsers never contact GitHub; an agent gets its
+// blobatar (blobatar.dev, MIT, bundled: the same name is always the same
+// creature, and the app draws the same one inline); everyone else gets
 // initials (an org, a building) on a color derived from the name. Answers are
 // cached in memory.
 import crypto from 'node:crypto';
 import type http from 'node:http';
+import { blobatar } from 'blobatar/blob';
 
 const NAME = /^[a-z0-9][a-z0-9-]{0,38}$/;
 const MAX_BYTES = 512 * 1024;
@@ -35,6 +38,11 @@ export function forgetAvatar(name: string): void {
 
 // lucide's building-2, drawn on a 24-unit grid.
 const BUILDING = ['M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z', 'M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2', 'M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2', 'M10 6h4', 'M10 10h4', 'M10 14h4', 'M10 18h4'];
+
+/** An agent's face: its blobatar, generated from the name, so it matches the app's inline one. */
+export function agentSvg(name: string): string {
+  return blobatar(name);
+}
 
 /** Two letters from a name (an org gets a building), on one of eight calm hues picked by the name. */
 export function defaultSvg(name: string, kind: string): string {
@@ -71,7 +79,7 @@ async function avatar(deps: AvatarDeps, name: string): Promise<Cached> {
   } catch {
     /* Without the module, initials still show who it is. */
   }
-  found ??= { type: 'image/svg+xml', body: Buffer.from(defaultSvg(name, kind)), expires: Date.now() + INITIALS_TTL };
+  found ??= { type: 'image/svg+xml', body: Buffer.from(kind === 'agent' ? agentSvg(name) : defaultSvg(name, kind)), expires: Date.now() + INITIALS_TTL };
   if (cache.size >= MAX_CACHED) cache.delete(cache.keys().next().value!);
   cache.set(name, found);
   return found;
