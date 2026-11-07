@@ -256,6 +256,10 @@ button.dock-item { border: 0; background: none; font: inherit; cursor: pointer; 
 .dock-art { display: block; width: 40px; height: 40px; border-radius: 11px; }
 .dock-art.on-dark, :root[data-theme="dark"] .dock-art.on-light { display: none; }
 :root[data-theme="dark"] .dock-art.on-dark { display: block; }
+/* Agents: a blobatar on the same tile as those pictures, black in light mode and white in dark. */
+.dock-blob { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 11px; background: #0b0b0d; }
+:root[data-theme="dark"] .dock-blob { background: #fff; box-shadow: inset 0 0 0 1px #e2e2e6; }
+.dock-blob .avatar { background: none; }
 .dock-item:hover .dock-icon.art { box-shadow: 0 8px 16px -5px rgba(0, 0, 0, .5); }
 .dock-item.active .dock-icon.art, .dock-switcher[aria-expanded="true"] .dock-icon.art, .dock details[open] > .dock-switcher .dock-icon.art { background: none; box-shadow: 0 0 0 2px var(--panel), 0 0 0 3.5px var(--text-2); }
 .dock-item.active:has(.art)::after { background: var(--text); }

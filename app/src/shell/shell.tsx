@@ -234,7 +234,7 @@ export const DockArt = ({ name }: { name: DockArtName }) => <>
   <img className="dock-art on-dark" src={`/-/app/dock-${name}-white.svg`} width={40} height={40} alt="" draggable={false} />
 </>;
 
-export type DockItem = { key: string; label: string; href: string; icon?: ReactNode; active?: boolean; fresh?: boolean; /** One of the hub places' own pictures (app/public/dock-<art>-black.svg / -white.svg), drawn instead of `icon`. */ art?: DockArtName };
+export type DockItem = { key: string; label: string; href: string; icon?: ReactNode; active?: boolean; fresh?: boolean; /** One of the hub places' own pictures (app/public/dock-<art>-black.svg / -white.svg), drawn instead of `icon`. */ art?: DockArtName; /** A name whose blobatar is drawn on the same tile as those pictures, instead of `icon`. */ blob?: string };
 
 /** The dock: the space you are in (its switcher), the places inside where you are (a project's sections, a space's projects, the hub's parts), and last you (your account). */
 export function Dock({ places, switcher, account }: {
@@ -244,7 +244,7 @@ export function Dock({ places, switcher, account }: {
 }) {
   if (!places.length && !switcher && !account) return null;
   const item = (entry: DockItem) => <a key={entry.key} className={`dock-item${entry.active ? " active" : ""}`} href={entry.href} onClick={onLink} aria-label={entry.label} aria-current={entry.active ? "page" : undefined}>
-    <span className={`dock-icon${entry.art ? " art" : ""}`}>{entry.art ? <DockArt name={entry.art} /> : entry.icon}</span><span className="dock-label">{entry.label}</span>{entry.fresh && <span className="dock-fresh" title="Changed since you last looked" />}
+    <span className={`dock-icon${entry.art || entry.blob ? " art" : ""}`}>{entry.art ? <DockArt name={entry.art} /> : entry.blob ? <span className="dock-blob"><Avatar name={entry.blob} size={32} kind="agent" title={entry.label} /></span> : entry.icon}</span><span className="dock-label">{entry.label}</span>{entry.fresh && <span className="dock-fresh" title="Changed since you last looked" />}
   </a>;
   const sep = <span className="dock-sep" aria-hidden="true" />;
   return <div className="dock">
