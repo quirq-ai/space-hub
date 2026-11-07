@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Bot, BookOpen, BrainCircuit, Hash, Folder, FolderGit2, History, Settings, Users } from "lucide-react";
+import { Bot, BookOpen, Hash, Folder, FolderGit2, History, Settings, Users } from "lucide-react";
 import { placeUrl, viewUrl, type HubMeta, type Place, type ProjectMeta, type SpaceMeta, type View } from "@/api";
 import { useLive } from "@/hooks/use-live";
 import { channelSeenKey, ChannelsContext, useChannels } from "@/hooks/use-channels";
@@ -172,7 +172,7 @@ export function App() {
     // The hub's own lists, one page each; Home is in the switcher's menu just before them.
     places = [
       { key: "orgs", label: "Orgs", href: "/#" + hashOf("orgs"), art: "orgs", active: route.tab === "orgs" },
-      { key: "agents", label: "Agents", href: "/#" + hashOf("agents"), icon: <BrainCircuit size={22} strokeWidth={1.7} />, active: route.tab === "agents" },
+      { key: "agents", label: "Agents", href: "/#" + hashOf("agents"), blob: "agents", active: route.tab === "agents" },
       { key: "builders", label: "Builders", href: "/#" + hashOf("builders"), art: "builders", active: route.tab === "builders" },
     ];
   }

@@ -156,3 +156,11 @@ test("the dock's folder icons change no layout: those folders do not become sect
     assert.ok(!SECTION_ICONS.has(name), name);
   }
 });
+
+test("a dock place can show a blobatar on its tile instead of an icon", () => {
+  const dock = renderToStaticMarkup(createElement(Dock, { places: [{ key: "agents", label: "Agents", href: "/#/agents", blob: "agents" }] }));
+  assert.match(dock, /class="dock-icon art"/);
+  assert.match(dock, /class="dock-blob"[\s\S]*<svg/);
+  assert.match(dock, /title="Agents"/);
+  assert.match(dock, />Agents</);
+});
