@@ -76,7 +76,8 @@ export interface WorkersDeps {
   callbackUrl: (req: http.IncomingMessage) => string;
 }
 // allowLocal: runners at http://127.0.0.1 or localhost may be connected (local development only).
-export type WorkersConfig = { key: Buffer | null; store: RunnerStore; allowLocal?: boolean };
+// launchpad: "Connect Agents Hub" is on (agentshub.ts), so Settings shows its button.
+export type WorkersConfig = { key: Buffer | null; store: RunnerStore; allowLocal?: boolean; launchpad?: boolean };
 
 class Reply extends Error {
   status: number;
@@ -182,6 +183,33 @@ function scrub<T>(value: T, token: string): T {
 
 const viewers = new Map<string, { at: number; places: Places }>();
 
+/**
+ * Starts Connect for `owner` to the runner at `rawUrl` (the Connect button, and "Connect my Agents Hub" once
+ * its Agents Hub is found or made on Launchpad, agentshub.ts): where to send the browser (the runner's consent page), and the
+ * cookie that ties the answer to this browser. `callback` is CONNECT_CALLBACK as the browser reached this hub.
+ */
+export async function beginConnect(cfg: WorkersConfig, owner: string, rawUrl: string, callback: string): Promise<{ to: string; cookie: string }> {
+  if (!cfg.key) throw new Reply(503, NOT_SET_UP);
+  const address = checkRunnerUrl(rawUrl, cfg.allowLocal);
+  const pasteInstead = "This runner connects with a token: make one in its settings and paste it here.";
+  let about: Describe;
+  try { about = await runnerClient(address, '').describe(); } catch (e) {
+    if (e instanceof RunnerError && e.auth) throw new Reply(400, pasteInstead);
+    throw e;
+  }
+  if (!about.capabilities.connect) throw new Reply(400, pasteInstead);
+  const now = Date.now();
+  for (const [k, c] of connecting) if (c.until <= now) connecting.delete(k);
+  if (connecting.size >= MAX_CONNECTING) throw new Reply(429, 'Too many connections are waiting; try again in a few minutes.');
+  const state = b64url(32);
+  const verifier = b64url(48);
+  connecting.set(state, { owner, url: address, verifier, redirect: callback, until: now + CONNECT_WAIT_MS });
+  const to = new URL(`${address}/connect`);
+  to.search = new URLSearchParams({ client: new URL(callback).origin, redirect_uri: callback, state,
+    code_challenge: crypto.createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256' }).toString();
+  return { to: to.href, cookie: connectCookie(state, CONNECT_WAIT_MS / 1000, callback.startsWith('https:')) };
+}
+
 export async function handleWorkers(cfg: WorkersConfig, deps: WorkersDeps, req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<boolean> {
   const route = url.pathname;
   const isRunners = route === RUNNERS || route.startsWith(`${RUNNERS}/`);
@@ -279,7 +307,7 @@ export async function handleWorkers(cfg: WorkersConfig, deps: WorkersDeps, req: 
       if (!session) throw new Reply(401, 'Sign in to use runners.');
       const rest = route.slice(RUNNERS.length + 1).split('/').filter(Boolean);
       if (!rest.length) {
-        if (req.method === 'GET') return json(res, 200, { enabled: !!key, runners: (await store.listRunners(session.username)).map(runnerView) }), true;
+        if (req.method === 'GET') return json(res, 200, { enabled: !!key, launchpad: !!key && !!cfg.launchpad, runners: (await store.listRunners(session.username)).map(runnerView) }), true;
         if (req.method !== 'POST') throw new Reply(405, 'Method not allowed.');
         if (!key) throw new Reply(503, NOT_SET_UP);
         const body = await readJson(req);
@@ -300,26 +328,8 @@ export async function handleWorkers(cfg: WorkersConfig, deps: WorkersDeps, req: 
       }
       if (rest.length === 1 && rest[0] === 'connect') {
         if (req.method !== 'POST') throw new Reply(405, 'Method not allowed.');
-        if (!key) throw new Reply(503, NOT_SET_UP);
-        const address = checkRunnerUrl(text((await readJson(req)).url), cfg.allowLocal);
-        const pasteInstead = "This runner connects with a token: make one in its settings and paste it here.";
-        let about: Describe;
-        try { about = await runnerClient(address, '').describe(); } catch (e) {
-          if (e instanceof RunnerError && e.auth) throw new Reply(400, pasteInstead);
-          throw e;
-        }
-        if (!about.capabilities.connect) throw new Reply(400, pasteInstead);
-        const now = Date.now();
-        for (const [k, c] of connecting) if (c.until <= now) connecting.delete(k);
-        if (connecting.size >= MAX_CONNECTING) throw new Reply(429, 'Too many connections are waiting; try again in a few minutes.');
-        const state = b64url(32);
-        const verifier = b64url(48);
-        const redirect = deps.callbackUrl(req);
-        connecting.set(state, { owner: session.username, url: address, verifier, redirect, until: now + CONNECT_WAIT_MS });
-        const to = new URL(`${address}/connect`);
-        to.search = new URLSearchParams({ client: new URL(redirect).origin, redirect_uri: redirect, state,
-          code_challenge: crypto.createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256' }).toString();
-        return json(res, 200, { redirect: to.href }, { 'set-cookie': connectCookie(state, CONNECT_WAIT_MS / 1000, redirect.startsWith('https:')) }), true;
+        const started = await beginConnect(cfg, session.username, text((await readJson(req)).url), deps.callbackUrl(req));
+        return json(res, 200, { redirect: started.to }, { 'set-cookie': started.cookie }), true;
       }
       const r = await ownRunner(rest[0]);
       if (rest.length === 1 && req.method === 'PATCH') {

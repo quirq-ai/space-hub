@@ -12,9 +12,12 @@ type MyWorker = { taskId: string; runnerId: string; title: string; status: strin
  * launched on them. Workers from chats run here, on the launcher's account.
  * Connect sends the browser to the runner to approve, and back here with
  * ?runner=<outcome>; a runner without that button takes a pasted token.
+ * "Connect Agents Hub" (when Launchpad is set up here) signs in with XO for a
+ * moment, finds the person's Agents Hub on Launchpad or creates one, then
+ * connects it the same way, with no address to paste.
  */
 export function RunnersSection() {
-  const list = useLive<{ enabled: boolean; runners: RunnerInfo[] }>("/-/api/runners", 0);
+  const list = useLive<{ enabled: boolean; launchpad?: boolean; runners: RunnerInfo[] }>("/-/api/runners", 0);
   const [url, setUrl] = useState("");
   const [token, setToken] = useState("");
   const [withToken, setWithToken] = useState(false);
@@ -65,6 +68,10 @@ export function RunnersSection() {
           <button type="button" className="button small danger" disabled={!!busy} onClick={() => { if (confirm(`Disconnect ${r.name}? Its workers keep their results here; connect it again to steer them.`)) void run(`delete:${r.id}`, () => send("DELETE", `/runners/${r.id}`)); }}>Disconnect</button>
         </div>
       </li>)}</ul>}
+    {list.data?.launchpad && !runners.some(r => r.kind.startsWith("Agents Hub")) && <div className="runner-row" aria-label="Your Agents Hub">
+      <div><strong>Your Agents Hub</strong><div className="quiet">Finds yours on Launchpad with your XO sign-in, or creates one, then you approve it on your Agents Hub. Nothing to paste.</div></div>
+      <div className="subhub-actions"><a className="button primary small" href="/-/runners/agents-hub/start">Connect Agents Hub</a></div>
+    </div>}
     <form className="subhub-form runner-form" onSubmit={event => { event.preventDefault(); void (withToken ? paste() : connect()); }}>
       <input aria-label="Runner address" placeholder="https://your-hub.example" value={url} spellCheck={false} autoCapitalize="off" onChange={event => setUrl(event.target.value)} />
       {withToken && <input aria-label="Runner token" type="password" placeholder="Token" value={token} autoComplete="off" onChange={event => setToken(event.target.value)} />}
