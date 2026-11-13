@@ -159,6 +159,11 @@ test("back from Connect: a plain sentence for each outcome, nothing for anything
   assert.match(connectOutcome("expired")!.text, /press Connect again/);
   assert.match(connectOutcome("failed")!.text, /paste a token/);
   assert.match(connectOutcome("full")!.text, /Agent access/);
+  // Connect Agents Hub's own: about XO, not the runner.
+  assert.match(connectOutcome("xodenied")!.text, /allow access on XO/);
+  assert.match(connectOutcome("xoexpired")!.text, /Connect Agents Hub again/);
+  assert.match(connectOutcome("xofailed")!.text, /Connect Agents Hub/);
+  for (const code of ["xodenied", "xoexpired", "xofailed"]) assert.doesNotMatch(connectOutcome(code)!.text, /runner|paste a token/);
   assert.equal(connectOutcome("<script>"), null);
   assert.equal(connectOutcome(null), null);
 });

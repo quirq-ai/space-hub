@@ -49,6 +49,8 @@ export const WAIT_MS = 15 * 60_000; // a new hub takes minutes to start
 export const HOLD_MS = 10 * 60_000; // the most a pass is held, while the person creates their hub on Launchpad
 export const CHECK_GAP_MS = 5_000; // at most one Launchpad lookup per held pass this often, however often "check" is asked
 export const MAX_STEPS = 500;
+export const MAX_PER_BUILDER = 5; // one person's flows in progress: a new one pushes out their oldest
+const WAIT_GRACE_MS = 30 * 60_000; // an expired wait keeps its address this long, so its page can still say "slow"
 const SETTINGS = '/#/settings';
 
 const TEMPLATE = /^[a-z0-9][a-z0-9-]{0,62}$/;
@@ -128,8 +130,18 @@ export function heldSteps(): { count: number; passes: number } {
   return { count: steps.size, passes };
 }
 
+/** Removes a step. A held pass is blanked first, so nothing refers to it any more. */
+function drop(id: string) {
+  const s = steps.get(id);
+  if (s?.kind === 'hold') s.pass = '';
+  steps.delete(id);
+}
+
 function newStep(step: Step, now: number): string {
-  for (const [k, s] of steps) if (s.until <= now) steps.delete(k);
+  for (const [k, s] of steps) if (s.until + (s.kind === 'wait' ? WAIT_GRACE_MS : 0) <= now) drop(k);
+  // One builder can't fill the table for everyone: past MAX_PER_BUILDER, their oldest steps go (Map order = oldest first).
+  const theirs = [...steps].filter(([, s]) => s.owner === step.owner).map(([k]) => k);
+  for (const k of theirs.slice(0, Math.max(0, theirs.length - MAX_PER_BUILDER + 1))) drop(k);
   if (steps.size >= MAX_STEPS) throw new Busy();
   const id = randomBytes(32).toString('base64url');
   steps.set(id, step);
@@ -137,6 +149,12 @@ function newStep(step: Step, now: number): string {
 }
 
 class Busy extends Error {}
+
+// Each held pass is dropped at HOLD_MS by a timer that knows only the step's id, never the pass (unref: it never keeps
+// the process alive). Ids are random and never reused.
+function dropHoldLater(id: string) {
+  setTimeout(() => { if (steps.get(id)?.kind === 'hold') drop(id); }, HOLD_MS).unref();
+}
 
 const same = (a: string, b: string) => {
   const x = Buffer.from(a);
@@ -158,7 +176,7 @@ function mine<K extends Step['kind']>(req: http.IncomingMessage, id: string, kin
   const fromCookie = cookieOf(req);
   if (!s || s.kind !== kind || !fromCookie || !same(id, fromCookie) || s.owner !== owner) return null;
   if (s.until <= now) {
-    steps.delete(id);
+    drop(id);
     return null;
   }
   return s as Extract<Step, { kind: K }>;
@@ -221,6 +239,7 @@ async function passFor(clerk: Clerk, code: string, verifier: string, redirect: s
 // ---------------------------------------------------------------- Launchpad, with the pass (read only)
 
 class Failure extends Error {}
+class Refused extends Failure {} // Launchpad would not take the pass (401/403): a held one has run out
 
 // The person's Agents Hub on Launchpad (its address and Launchpad's status for it), if they have one. One being
 // deleted counts as none.
@@ -230,7 +249,7 @@ async function findHub(cfg: AgentsHubConfig, pass: string): Promise<{ url: strin
     redirect: 'error',
     signal: AbortSignal.timeout(30_000),
   });
-  if (res.status === 401 || res.status === 403) throw new Failure('Launchpad did not accept your XO sign-in.');
+  if (res.status === 401 || res.status === 403) throw new Refused('Launchpad did not accept your XO sign-in.');
   const body = (await res.json().catch(() => null)) as { apps?: unknown } | null;
   if (res.status !== 200 || !Array.isArray(body?.apps)) throw new Failure(`Launchpad answered ${res.status}.`);
   const hub = (body.apps as Record<string, unknown>[]).find(a => a?.template === cfg.template && typeof a.url === 'string' && a.status !== 'deleting');
@@ -290,9 +309,11 @@ export async function handleAgentsHub(cfg: AgentsHubConfig | null, deps: AgentsH
     res.end(JSON.stringify(body));
     return true;
   };
-  // Settings says how it went (app: lib/agentshub.ts). nohub: none yet; hubfailed / hubstopped: Launchpad has it but
-  // it failed to start or is stopped; hubslow: it did not answer within WAIT_MS.
-  type Outcome = 'denied' | 'expired' | 'failed' | 'nohub' | 'hubfailed' | 'hubstopped' | 'hubslow';
+  // Settings says how it went (app: lib/agentshub.ts, lib/workers.ts). xodenied: "Allow access" was refused on XO;
+  // xoexpired: an old, used or foreign step; xofailed: not set up here, or the hub could not be reached; nohub: none
+  // yet; hubfailed / hubstopped: Launchpad has it but it failed to start or is stopped; hubslow: it did not answer
+  // within WAIT_MS. (Connect's own codes, about the runner's consent page, stay workers.ts's.)
+  type Outcome = 'xodenied' | 'xoexpired' | 'xofailed' | 'nohub' | 'hubfailed' | 'hubstopped' | 'hubslow';
   const settings = (code: Outcome) => `/?runner=${code}#/settings`;
   const outcome = (code: Outcome) => go(settings(code), [spent]);
   // Pages keep the site's own referrer policy. (Only redirects, whose next address may carry a code, send none.)
@@ -306,33 +327,33 @@ export async function handleAgentsHub(cfg: AgentsHubConfig | null, deps: AgentsH
     if (url.pathname === CHECK_ROUTE) return answer(401, { state: 'expired' }, [spent]);
     return go(`/-/login?next=${encodeURIComponent(SETTINGS)}`, [spent]);
   }
-  if (!cfg) return url.pathname === CHECK_ROUTE ? answer(404, { state: 'expired' }, [spent]) : outcome('failed');
+  if (!cfg) return url.pathname === CHECK_ROUTE ? answer(404, { state: 'expired' }, [spent]) : outcome('xofailed');
   const owner = session.username;
 
   // The hub is (being) made: where the browser goes next. It answers: the usual Connect. Not yet: the wait page,
-  // which checks again every few seconds.
-  const nextFor = async (hubUrl: string): Promise<{ to: string; cookies: string[] }> => {
+  // which checks again every few seconds. `up`: already seen answering, so it is not asked again.
+  const nextFor = async (hubUrl: string, up = false): Promise<{ to: string; cookies: string[] }> => {
     let checked: string;
     try {
       checked = checkRunnerUrl(hubUrl, deps.allowLocal);
     } catch {
       process.stderr.write(`spacehub-web: agents hub: Launchpad named an address this hub will not use\n`);
-      return { to: settings('failed'), cookies: [spent] };
+      return { to: settings('xofailed'), cookies: [spent] };
     }
-    if (await healthy(checked)) {
+    if (up || await healthy(checked)) {
       try {
         const started = await deps.connect(owner, checked, req);
         return { to: started.to, cookies: [spent, started.cookie] };
       } catch (err) {
         process.stderr.write(`spacehub-web: agents hub: connecting ${checked} failed: ${err instanceof Error ? err.message : 'unknown error'}\n`);
-        return { to: settings('failed'), cookies: [spent] };
+        return { to: settings('xofailed'), cookies: [spent] };
       }
     }
     const id = newStep({ kind: 'wait', owner, url: checked, until: now + WAIT_MS }, now);
     return { to: WAIT_ROUTE, cookies: [cookie(id, WAIT_MS)] };
   };
-  const toHub = async (hubUrl: string) => {
-    const next = await nextFor(hubUrl);
+  const toHub = async (hubUrl: string, up = false) => {
+    const next = await nextFor(hubUrl, up);
     return go(next.to, next.cookies);
   };
 
@@ -346,7 +367,9 @@ export async function handleAgentsHub(cfg: AgentsHubConfig | null, deps: AgentsH
       const state = newStep({ kind: 'signin', owner, verifier, redirect, until: now + SIGNIN_MS }, now);
       const to = new URL(clerk.authorize);
       to.search = new URLSearchParams({
-        response_type: 'code', client_id: clerk.clientId, redirect_uri: redirect, scope: clerk.scope, state,
+        // Only what is needed: never offline_access (a refresh token), whatever XO lists.
+        response_type: 'code', client_id: clerk.clientId, redirect_uri: redirect, state,
+        scope: clerk.scope.split(' ').filter(s => s && s !== 'offline_access').join(' '),
         code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256',
       }).toString();
       return go(to.href, [cookie(state, SIGNIN_MS)]);
@@ -356,7 +379,7 @@ export async function handleAgentsHub(cfg: AgentsHubConfig | null, deps: AgentsH
     if (url.pathname === CANCEL_ROUTE) {
       const id = cookieOf(req);
       const s = id ? steps.get(id) : undefined;
-      if (s && s.owner === owner) steps.delete(id);
+      if (s && s.owner === owner) drop(id);
       return req.method === 'POST' ? answer(200, { state: 'cancelled' }, [spent]) : go(SETTINGS, [spent]);
     }
 
@@ -365,10 +388,10 @@ export async function handleAgentsHub(cfg: AgentsHubConfig | null, deps: AgentsH
       const state = url.searchParams.get('state') ?? '';
       const s = mine(req, state, 'signin', owner, now);
       steps.delete(state); // one try, whatever happens next
-      if (!s) return outcome('expired');
-      if (url.searchParams.get('error')) return outcome('denied');
+      if (!s) return outcome('xoexpired');
+      if (url.searchParams.get('error')) return outcome('xodenied');
       const code = url.searchParams.get('code') ?? '';
-      if (!CODE.test(code)) return outcome('failed');
+      if (!CODE.test(code)) return outcome('xofailed');
       const clerk = await clerkOf(cfg, now);
       if (!clerk) return show(503, errorPage('XO sign-in is not available right now. Try again in a minute.'), { 'set-cookie': spent });
       const pass = await passFor(clerk, code, s.verifier, s.redirect);
@@ -377,10 +400,8 @@ export async function handleAgentsHub(cfg: AgentsHubConfig | null, deps: AgentsH
       if (hub?.status === 'stopped') return outcome('hubstopped');
       if (hub) return await toHub(hub.url); // created, deploying or running: the pass is not kept
       // None yet: hold the pass while they create one on Launchpad, so "check" needs no second sign-in.
-      const held: Step = { kind: 'hold', owner, pass, until: now + HOLD_MS, checked: now };
-      const id = newStep(held, now);
-      // Gone at HOLD_MS even if nobody asks again (unref: it never keeps the process alive).
-      setTimeout(() => { if (steps.get(id) === held) steps.delete(id); }, HOLD_MS).unref();
+      const id = newStep({ kind: 'hold', owner, pass, until: now + HOLD_MS, checked: now }, now);
+      dropHoldLater(id); // gone at HOLD_MS even if nobody asks again
       return go(settings('nohub'), [cookie(id, HOLD_MS)]);
     }
 
@@ -395,18 +416,21 @@ export async function handleAgentsHub(cfg: AgentsHubConfig | null, deps: AgentsH
       try {
         hub = await findHub(cfg, s.pass);
       } catch (err) {
-        if (err instanceof Failure && /did not accept/.test(err.message)) { // the pass ran out at Clerk
-          steps.delete(id);
+        if (err instanceof Refused) { // the pass ran out at Clerk
+          drop(id);
           return answer(200, { state: 'expired' }, [spent]);
         }
         process.stderr.write(`spacehub-web: agents hub: checking Launchpad failed: ${err instanceof Error ? err.name : 'error'}\n`);
         return answer(200, { state: 'waiting' }); // Launchpad hiccup: the dialog asks again
       }
       if (!hub) return answer(200, { state: 'waiting' });
-      steps.delete(id); // found: the pass is dropped
-      if (hub.status === 'failed') return answer(200, { state: 'failed' }, [spent]);
-      if (hub.status === 'stopped') return answer(200, { state: 'stopped' }, [spent]);
+      if (hub.status === 'failed' || hub.status === 'stopped') {
+        drop(id);
+        return answer(200, { state: hub.status }, [spent]);
+      }
+      // Where to go next first, then drop the pass: if that fails, the pass is still here for the next check.
       const next = await nextFor(hub.url);
+      drop(id);
       return answer(200, { state: 'found', go: next.to }, next.cookies);
     }
 
@@ -416,10 +440,10 @@ export async function handleAgentsHub(cfg: AgentsHubConfig | null, deps: AgentsH
       const before = id ? steps.get(id) : undefined;
       const s = mine(req, id, 'wait', owner, now);
       // This browser's own wait, run out: the hub never answered. Anything else: an old or foreign link.
-      if (!s) return outcome(before?.kind === 'wait' && before.owner === owner && before.until <= now ? 'hubslow' : 'expired');
+      if (!s) return outcome(before?.kind === 'wait' && before.owner === owner && before.until <= now ? 'hubslow' : 'xoexpired');
       if (await healthy(s.url)) {
-        steps.delete(id);
-        return await toHub(s.url);
+        drop(id);
+        return await toHub(s.url, true);
       }
       return show(200, waitPage, { refresh: '5' });
     }

@@ -6,8 +6,8 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createHash } from 'node:crypto';
 import {
-  agentsHubConfig, CANCEL_ROUTE, CHECK_GAP_MS, CHECK_ROUTE, COOKIE, handleAgentsHub, heldSteps, HOLD_MS, resetAgentsHub,
-  START_ROUTE, WAIT_ROUTE, type AgentsHubConfig,
+  agentsHubConfig, CANCEL_ROUTE, CHECK_GAP_MS, CHECK_ROUTE, COOKIE, handleAgentsHub, heldSteps, HOLD_MS, MAX_PER_BUILDER,
+  MAX_STEPS, resetAgentsHub, START_ROUTE, WAIT_ROUTE, type AgentsHubConfig,
 } from '../src/agentshub.ts';
 import { CALLBACK_ROUTE } from '../src/xosignin.ts';
 
@@ -352,7 +352,7 @@ test('the return is taken once, only from the browser and builder that started i
   const start = await h.go(START_ROUTE);
   const { code, state } = up.state.issue(start.location);
   const noCookie = await h.go(`${CALLBACK_ROUTE}?code=${code}&state=${state}`);
-  assert.equal(noCookie.location, '/?runner=expired#/settings');
+  assert.equal(noCookie.location, '/?runner=xoexpired#/settings');
   const again = await h.go(`${CALLBACK_ROUTE}?code=${code}&state=${state}`, cookieIn(start.cookies));
   assert.equal(again.status, 404); // spent: no longer this module's
   h.close();
@@ -362,7 +362,7 @@ test('the return is taken once, only from the browser and builder that started i
   const s2 = await aliceHub.go(START_ROUTE);
   const i2 = up.state.issue(s2.location);
   const stolen = await mallory.go(`${CALLBACK_ROUTE}?code=${i2.code}&state=${i2.state}`, cookieIn(s2.cookies));
-  assert.equal(stolen.location, '/?runner=expired#/settings');
+  assert.equal(stolen.location, '/?runner=xoexpired#/settings');
   assert.equal(up.state.passes.length, 0); // no code was ever swapped
   mallory.close();
   aliceHub.close();
@@ -373,7 +373,7 @@ test('cancelled on XO: denied, nothing swapped', async () => {
   const start = await h.go(START_ROUTE);
   const { state } = up.state.issue(start.location);
   const r = await h.go(`${CALLBACK_ROUTE}?error=access_denied&state=${state}`, cookieIn(start.cookies));
-  assert.equal(r.location, '/?runner=denied#/settings');
+  assert.equal(r.location, '/?runner=xodenied#/settings');
   assert.equal(up.state.passes.length, 0);
   h.close();
 });
@@ -413,8 +413,63 @@ test('a hub that never answers: after WAIT_MS, Settings says it is slow (not "ex
   const late = await h.go(WAIT_ROUTE, cookie);
   assert.equal(late.location, '/?runner=hubslow#/settings');
   assert.deepEqual(heldSteps(), { count: 0, passes: 0 });
-  assert.equal((await h.go(WAIT_ROUTE, `${COOKIE}=not-a-step`)).location, '/?runner=expired#/settings');
+  assert.equal((await h.go(WAIT_ROUTE, `${COOKIE}=not-a-step`)).location, '/?runner=xoexpired#/settings');
   h.close();
+});
+
+test('never asks Clerk for offline_access, even if XO lists it', async () => {
+  const h = await serve();
+  const r = await h.go(START_ROUTE);
+  assert.doesNotMatch(new URL(r.location).searchParams.get('scope') ?? '', /offline_access/);
+  h.close();
+});
+
+test('one builder cannot fill the table: past MAX_PER_BUILDER, their oldest steps go and others still get in', async () => {
+  const mallory = await serve({ user: 'mallory' });
+  for (let i = 0; i < MAX_STEPS + 20; i++) await mallory.go(START_ROUTE);
+  assert.deepEqual(heldSteps(), { count: MAX_PER_BUILDER, passes: 0 });
+  const alice = await serve();
+  const r = await alice.go(START_ROUTE);
+  assert.equal(r.status, 303); // not "Too many connections are waiting"
+  assert.match(r.location, /\/oauth\/authorize\?/);
+  mallory.close();
+  alice.close();
+});
+
+test('the wait page probes /healthz once per visit', async () => {
+  theHub.h.up = false;
+  up.state.apps.push({ id: 'a0', name: 'agents-hub', template: 'agents-hub', status: 'deploying', url: theHub.base });
+  const h = await serve();
+  const { back } = await signIn(h);
+  theHub.h.up = true;
+  let probes = 0;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+    if (String(input).endsWith('/healthz')) probes++;
+    return realFetch(input, init);
+  }) as typeof fetch;
+  try {
+    const ready = await h.go(WAIT_ROUTE, cookieIn(back.cookies));
+    assert.equal(ready.location, `${theHub.base}/connect?state=c1`);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert.equal(probes, 1);
+  h.close();
+});
+
+test('a wait that ran out still says "slow" after other people started flows', async () => {
+  theHub.h.up = false;
+  up.state.apps.push({ id: 'a0', name: 'agents-hub', template: 'agents-hub', status: 'deploying', url: theHub.base });
+  let now = Date.now();
+  const h = await serve({ now: () => now });
+  const { back } = await signIn(h);
+  now += 15 * 60_000 + 1;
+  const bob = await serve({ user: 'bob', now: () => now });
+  await bob.go(START_ROUTE); // starting a step clears out expired ones
+  assert.equal((await h.go(WAIT_ROUTE, cookieIn(back.cookies))).location, '/?runner=hubslow#/settings');
+  h.close();
+  bob.close();
 });
 
 test('the old create routes are gone', async () => {
