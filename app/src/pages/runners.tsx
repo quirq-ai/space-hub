@@ -1,7 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Bot, Plug, Rocket } from "lucide-react";
 import { useLive } from "@/hooks/use-live";
 import { connectOutcome, isRunning, runnerLabel, send, statusLabel, type RunnerInfo } from "@/lib/workers";
+import {
+  afterCheck, CANCEL, CHECK, dialogFor, isHubOutcome, launchpadHome, POLL_MS, START, stillWatching, watches,
+  type HubDialog,
+} from "@/lib/agentshub";
 import { Ago, Empty, ErrorNote, SkeletonRows } from "@/ui/primitives";
 
 type MyWorker = { taskId: string; runnerId: string; title: string; status: string; space: string; project: string; updatedAt: string };
@@ -13,11 +17,14 @@ type MyWorker = { taskId: string; runnerId: string; title: string; status: strin
  * Connect sends the browser to the runner to approve, and back here with
  * ?runner=<outcome>; a runner without that button takes a pasted token.
  * "Connect Agents Hub" (when Launchpad is set up here) signs in with XO for a
- * moment, finds the person's Agents Hub on Launchpad or creates one, then
- * connects it the same way, with no address to paste.
+ * moment, finds the person's Agents Hub on Launchpad, then connects it the same
+ * way, with no address to paste. With no hub yet it comes back with
+ * ?runner=nohub, and a dialog links Launchpad's page to create one and watches
+ * for it in the background, with no second sign-in (rules: lib/agentshub.ts).
  */
 export function RunnersSection() {
-  const list = useLive<{ enabled: boolean; launchpad?: boolean; runners: RunnerInfo[] }>("/-/api/runners", 0);
+  const list = useLive<{ enabled: boolean; launchpad?: boolean; launchpadCreatePage?: string | null; runners: RunnerInfo[] }>("/-/api/runners", 0);
+  const [hubDialog, setHubDialog] = useState<HubDialog | null>(null);
   const [url, setUrl] = useState("");
   const [token, setToken] = useState("");
   const [withToken, setWithToken] = useState(false);
@@ -33,7 +40,9 @@ export function RunnersSection() {
     const params = new URLSearchParams(location.search);
     const outcome = connectOutcome(params.get("runner"));
     if (!params.has("runner")) return;
-    if (outcome) (outcome.ok ? setNote : setError)(outcome.text);
+    const code = params.get("runner");
+    if (isHubOutcome(code)) setHubDialog(dialogFor(code));
+    else if (outcome) (outcome.ok ? setNote : setError)(outcome.text);
     params.delete("runner");
     const rest = params.toString();
     history.replaceState(history.state, "", `${location.pathname}${rest ? `?${rest}` : ""}${location.hash}`);
@@ -68,10 +77,11 @@ export function RunnersSection() {
           <button type="button" className="button small danger" disabled={!!busy} onClick={() => { if (confirm(`Disconnect ${r.name}? Its workers keep their results here; connect it again to steer them.`)) void run(`delete:${r.id}`, () => send("DELETE", `/runners/${r.id}`)); }}>Disconnect</button>
         </div>
       </li>)}</ul>}
-    {list.data?.launchpad && !runners.some(r => r.kind.startsWith("Agents Hub")) && <div className="runner-row" aria-label="Your Agents Hub">
-      <div><strong>Your Agents Hub</strong><div className="quiet">Finds yours on Launchpad with your XO sign-in, or creates one, then you approve it on your Agents Hub. Nothing to paste.</div></div>
-      <div className="subhub-actions"><a className="button primary small" href="/-/runners/agents-hub/start">Connect Agents Hub</a></div>
+    {list.data?.launchpad && !runners.some(r => r.kind.startsWith("Agents Hub")) && <div className="runner-row agents-hub-row" aria-label="Your Agents Hub">
+      <div><strong>Your Agents Hub</strong><div className="quiet">Finds yours on Launchpad with your XO sign-in, then you approve it on your hub.</div></div>
+      <div className="subhub-actions"><a className="button primary small" href={START}>Connect Agents Hub</a></div>
     </div>}
+    {hubDialog && <HubDialogCard initial={hubDialog} createPage={list.data?.launchpadCreatePage ?? null} onClose={() => setHubDialog(null)} />}
     <form className="subhub-form runner-form" onSubmit={event => { event.preventDefault(); void (withToken ? paste() : connect()); }}>
       <input aria-label="Runner address" placeholder="https://your-hub.example" value={url} spellCheck={false} autoCapitalize="off" onChange={event => setUrl(event.target.value)} />
       {withToken && <input aria-label="Runner token" type="password" placeholder="Token" value={token} autoComplete="off" onChange={event => setToken(event.target.value)} />}
@@ -82,6 +92,86 @@ export function RunnersSection() {
     {note && <p className="launch-note">{note}</p>}
     <YourWorkers />
   </section>;
+}
+
+const COPY: Record<HubDialog, { title: string; text: string }> = {
+  "waiting": { title: "No Agents Hub yet", text: "Create one on Launchpad with your OpenAI keys and a hub password. Keep this tab open: as soon as your hub shows up, it's connected here. This page watches for 10 minutes." },
+  "timed-out": { title: "Still no Agents Hub", text: "This page stopped watching. Once your hub is created on Launchpad, press Connect Agents Hub (XO asks you to allow access once more)." },
+  "failed": { title: "Your Agents Hub didn't start", text: "Launchpad couldn't start it. Open it on Launchpad to see what went wrong, then press Connect Agents Hub again." },
+  "stopped": { title: "Your Agents Hub is stopped", text: "Start it on Launchpad, then press Connect Agents Hub again." },
+  "slow": { title: "Your Agents Hub is taking a while", text: "It didn't answer within 15 minutes. Check it on Launchpad, then press Connect Agents Hub again." },
+};
+
+/**
+ * After "Connect Agents Hub" with no working hub: what to do on Launchpad. With
+ * no hub yet it watches for one in the background (POST check, using the pass
+ * the server holds from the one XO sign-in) and moves on by itself once it
+ * shows up. The limits that stop it are in lib/agentshub.ts.
+ */
+function HubDialogCard({ initial, createPage, onClose }: { initial: HubDialog; createPage: string | null; onClose: () => void }) {
+  const box = useRef<HTMLDialogElement>(null);
+  const [kind, setKind] = useState<HubDialog>(initial);
+  useEffect(() => { const d = box.current; if (d && !d.open) d.showModal(); return () => d?.close(); }, []);
+
+  // Watching: a background request every POLL_MS and when the person comes back to the tab, never a page load.
+  // It ends on any answer but "waiting", when time is up, or when the dialog goes away.
+  useEffect(() => {
+    if (!watches(kind)) return;
+    const startedAt = Date.now();
+    let over = false;
+    let busy = false;
+    let timer: number | undefined;
+    const check = async () => {
+      if (over || busy) return;
+      if (!stillWatching(startedAt, Date.now())) { over = true; setKind("timed-out"); return; }
+      busy = true;
+      try {
+        const res = await fetch(CHECK, { method: "POST", headers: { accept: "application/json" }, credentials: "same-origin" });
+        const step = afterCheck(await res.json().catch(() => null));
+        if (over) return;
+        if ("go" in step) { over = true; location.assign(step.go); return; }
+        if ("dialog" in step) { over = true; setKind(step.dialog); return; }
+      } catch { /* offline for a moment: ask again */ } finally { busy = false; }
+      if (!over) timer = window.setTimeout(() => void check(), POLL_MS);
+    };
+    const back = () => {
+      if (document.visibilityState !== "visible" || busy || over) return;
+      window.clearTimeout(timer);
+      void check();
+    };
+    timer = window.setTimeout(() => void check(), POLL_MS);
+    document.addEventListener("visibilitychange", back);
+    return () => { over = true; window.clearTimeout(timer); document.removeEventListener("visibilitychange", back); };
+  }, [kind]);
+
+  // Closing while watching lets the server drop the pass at once.
+  const close = () => {
+    if (watches(kind)) void fetch(CANCEL, { method: "POST", credentials: "same-origin", redirect: "manual" }).catch(() => undefined);
+    onClose();
+  };
+  const home = launchpadHome(createPage);
+  const broken = kind === "failed" || kind === "stopped" || kind === "slow";
+  // The Launchpad link: the apps list for a hub that is there but broken, else the create page.
+  const launchpadLink = broken
+    ? home ? { href: home, label: "Open Launchpad" } : null
+    : createPage ? { href: createPage, label: kind === "waiting" ? "Create on Launchpad" : "Open Launchpad" } : null;
+  const copy = COPY[kind];
+
+  return <dialog ref={box} className="notice-dialog" aria-labelledby="hub-dialog-title" onCancel={event => { event.preventDefault(); close(); }} onClick={event => { if (event.target === event.currentTarget) close(); }}>
+    <div className="notice-dialog-body">
+      <span className="empty-icon"><Bot size={22} /></span>
+      <h3 id="hub-dialog-title">{copy.title}</h3>
+      <p>{copy.text}</p>
+      {!createPage && <p className="quiet">Open Launchpad and create an app from the Agents Hub template.</p>}
+      {watches(kind) && <p className="notice-dialog-status" role="status">Watching for your new Agents Hub…</p>}
+      <div className="notice-dialog-actions">
+        <button key="close" type="button" className="button small" onClick={close}>Close</button>
+        {/* Each link keeps its own key and place, so a click never lands on a link that just changed. */}
+        {launchpadLink && <a key="launchpad" className={`button small${watches(kind) || broken ? " primary" : ""}`} href={launchpadLink.href} target="_blank" rel="noopener noreferrer">{launchpadLink.label}</a>}
+        {!watches(kind) && <a key="connect" className={`button small${launchpadLink && broken ? "" : " primary"}`} href={START}>Connect Agents Hub</a>}
+      </div>
+    </div>
+  </dialog>;
 }
 
 function YourWorkers() {

@@ -474,3 +474,16 @@ test("an agent's space belongs to its parent's owners, as the module says", () =
   assert.deepEqual(agentSpacesOwnedBy('priya', roles, agents).sort(), ['acme-bot', 'deep-bot', 'priya-bot']);
   assert.deepEqual(agentSpacesOwnedBy('carol', [], agents), []);
 });
+
+test('Connect Agents Hub on: the runners list says so, with Launchpad\'s create page for Settings\' "no hub yet" dialog', async () => {
+  const page = 'https://launchpad-beta.xo.builders/launchpad/new';
+  const lp = http.createServer((req, res) => {
+    void handleWorkers({ key: KEY, store: memoryStore(), launchpad: true, launchpadCreatePage: page }, deps, req, res, new URL(req.url!, 'http://hub.test')).then(done => { if (!done) res.writeHead(404).end(); });
+  });
+  await new Promise<void>(r => lp.listen(0, '127.0.0.1', r));
+  const r = await fetch(`http://127.0.0.1:${(lp.address() as AddressInfo).port}/-/api/runners`, { headers: { cookie: 'spacehub_session=priya' } });
+  const body = await r.json() as { launchpad: boolean; launchpadCreatePage: string | null };
+  assert.deepEqual([body.launchpad, body.launchpadCreatePage], [true, page]);
+  assert.equal((await as('priya', 'GET', '/-/api/runners')).json.launchpadCreatePage, null); // off: nothing to link
+  lp.close();
+});

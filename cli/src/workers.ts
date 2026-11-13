@@ -76,8 +76,9 @@ export interface WorkersDeps {
   callbackUrl: (req: http.IncomingMessage) => string;
 }
 // allowLocal: runners at http://127.0.0.1 or localhost may be connected (local development only).
-// launchpad: "Connect Agents Hub" is on (agentshub.ts), so Settings shows its button.
-export type WorkersConfig = { key: Buffer | null; store: RunnerStore; allowLocal?: boolean; launchpad?: boolean };
+// launchpad: "Connect Agents Hub" is on (agentshub.ts), so Settings shows its button; launchpadCreatePage: Launchpad's
+// page for creating an Agents Hub, which Settings links when someone has none yet.
+export type WorkersConfig = { key: Buffer | null; store: RunnerStore; allowLocal?: boolean; launchpad?: boolean; launchpadCreatePage?: string | null };
 
 class Reply extends Error {
   status: number;
@@ -184,9 +185,9 @@ function scrub<T>(value: T, token: string): T {
 const viewers = new Map<string, { at: number; places: Places }>();
 
 /**
- * Starts Connect for `owner` to the runner at `rawUrl` (the Connect button, and "Connect my Agents Hub" once
- * its Agents Hub is found or made on Launchpad, agentshub.ts): where to send the browser (the runner's consent page), and the
- * cookie that ties the answer to this browser. `callback` is CONNECT_CALLBACK as the browser reached this hub.
+ * Starts Connect for `owner` to the runner at `rawUrl` (the Connect button, and "Connect Agents Hub" once the
+ * person's Agents Hub is found on Launchpad, agentshub.ts): where to send the browser (the runner's consent page), and
+ * the cookie that ties the answer to this browser. `callback` is CONNECT_CALLBACK as the browser reached this hub.
  */
 export async function beginConnect(cfg: WorkersConfig, owner: string, rawUrl: string, callback: string): Promise<{ to: string; cookie: string }> {
   if (!cfg.key) throw new Reply(503, NOT_SET_UP);
@@ -307,7 +308,7 @@ export async function handleWorkers(cfg: WorkersConfig, deps: WorkersDeps, req: 
       if (!session) throw new Reply(401, 'Sign in to use runners.');
       const rest = route.slice(RUNNERS.length + 1).split('/').filter(Boolean);
       if (!rest.length) {
-        if (req.method === 'GET') return json(res, 200, { enabled: !!key, launchpad: !!key && !!cfg.launchpad, runners: (await store.listRunners(session.username)).map(runnerView) }), true;
+        if (req.method === 'GET') return json(res, 200, { enabled: !!key, launchpad: !!key && !!cfg.launchpad, launchpadCreatePage: cfg.launchpadCreatePage ?? null, runners: (await store.listRunners(session.username)).map(runnerView) }), true;
         if (req.method !== 'POST') throw new Reply(405, 'Method not allowed.');
         if (!key) throw new Reply(503, NOT_SET_UP);
         const body = await readJson(req);

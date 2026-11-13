@@ -723,6 +723,21 @@ a.overview-tile:hover { border-color: var(--line-strong); text-decoration: none;
 .runner-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; }
 .runner-row > div:first-child { min-width: 0; overflow-wrap: anywhere; }
 .runner-form { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+/* Connect Agents Hub: the button stays beside its text, stacking only on narrow screens. */
+.agents-hub-row { flex-wrap: nowrap; margin-top: 8px; }
+.agents-hub-row > div:first-child { flex: 1 1 auto; }
+.agents-hub-row .subhub-actions { flex: none; }
+@media (max-width: 560px) { .agents-hub-row { flex-wrap: wrap; } }
+/* A small notice in a modal dialog (no Agents Hub yet). */
+.notice-dialog { width: min(440px, calc(100vw - 32px)); padding: 0; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); color: var(--text); box-shadow: var(--shadow-lg); }
+.notice-dialog::backdrop { background: rgba(0, 0, 0, .32); }
+.notice-dialog[open] { animation: preview-in .16s ease-out; }
+.notice-dialog-body { display: grid; justify-items: start; gap: 10px; padding: 22px 22px 18px; }
+.notice-dialog-body h3 { margin: 4px 0 0; font-size: 17px; }
+.notice-dialog-body p { margin: 0; color: var(--text-2); line-height: 1.55; }
+.notice-dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; width: 100%; margin-top: 8px; }
+.notice-dialog-status { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; width: 100%; margin: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--fill); color: var(--text); font-size: 13px; }
+@media (prefers-reduced-motion: reduce) { .notice-dialog[open] { animation: none; } }
 .runner-form input { flex: 1 1 200px; min-width: 0; }
 .launch-row select { max-width: 40%; font-size: 12px; }
 .runner-mode { margin-top: 6px; padding: 0; border: 0; background: none; color: var(--accent-text); font-size: 12.5px; cursor: pointer; }

@@ -20,8 +20,8 @@
 //   *        /-/api/runners/...  each person's own runners (Worker Protocol), and
 //   *        /-/api/workers/...  the workers launched from a chat on them (workers.ts);
 //                                tokens are sealed with SPACEHUB_SECRET_KEY
-//   *        /-/runners/agents-hub/...  "Connect Agents Hub": finds or makes the person's Agents Hub on
-//                                Launchpad with a short XO sign-in, then the usual Connect (agentshub.ts)
+//   *        /-/runners/agents-hub/...  "Connect Agents Hub": finds the person's Agents Hub on Launchpad
+//                                with a short XO sign-in, then the usual Connect (agentshub.ts)
 //   *        /-/api/xo/v1/...    xo.quirq.dev's store and agents (xo.ts), only
 //                                with SPACEHUB_XO_KEY set
 //   GET      /gh/<owner>/<repo>  a public GitHub repository's room: its explainer and group
@@ -80,10 +80,17 @@ const SIGNIN = signInConfig(DB, INTERNAL_HTTP, GITHUB);
 // hands over.
 const ADMIN_TOKEN = process.env.SPACEHUB_ADMIN_TOKEN ?? '';
 // Runners and workers live in the module's private tables; without the admin token or the sealing key, connecting is off.
-// "Connect Agents Hub" (SPACEHUB_LAUNCHPAD_API): Launchpad finds or makes the hub with a pass from a fresh XO sign-in,
-// held in memory for minutes and never stored.
-const AGENTS_HUB = agentsHubConfig();
-const WORKERS = { key: ADMIN_TOKEN ? sealKeyOrOff() : null, store: adminStore({ adminToken: ADMIN_TOKEN, http: INTERNAL_HTTP, db: DB }), allowLocal: process.env.SPACEHUB_RUNNER_ALLOW_LOCAL === "1", launchpad: !!AGENTS_HUB };
+// "Connect Agents Hub" (SPACEHUB_LAUNCHPAD_API): Launchpad finds the hub with a pass from a fresh XO sign-in, never
+// stored. A mistyped setting turns the button off (and says so) rather than stopping the hub.
+const AGENTS_HUB = (() => {
+  try {
+    return agentsHubConfig();
+  } catch (err) {
+    process.stderr.write(`spacehub-web: Connect Agents Hub is off: ${errorMessage(err)}\n`);
+    return null;
+  }
+})();
+const WORKERS = { key: ADMIN_TOKEN ? sealKeyOrOff() : null, store: adminStore({ adminToken: ADMIN_TOKEN, http: INTERNAL_HTTP, db: DB }), allowLocal: process.env.SPACEHUB_RUNNER_ALLOW_LOCAL === "1", launchpad: !!AGENTS_HUB, launchpadCreatePage: AGENTS_HUB?.createPage ?? null };
 const RECOVERY_DIR = process.env.SPACEHUB_RECOVERY_DIR ?? '';
 const RECOVERY_REMOTE = recoveryRemote(process.env.SPACEHUB_RECOVERY_URL, process.env.SPACEHUB_RECOVERY_TOKEN);
 // Backups are kept off the hub: sub-hubs copy its data folder live
@@ -545,7 +552,6 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     connect: (owner, address, r) => beginConnect(WORKERS, owner, address, callbackOf(r, CONNECT_CALLBACK)),
     page: (title, body) => page(title, null, body, true),
     send,
-    readForm,
     allowLocal: WORKERS.allowLocal,
   }, req, res)) return;
   if (await handleWorkers(WORKERS, { sessionOf, placesOf, appendChat, sameOrigin, callbackUrl: r => callbackOf(r, CONNECT_CALLBACK) }, req, res, url)) return;
