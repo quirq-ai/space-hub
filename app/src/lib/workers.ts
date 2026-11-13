@@ -140,6 +140,10 @@ export function connectOutcome(code: string | null): { ok: boolean; text: string
     case "expired": return { ok: false, text: "That connection took too long or was already used; press Connect again." };
     case "full": return { ok: false, text: "The runner has no room for another token. Revoke one in its Settings → Agent access, then press Connect again." };
     case "failed": return { ok: false, text: "The runner could not be connected. Try again, or paste a token instead." };
+    // From Connect Agents Hub's XO sign-in (cli/src/agentshub.ts), before any runner is involved.
+    case "xodenied": return { ok: false, text: "You didn't allow access on XO, so nothing was connected." };
+    case "xoexpired": return { ok: false, text: "That took too long or was already used; press Connect Agents Hub again." };
+    case "xofailed": return { ok: false, text: "Your Agents Hub could not be connected. Press Connect Agents Hub to try again." };
     default: return null;
   }
 }

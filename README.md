@@ -446,6 +446,9 @@ Once the new hub is in use, delete the old database with
 | `SPACEHUB_RECOVERY_OPERATORS` | unset | Builders (comma-separated) who see and use Sub-hubs and backups (Settings → Sub-hubs, `/subhub/<name>`); everyone else never sees them. When unset, only the database's owner identity can |
 | `SPACEHUB_VISITOR_HOME` | `quirq/quirq` | Where a visitor who is not signed in lands from the hub's address (`/`): a space or project, once it is on the hub (`off`: the home page for everyone). Signed in, `/` is the home page |
 | `SPACEHUB_SECRET_KEY` | unset | Turns on workers on your own runners (see below): base64 of at least 32 random bytes (`openssl rand -base64 32`). Runner tokens are sealed with it (AES-256-GCM) before they are stored. Keep it in the environment, not in `/data`; lose it and everyone connects their runners again. Needs `SPACEHUB_ADMIN_TOKEN` |
+| `SPACEHUB_LAUNCHPAD_API` | unset | Turns on **Connect Agents Hub** (see Workers on your own runners): Launchpad's API, without `/launchpad`, e.g. `https://launchpad-beta-api.xo.builders`. It must trust the same Clerk instance as the xo server in `SPACEHUB_XO_URL`, and this hub's `/-/login/xo/callback` must be a redirect URL of that xo server's Clerk OAuth application. Needs `SPACEHUB_SECRET_KEY` |
+| `SPACEHUB_LAUNCHPAD_TEMPLATE` | `agents-hub` | The Launchpad template an Agents Hub is made from |
+| `SPACEHUB_LAUNCHPAD_CREATE_PAGE` | unset | Launchpad's page for creating an Agents Hub, linked for people who have none yet (prod `https://app.xo.builders/launchpad/create/agents-hub`; beta `https://launchpad-beta.xo.builders/launchpad/new`) |
 | `SPACEHUB_RUNNER_ALLOW_LOCAL` | unset | `1`: runners at `http://127.0.0.1` or `http://localhost` may be connected. For local development only; on a deployed hub it would let people reach the container's own ports |
 | `/data` volume | | Databases, the server's signing keys, and the identity that owns the module. **Mount persistent storage here and back it up.** Without it, a restart forgets every project and invalidates every client token |
 
@@ -1164,6 +1167,7 @@ cli/src/xo.ts            xo.quirq.dev's API: xo's per-user records and builders
 cli/src/git.ts           git plumbing: rev-list, cat-file, packfile writer
 cli/src/web.ts           web service: sign in/up, create and import projects
 cli/src/workers.ts       runners and workers launched from chats (/-/api/runners, /-/api/workers)
+cli/src/agentshub.ts     Connect Agents Hub: find it on Launchpad with an XO pass, then Connect
 cli/src/workerclient.ts  a Worker Protocol (worker/1) client for one runner
 cli/src/runnerstore.ts   runners and workers in the module's private tables, through the admin
 cli/src/seal.ts          sealing runner tokens with SPACEHUB_SECRET_KEY
@@ -1347,6 +1351,18 @@ Protocol (`worker/1`, below); an Agents Hub is the first.
   `SPACEHUB_SECRET_KEY` and never goes back to a browser. Several runners are
   fine; one is the default. **Disconnect** revokes a token space-hub got
   through Connect; a pasted token is yours, so it is left alone.
+- **Connect Agents Hub** (with `SPACEHUB_LAUNCHPAD_API`): one button, one XO
+  sign-in. space-hub sends you through XO's sign-in ("Allow access") and swaps
+  the code itself for a short-lived pass, the way `xo login` does. With it,
+  Launchpad lists your apps: your Agents Hub is found (even while it is still
+  starting) and the usual Connect follows. Without one, Settings shows a dialog
+  linking Launchpad's own create page (`SPACEHUB_LAUNCHPAD_CREATE_PAGE`), which
+  fills the hub's XO API key, and watches for the new hub in the background:
+  once it shows up, Connect follows by itself, with no second sign-in.
+  The pass stays only in the server's memory: dropped as soon as your hub is
+  found, when you close the dialog, or after 10 minutes at most; never stored,
+  logged, sent to the browser, or put in a cookie or URL. Clerk's refresh token
+  is never read.
 - **Launch.** In a channel, write what the worker should do and press the rocket
   beside Send. The tray picks the runner (when you have more than one) and, if
   the runner works on repositories, asks for `owner/repo` or an issue or pull
