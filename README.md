@@ -1,5 +1,10 @@
 # spacehub
 
+> **This is the private hub (branch `privatehub`).** Nothing is public: every
+> request needs the token of someone signed in with XO (Clerk), and builders
+> come only from XO. See [docs/privatehub.md](docs/privatehub.md) for how the
+> gate works and the production checklist.
+
 Git hosting stored in SpacetimeDB, laid out like GitHub:
 
 | GitHub | spacehub |

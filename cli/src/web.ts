@@ -28,6 +28,13 @@
 //   POST     /-/api/ask          chat, opened on the first visit; asking there (rooms.ts)
 //   POST     /-/api/explain      open a room from a GitHub URL, for the explain org's chat (rooms.ts)
 //
+//   GET      /-/gate             the private hub's gate (gate.ts): the proxy asks it before every
+//                                request; only people signed in with XO, and their agents, get in
+//
+// This is the private hub (branch privatehub): nothing is public. Builders
+// come only from XO (Clerk), GitHub sign-in and open sign-up are off, and the
+// one way in on the website is Sign in with XO.
+//
 // Pages are read by the module (ui.ts); this service only acts. A session is
 // the user's identity token in an HttpOnly cookie, so every action runs as
 // that user and the module's own ownership checks apply.
@@ -39,7 +46,7 @@ import { esc, PAGE_CSP, shell } from '../../module/src/style';
 import { signInButtons, signInWays, step, steps, type Hub } from '../../module/src/howto';
 import { Fail, GithubSync, githubApi, githubBuilder as builderOf, githubInfo as infoOf, mirrorProject } from './github';
 import { LiveHub } from './live';
-import { accountsSetting, handleSignIn, signInConfig } from './signin';
+import { accountsSetting, signInConfig } from './signin';
 import { handleXo, xoConfig } from './xo';
 import { CALLBACK_ROUTE, ConnectGithub, finishSignIn, offerFor, START_ROUTE, startSignIn, STATE_COOKIE, WAIT_SECONDS, xoSignInConfig } from './xosignin';
 import * as githubWeb from './githubsignin';
@@ -56,6 +63,7 @@ import { InstanceConnections } from './instanceconnections';
 import { hubBackupConfig, startHubBackups } from './hubbackup';
 import { activityJournalDir, startActivityJournal } from './activityjournal';
 import { SubhubRelay } from './subhubrelay';
+import { Gate, handleGate, privateBuilders } from './gate';
 
 quietSdkLogs();
 
@@ -64,7 +72,8 @@ const SERVER = normalizeServer(process.env.SPACEHUB_SERVER ?? 'ws://127.0.0.1:30
 const DB = process.env.SPACEHUB_DB ?? 'spacehub';
 const MAX_IMPORT_MB = Number(process.env.SPACEHUB_IMPORT_MAX_MB ?? 500);
 const MAX_CONCURRENT_IMPORTS = 2;
-const YEAR = 60 * 60 * 24 * 365;
+// A private hub's browser session lasts SPACEHUB_SESSION_DAYS (default 7), then XO's sign-in again.
+const SESSION_SECONDS = Math.max(1, Number(process.env.SPACEHUB_SESSION_DAYS ?? 7) || 7) * 60 * 60 * 24;
 // SpacetimeDB's HTTP side, where the module renders pages.
 const INTERNAL_HTTP = (process.env.SPACEHUB_INTERNAL_HTTP ?? SERVER.replace(/^ws/, 'http')).replace(/\/+$/, '');
 const GITHUB = githubApi();
@@ -79,6 +88,8 @@ const SIGNIN = signInConfig(DB, INTERNAL_HTTP, GITHUB);
 // Spaces linked to GitHub sync as the hub admin, whose token the entrypoint
 // hands over.
 const ADMIN_TOKEN = process.env.SPACEHUB_ADMIN_TOKEN ?? '';
+// Every request passes the gate first (gate.ts); without the admin token it lets nobody in.
+const GATE = new Gate({ admin: ADMIN_TOKEN ? { adminToken: ADMIN_TOKEN, http: INTERNAL_HTTP, db: DB } : null, builders: privateBuilders() }, INTERNAL_HTTP);
 // Runners and workers live in the module's private tables; without the admin token or the sealing key, connecting is off.
 // "Connect Agents Hub" (SPACEHUB_LAUNCHPAD_API): Launchpad finds the hub with a pass from a fresh XO sign-in, never
 // stored. A mistyped setting turns the button off (and says so) rather than stopping the hub.
@@ -160,7 +171,7 @@ function cookieValue(req: http.IncomingMessage, name: string): string | null {
   return null;
 }
 
-function sessionCookies(req: http.IncomingMessage, token: string, username: string, maxAge = YEAR) {
+function sessionCookies(req: http.IncomingMessage, token: string, username: string, maxAge = SESSION_SECONDS) {
   const secure = req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : '';
   const attrs = `; Path=/; SameSite=Lax; Max-Age=${maxAge}${secure}`;
   return [`spacehub_session=${encodeURIComponent(token)}${attrs}; HttpOnly`, `spacehub_user=${encodeURIComponent(username)}${attrs}`];
@@ -344,21 +355,20 @@ function pump() {
 
 // ---------------------------------------------------------------- pages
 
-// Sign in: the ways to get a token from the terminal (howto.ts), then the
-// form that takes it.
-function loginPage(viewer: string | null, hub: Hub, error = '', next = '/') {
+// Sign in on the private hub: with XO only. `denied`: the session this browser
+// had does not get in (a builder that signed up another way, or one taken off
+// SPACEHUB_PRIVATE_BUILDERS).
+function loginPage(viewer: string | null, hub: Hub, error = '', next = '/', denied = false) {
+  const query = next && next !== '/' ? `?next=${encodeURIComponent(next)}` : '';
   return page(
     'Sign in · spacehub',
     viewer,
-    `<div class="page-title"><h1>Sign in</h1><p>${hub.github || hub.xo ? `There are no passwords here: your account is your GitHub account. Sign in with ${hub.github && hub.xo ? 'GitHub or xo' : hub.github ? 'GitHub' : 'xo'}, or once from your terminal, then paste your token.` : 'There are no passwords here. Sign in once from your terminal, then paste your token to use this site.'}</p></div>
+    `<div class="page-title"><h1>Sign in</h1><p>This hub is private. Sign in with your XO account to see it; your builder here is the GitHub account connected to XO.</p></div>
+${denied ? '<div class="banner err">That account cannot use this hub. Sign in with an XO account that has access.</div>' : ''}
 ${error ? `<div class="banner err">${esc(error)}</div>` : ''}
-${signInButtons(hub, 'Sign in', next)}
-${signInWays(hub, true)}
-<h2 class="section-title">Paste your token</h2>
-<form class="signin-form" method="post" action="/-/login"><input type="hidden" name="next" value="${esc(next)}">
-<label for="token">Identity token</label><textarea id="token" name="token" required spellcheck="false" autocomplete="off"></textarea>
-<p><button class="btn primary" type="submit">Sign in</button></p></form>
-${hub.accounts === 'open' ? '<p class="muted">New here? <a href="/-/signup">Register</a>.</p>' : ''}`,
+${hub.xo ? `<p><a class="btn primary" href="${START_ROUTE}${query}">Sign in with XO</a></p>` : '<div class="banner err">Sign-in with XO is not set up for this hub yet, so nobody can sign in. The operator needs SPACEHUB_XO_KEY here and this hub\'s callback registered on the XO server.</div>'}
+<h2 class="section-title">From the terminal</h2>
+<p class="desc">Run <code>xo login</code>: it signs you in to XO and hands the spacehub CLI your builder's token. Git and the CLI then send that token with every request.</p>`,
     true
   );
 }
@@ -530,10 +540,12 @@ const ROOMS: Parameters<typeof handleRooms>[0] = {
 async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   const url = new URL(req.url ?? '/', 'http://local');
   const route = url.pathname;
+  // The proxy asks before every request (gate.ts).
+  if (await handleGate(GATE, req, res)) return;
   // Called by xo.quirq.dev with its key, not from the site's forms.
   if (await handleXo(XO, req, res)) return;
-  // Called by the CLI with a GitHub token, not from the site's forms.
-  if (await handleSignIn(SIGNIN, req, res)) return;
+  // GitHub sign-in (the CLI's, and the website's below) is off on the private hub: builders come from XO.
+  if (route.startsWith('/-/api/auth/github')) return send(res, 404, page('Not found · spacehub', null, '<h1>Not found</h1><p class="desc">This hub is private: sign in with XO.</p>'));
   if (await handleInstanceRecovery({ vault: RECOVERY_VAULT, connections: RECOVERY_CONNECTIONS, authorize: recoveryOperator,
     source: process.env.SPACEHUB_PUBLIC_URL ?? DB,
     storage: RECOVERY_DIR || HUB_BACKUP?.vault.storageDir || '',
@@ -560,7 +572,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
 
   if (route === '/-/login') {
     const session = await sessionOf(req);
-    if (req.method === 'GET') return send(res, 200, loginPage(session?.username ?? null, await hubOf(req), '', localPath(url.searchParams.get('next'))));
+    if (req.method === 'GET') return send(res, 200, loginPage(session?.username ?? null, await hubOf(req), '', localPath(url.searchParams.get('next')), url.searchParams.get('denied') === '1'));
     const form = await readForm(req);
     const token = (form.get('token') ?? '').trim();
     const next = localPath(form.get('next'));
@@ -585,6 +597,10 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     } catch (err) {
       return send(res, err instanceof Reply ? err.status : 500, loginPage(null, await hubOf(req), errorMessage(err), next));
     }
+  }
+
+  if (route === githubWeb.START_ROUTE || route === githubWeb.CALLBACK_ROUTE || route === '/-/signup') {
+    return send(res, 404, loginPage(null, await hubOf(req), 'This hub is private: builders sign in with XO only.'));
   }
 
   if (route === githubWeb.START_ROUTE && req.method === 'GET') {

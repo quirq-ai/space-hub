@@ -143,7 +143,23 @@ fi
 # GitHub account, checked by the web service as the admin), "open" (anyone
 # registers a name) or "xo" (nobody: only xo's API makes builders). xo's API
 # (SPACEHUB_XO_KEY) makes builders for xo's users in every mode.
-ACCOUNTS="${SPACEHUB_ACCOUNTS:-github}"
+#
+# The private hub (branch privatehub) takes builders from XO only, whatever
+# SPACEHUB_ACCOUNTS says, and will not start without xo's key: without it
+# nobody could sign in, and the gate would let nobody through.
+if [ -n "${SPACEHUB_ACCOUNTS:-}" ] && [ "$SPACEHUB_ACCOUNTS" != xo ]; then
+  echo "spacehub: this is a private hub; SPACEHUB_ACCOUNTS=$SPACEHUB_ACCOUNTS is ignored (builders come only from XO)" >&2
+fi
+ACCOUNTS=xo
+XO_KEY="${SPACEHUB_XO_KEY:-}"
+if [ "${#XO_KEY}" -lt 32 ]; then
+  echo "spacehub: a private hub needs SPACEHUB_XO_KEY (32 characters or more, the xo server's XO_HUB_KEY): sign-in is with XO only" >&2
+  exit 1
+fi
+if [ -z "$SPACEHUB_ADMIN_TOKEN" ]; then
+  echo "spacehub: a private hub needs the admin's token for its gate, and it could not be read" >&2
+  exit 1
+fi
 case "$ACCOUNTS" in
   github | open | xo) ;;
   *)
