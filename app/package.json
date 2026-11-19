@@ -2,6 +2,7 @@
   "name": "spacehub-app",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "The hub's web app: open-chat's interface over spaces and projects, served by the web service at /",
   "type": "module",
   "scripts": {

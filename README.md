@@ -1422,3 +1422,8 @@ it, and its token is taken out of a worker's steps.
   Only SHA-1 repositories are supported.
 - An interrupted push can leave unreferenced objects behind. They are
   harmless, and the retry skips them.
+
+## License
+
+MIT. See [LICENSE](LICENSE). The web app's look is ported from
+CopilotKit/OpenMuse, also MIT (notice in `app/OPENMUSE-LICENSE`).
