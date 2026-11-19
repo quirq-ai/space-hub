@@ -2,6 +2,7 @@
   "name": "spacehub-module",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "SpacetimeDB module for spacehub: owners, spaces, refs and git objects",
   "scripts": {
     "build": "spacetime build",

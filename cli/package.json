@@ -2,6 +2,7 @@
   "name": "spacehub",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "spacehub client: a gh-style CLI plus the git remote helper (git clone/push/fetch quirq://hub.quirq.dev/owner/space)",
   "type": "module",
   "engines": {
