@@ -30,6 +30,12 @@ export async function hubMembersOnly(cfg: AdminHttp): Promise<boolean> {
   return !!row && String(row.value) === 'true';
 }
 
+/** What new projects start as when their creator does not choose (hub_state "defaultVisibility"; no row is public). */
+export async function hubDefaultVisibility(cfg: AdminHttp): Promise<'public' | 'private'> {
+  const [row] = await select(cfg, "SELECT value FROM hub_state WHERE key = 'defaultVisibility'");
+  return row && String(row.value) === 'private' ? 'private' : 'public';
+}
+
 /** Whether the builder `name` is suspended on this hub. */
 export async function isSuspended(cfg: AdminHttp, name: string): Promise<boolean> {
   if (!NAME.test(name)) return false;

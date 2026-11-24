@@ -1,12 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ALLOWLIST_HELP, builderAction, inviteState, loginOf, operatorsLine, parseHubSettings, readersLine, stillHere, stillHereText } from "../src/lib/hub-settings.ts";
+import { ALLOWLIST_HELP, builderAction, inviteState, loginOf, NEW_PROJECT_VISIBILITIES, operatorsLine, parseHubSettings, readersLine, stillHere, stillHereText } from "../src/lib/hub-settings.ts";
 
 const answer = {
   owner: "alice",
   operators: ["alice", "ops"],
   adminFallback: false,
   membersOnly: false,
+  defaultVisibility: "private" as const,
   builders: [{ name: "alice", suspended: false }, { name: "bob", suspended: true }, { name: "carol", suspended: false }],
   join: { policy: "invite" as const, allowlist: ["carol"], invites: [{ id: "1", createdBy: "alice", createdAt: 1000, expiresAt: 2000, usedBy: "" }] },
 };
@@ -17,9 +18,12 @@ test("the hub's settings are read defensively", () => {
   assert.equal(parseHubSettings(null), null);
   assert.equal(parseHubSettings({ error: "Only the hub's owner manages the hub." }), null);
   assert.deepEqual(parseHubSettings({ owner: "alice", operators: [1, "ops"], builders: [{ name: 2 }, { name: "bob", suspended: "yes" }] }),
-    { owner: "alice", operators: ["ops"], adminFallback: false, membersOnly: false, builders: [{ name: "bob", suspended: false }], join: NOBODY_LISTED });
+    { owner: "alice", operators: ["ops"], adminFallback: false, membersOnly: false, defaultVisibility: "public", builders: [{ name: "bob", suspended: false }], join: NOBODY_LISTED });
   assert.equal(parseHubSettings({ ...answer, membersOnly: "yes" })!.membersOnly, false, "only true is on");
   assert.equal(parseHubSettings({ ...answer, membersOnly: true })!.membersOnly, true);
+  // New projects start public unless the web service says private; an older one says nothing.
+  assert.equal(parseHubSettings({ ...answer, defaultVisibility: "secret" })!.defaultVisibility, "public");
+  assert.equal(parseHubSettings({ ...answer, defaultVisibility: "public" })!.defaultVisibility, "public");
   // An older web service sends no join settings, or odd ones: the hub lets anyone in, as before.
   assert.deepEqual(parseHubSettings({ owner: "alice", join: { policy: "members", allowlist: [3, "zed"], invites: [{ id: 4 }, null] } })?.join,
     { policy: "anyone", allowlist: ["zed"], invites: [] });
@@ -51,6 +55,11 @@ test("the operators line names the owner first, always", () => {
 test("the owner can't be suspended; a suspended builder can be restored", () => {
   const s = parseHubSettings(answer)!;
   assert.deepEqual(s.builders.map(b => builderAction(s, b)), [null, "restore", "suspend"]);
+});
+
+test("new projects start public or private, public first", () => {
+  assert.deepEqual(NEW_PROJECT_VISIBILITIES.map(v => v.value), ["public", "private"]);
+  for (const v of NEW_PROJECT_VISIBILITIES) assert.ok(v.label && v.help);
 });
 
 test("the members-only line says who can read the hub", () => {

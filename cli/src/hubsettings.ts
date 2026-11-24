@@ -10,6 +10,8 @@
 //   POST /-/api/hub/invite      {"hours": n}  a one-time invite code: {code, link}, shown this once (create_invite)
 //   POST /-/api/hub/revoke      {"id": "<invite id>"}  revoke an unused invite (revoke_invite)
 //   POST /-/api/hub/members-only {"on": true|false}  only members read the hub, or anyone again (set_members_only)
+//   POST /-/api/hub/default-visibility {"visibility": "public" | "private"}  what new projects start as
+//                               when their creator does not choose (set_default_visibility)
 //
 // The web service checks the session and that it is the owner's; the module
 // checks again (the reducers run with the owner's own token) and decides.
@@ -52,6 +54,10 @@ export interface HubSettingsDeps {
   membersOnly: () => Promise<boolean>;
   /** Switch members-only on or off as the owner (the session's token); rejects with the module's reason. */
   setMembersOnly: (token: string, on: boolean) => Promise<void>;
+  /** What new projects start as when their creator does not choose (hub_state "defaultVisibility"). */
+  defaultVisibility: () => Promise<'public' | 'private'>;
+  /** Set it as the owner (the session's token); rejects with the module's reason. */
+  setDefaultVisibility: (token: string, visibility: 'public' | 'private') => Promise<void>;
 }
 
 /** The recovery operators: the owner always, then the ones named in SPACEHUB_RECOVERY_OPERATORS. */
@@ -111,6 +117,11 @@ const ACTIONS: Record<string, Action> = {
     await d.setMembersOnly(s.token, b.on);
     return { ok: true };
   },
+  'default-visibility': async (d, s, b) => {
+    if (b.visibility !== 'public' && b.visibility !== 'private') throw new BadRequest('Send "visibility": "public" or "private".');
+    await d.setDefaultVisibility(s.token, b.visibility);
+    return { ok: true };
+  },
 };
 
 /** Handle Settings → Hub's routes; false when the request is not one of them. */
@@ -132,8 +143,8 @@ export async function handleHubSettings(deps: HubSettingsDeps, req: http.Incomin
 
   if (!action) {
     try {
-      const [{ builders }, join, membersOnly] = await Promise.all([deps.people(), deps.join(), deps.membersOnly()]);
-      json(res, 200, { owner, operators: operatorsOf(owner, deps.operators), adminFallback: deps.adminFallback, membersOnly, builders, join });
+      const [{ builders }, join, membersOnly, defaultVisibility] = await Promise.all([deps.people(), deps.join(), deps.membersOnly(), deps.defaultVisibility()]);
+      json(res, 200, { owner, operators: operatorsOf(owner, deps.operators), adminFallback: deps.adminFallback, membersOnly, defaultVisibility, builders, join });
     } catch {
       json(res, 502, { error: 'The hub database did not answer.' });
     }

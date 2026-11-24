@@ -48,6 +48,8 @@ import CreateInviteReducer from "./create_invite_reducer";
 import CreateOrgReducer from "./create_org_reducer";
 import CreateProjectReducer from "./create_project_reducer";
 import CreateProjectFromTemplateReducer from "./create_project_from_template_reducer";
+import CreateProjectFromTemplateWithVisibilityReducer from "./create_project_from_template_with_visibility_reducer";
+import CreateProjectWithVisibilityReducer from "./create_project_with_visibility_reducer";
 import DeleteAgentReducer from "./delete_agent_reducer";
 import DeleteBuilderReducer from "./delete_builder_reducer";
 import DeleteOrgReducer from "./delete_org_reducer";
@@ -77,6 +79,7 @@ import RunnerAddReducer from "./runner_add_reducer";
 import RunnerDeleteReducer from "./runner_delete_reducer";
 import RunnerUpdateReducer from "./runner_update_reducer";
 import SetAccountsReducer from "./set_accounts_reducer";
+import SetDefaultVisibilityReducer from "./set_default_visibility_reducer";
 import SetJoinPolicyReducer from "./set_join_policy_reducer";
 import SetLinkStatusReducer from "./set_link_status_reducer";
 import SetMembersOnlyReducer from "./set_members_only_reducer";
@@ -280,6 +283,8 @@ const reducersSchema = __reducers(
   __reducerSchema("create_org", CreateOrgReducer),
   __reducerSchema("create_project", CreateProjectReducer),
   __reducerSchema("create_project_from_template", CreateProjectFromTemplateReducer),
+  __reducerSchema("create_project_from_template_with_visibility", CreateProjectFromTemplateWithVisibilityReducer),
+  __reducerSchema("create_project_with_visibility", CreateProjectWithVisibilityReducer),
   __reducerSchema("delete_agent", DeleteAgentReducer),
   __reducerSchema("delete_builder", DeleteBuilderReducer),
   __reducerSchema("delete_org", DeleteOrgReducer),
@@ -309,6 +314,7 @@ const reducersSchema = __reducers(
   __reducerSchema("runner_delete", RunnerDeleteReducer),
   __reducerSchema("runner_update", RunnerUpdateReducer),
   __reducerSchema("set_accounts", SetAccountsReducer),
+  __reducerSchema("set_default_visibility", SetDefaultVisibilityReducer),
   __reducerSchema("set_join_policy", SetJoinPolicyReducer),
   __reducerSchema("set_link_status", SetLinkStatusReducer),
   __reducerSchema("set_members_only", SetMembersOnlyReducer),

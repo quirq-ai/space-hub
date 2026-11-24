@@ -61,7 +61,7 @@ import { hubBackupConfig, startHubBackups } from './hubbackup';
 import { activityJournalDir, startActivityJournal } from './activityjournal';
 import { SubhubRelay } from './subhubrelay';
 import { bearerToken, cookieValue, viewerOf, type CheckToken, type Viewer } from './viewer';
-import { hubMembersOnly, hubOwnerName, hubPeople, isSuspended, joinPolicy, joinSettings, type JoinPolicy } from './hubowner';
+import { hubDefaultVisibility, hubMembersOnly, hubOwnerName, hubPeople, isSuspended, joinPolicy, joinSettings, type JoinPolicy } from './hubowner';
 import { handleHubSettings } from './hubsettings';
 import { FrontDoor, signInNotice, suspendedMessage } from './frontdoor';
 
@@ -648,6 +648,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     signupUrl: r => callbackOf(r, '/-/signup'),
     membersOnly: () => hubMembersOnly(ADMIN_SQL!),
     setMembersOnly: (token, on) => withConn(token, conn => conn.reducers.setMembersOnly({ on })).finally(() => DOOR.forget()),
+    defaultVisibility: () => hubDefaultVisibility(ADMIN_SQL!),
+    setDefaultVisibility: (token, visibility) => withConn(token, conn => conn.reducers.setDefaultVisibility({ visibility })),
   }, req, res, url)) return;
   if (await handleApp({ dir: APP_DIR, internalHttp: INTERNAL_HTTP, db: DB, withConn, sessionOf, operator: recoveryOperator, owner: ownerName }, req, res, url)) return;
 

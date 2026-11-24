@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Check, Globe, Lock, Mail, ShieldCheck, UserPlus, Users } from "lucide-react";
 import { useLive } from "@/hooks/use-live";
 import { send } from "@/lib/workers";
-import { ALLOWLIST_HELP, builderAction, HUB_API, inviteState, JOIN_POLICIES, loginOf, operatorsLine, parseHubSettings, readersLine, stillHere, stillHereText, type HubSettings } from "@/lib/hub-settings";
+import { ALLOWLIST_HELP, builderAction, HUB_API, inviteState, JOIN_POLICIES, loginOf, NEW_PROJECT_VISIBILITIES, operatorsLine, parseHubSettings, readersLine, stillHere, stillHereText, type HubSettings } from "@/lib/hub-settings";
 import { Avatar, CopyButton, Empty, ErrorNote, SkeletonRows } from "@/ui/primitives";
 
 /**
@@ -11,7 +11,8 @@ import { Avatar, CopyButton, Empty, ErrorNote, SkeletonRows } from "@/ui/primiti
  * join: the policy, the GitHub logins allowed in and one-time invite codes. A suspended builder is signed out and
  * cannot write; nothing it made is removed. The web service and the module check that this is the owner
  * (cli/src/hubsettings.ts); this page only shows it. The owner also switches the hub to members-only: the database
- * then gives non-members nothing (module/src/index.ts, the visible_* views).
+ * then gives non-members nothing (module/src/index.ts, the visible_* views), and chooses whether new projects start
+ * public or private when whoever creates them does not choose (projects already made keep theirs).
  *
  * Built from the app's settings pieces (Settings → Runners): runner rows and lists, the app's buttons, labels and
  * empty states; the few hub-only controls (the members-only switch, the join-policy cards) are in app.css under
@@ -56,6 +57,18 @@ export function HubSettingsSection() {
             </button>
           </div>
         </div>
+      </div>
+
+      <div className="hub-settings-group">
+        <div className="subhub-section-heading"><h3>New projects start</h3><p className="quiet">When whoever makes a project doesn't choose. Projects already here keep theirs.</p></div>
+        <fieldset className="hub-choices" disabled={!!busy}>
+          <legend className="sr-only">Visibility of new projects</legend>
+          {NEW_PROJECT_VISIBILITIES.map(v => <label key={v.value} className="hub-choice">
+            <input type="radio" name="default-visibility" value={v.value} checked={settings.defaultVisibility === v.value} onChange={() => void run("default-visibility", "/hub/default-visibility", { visibility: v.value })} />
+            <span className="hub-choice-title"><strong>{v.label}</strong><Check className="hub-choice-check" size={15} aria-hidden="true" /></span>
+            <span className="quiet">{v.help}</span>
+          </label>)}
+        </fieldset>
       </div>
 
       <JoinSection settings={settings} busy={busy} run={run} />

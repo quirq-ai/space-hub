@@ -212,6 +212,87 @@ describe('setProjectVisibility', () => {
   });
 });
 
+describe('default visibility for new projects', () => {
+  const state = (h: any) => h.db.hubState.key.find('defaultVisibility')?.value ?? null;
+
+  it('is set by the owner (or the admin) only; public removes the setting; setting it twice changes nothing', () => {
+    const { h, call, who } = hub();
+    expect(state(h)).toBeNull();
+    for (const n of ['bob', 'dave', 'stranger', 'scout']) {
+      expect(() => call(who[n], mod.setDefaultVisibility, { visibility: 'private' })).toThrow(/permission denied/);
+    }
+    expect(() => call(who.alice, mod.setDefaultVisibility, { visibility: 'hidden' })).toThrow(/"public" or "private"/);
+    expect(state(h)).toBeNull();
+    call(who.alice, mod.setDefaultVisibility, { visibility: 'private' });
+    call(who.alice, mod.setDefaultVisibility, { visibility: 'private' });
+    expect(state(h)).toBe('private');
+    expect([...h.db.hubState.iter()].filter((r: any) => r.key === 'defaultVisibility').length).toBe(1);
+    call(who.alice, mod.setDefaultVisibility, { visibility: 'public' });
+    call(who.alice, mod.setDefaultVisibility, { visibility: 'public' });
+    expect(state(h)).toBeNull();
+    // The admin (by CLI) may too, as with every owner action.
+    call(admin, mod.setDefaultVisibility, { visibility: 'private' });
+    expect(state(h)).toBe('private');
+  });
+
+  it('unset: a new project is public, as before', () => {
+    const { h, call, who, pid, readers, inSync } = hub();
+    call(who.bob, mod.createProject, { space: 'acme', name: 'fresh', description: '' });
+    expect(h.db.projectVisibility.projectId.find(pid('acme/fresh'))).toBeNull();
+    expect(readers('acme/fresh')).toEqual(ALL);
+    inSync();
+  });
+
+  it('private: every way a builder makes a project starts it private, readable only by those the rule lets in', () => {
+    const { h, call, who, pid, reads, readers, inSync } = hub();
+    call(who.alice, mod.setDefaultVisibility, { visibility: 'private' });
+    // A plain create, a template (the goal space), a chat started in an org, and a repo room.
+    call(who.bob, mod.createProject, { space: 'acme', name: 'fresh', description: '' });
+    call(who.bob, mod.createProjectFromTemplate, { space: 'acme', name: 'launch', description: '', template: '', goal: 'Ship it.' });
+    call(who.bob, mod.startChat, { space: 'acme', project: '' });
+    for (const p of ['acme/fresh', 'acme/launch', 'acme/chat']) {
+      expect(h.db.projectVisibility.projectId.find(pid(p))?.visibility).toBe('private');
+      expect(readers(p)).toEqual(['acmebot', 'bob', 'dave', 'scout']);
+      expect(reads('eve', p)).toBe(false);
+      expect(reads('stranger', p)).toBe(false);
+      expect([...h.db.projectAccess.projectId.filter(pid(p))].some((r: any) => r.identity.isEqual(PUBLIC_READER))).toBe(false);
+    }
+    // Projects made before the setting keep theirs.
+    expect(readers('bob/own')).toEqual(ALL);
+    inSync();
+  });
+
+  it('a repo room always starts public, readable by its opener, whatever the default', () => {
+    const { h, call, who, pid, reads, readers, inSync } = hub();
+    call(who.alice, mod.setDefaultVisibility, { visibility: 'private' });
+    call(who.alice, mod.createOrg, { name: 'explain', description: '' });
+    call(admin, mod.openRepoRoom, { owner: 'octo', repo: 'hello', description: '', openedBy: 'eve' });
+    const room = [...h.db.project.owner.filter('explain')][0].fullName;
+    expect(h.db.projectVisibility.projectId.find(pid(room))).toBeNull();
+    expect(reads('eve', room)).toBe(true); // eve is not in "explain", yet reads the room she opened
+    expect(readers(room)).toEqual(ALL);
+    inSync();
+  });
+
+  it("the creator's explicit choice wins over the default, both ways", () => {
+    const { h, call, who, pid, readers, inSync } = hub();
+    call(who.bob, mod.createProjectWithVisibility, { space: 'acme', name: 'hidden', description: '', visibility: 'private' });
+    call(who.bob, mod.createProjectFromTemplateWithVisibility, { space: 'bob', name: 'plan', description: '', template: '', goal: 'Plan.', visibility: 'private' });
+    expect(readers('acme/hidden')).toEqual(['acmebot', 'bob', 'dave', 'scout']);
+    expect(readers('bob/plan')).toEqual(['bob', 'scout']);
+    call(who.alice, mod.setDefaultVisibility, { visibility: 'private' });
+    call(who.bob, mod.createProjectWithVisibility, { space: 'acme', name: 'open', description: '', visibility: 'public' });
+    call(who.bob, mod.createProjectFromTemplateWithVisibility, { space: 'acme', name: 'open-plan', description: '', template: '', goal: 'Plan.', visibility: 'public' });
+    call(who.bob, mod.createProjectWithVisibility, { space: 'acme', name: 'default', description: '', visibility: '' });
+    expect(readers('acme/open')).toEqual(ALL);
+    expect(readers('acme/open-plan')).toEqual(ALL);
+    expect(h.db.projectVisibility.projectId.find(pid('acme/default'))?.visibility).toBe('private');
+    expect(() => call(who.bob, mod.createProjectWithVisibility, { space: 'acme', name: 'odd', description: '', visibility: 'secret' })).toThrow(/"public" or "private"/);
+    expect(h.db.project.fullName.find('acme/odd')).toBeNull();
+    inSync();
+  });
+});
+
 describe('project_access', () => {
   it('starts as one row a project (and the hub row), for everyone: no visibility rows is the hub as before', () => {
     const { h, inSync } = hub();

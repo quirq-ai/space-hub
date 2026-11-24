@@ -102,6 +102,13 @@ export function membersOnly(db: Db): boolean {
   return db.hubState.key.find('membersOnly')?.value === 'true';
 }
 
+// hub_state "defaultVisibility": what a new project starts as when whoever
+// creates it does not choose. No row (the default) is public, as before.
+export type Visibility = 'public' | 'private';
+export function defaultVisibility(db: Db): Visibility {
+  return db.hubState.key.find('defaultVisibility')?.value === 'private' ? 'private' : 'public';
+}
+
 // Whether `identity` may read the hub's spaces and projects (the views in
 // index.ts). The admin (the server's own web service) always may.
 export function mayReadHub(db: Db, identity: Identity): boolean {

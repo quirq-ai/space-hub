@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { handleHubSettings, INVITE_HOURS, operatorsOf, type HubSettingsDeps } from '../src/hubsettings.ts';
-import { hubMembersOnly, hubOwnerName, hubPeople, isSuspended, joinPolicy, joinSettings, type JoinSettings } from '../src/hubowner.ts';
+import { hubDefaultVisibility, hubMembersOnly, hubOwnerName, hubPeople, isSuspended, joinPolicy, joinSettings, type JoinSettings } from '../src/hubowner.ts';
 
 const JOIN: JoinSettings = {
   policy: 'invite',
@@ -108,6 +108,8 @@ async function site(over: Partial<HubSettingsDeps> = {}) {
     signupUrl: () => 'https://hub.example/-/signup',
     membersOnly: async () => false,
     setMembersOnly: async (token, on) => void calls.push(`members-only ${on} as ${token}`),
+    defaultVisibility: async () => 'public',
+    setDefaultVisibility: async (token, visibility) => void calls.push(`default ${visibility} as ${token}`),
     ...over,
   };
   const server = http.createServer(async (req, res) => {
@@ -135,6 +137,7 @@ test('the owner sees the hub: its operators and its builders', async () => {
       operators: ['alice', 'ops'],
       adminFallback: false,
       membersOnly: false,
+      defaultVisibility: 'public',
       builders: [{ name: 'alice', suspended: false }, { name: 'bob', suspended: false }],
       join: JOIN,
     });
@@ -282,6 +285,34 @@ test('the owner switches members-only on and off as itself; nobody else can', as
     assert.deepEqual(s.calls, ['members-only true as tok-alice', 'members-only false as tok-alice']);
   } finally {
     s.close();
+  }
+});
+
+test('the owner sets what new projects start as; nobody else can', async () => {
+  const s = await site({ defaultVisibility: async () => 'private' });
+  try {
+    assert.equal((await s.ask('/-/api/hub', 'tok-alice')).body?.defaultVisibility, 'private');
+    assert.deepEqual(await s.ask('/-/api/hub/default-visibility', 'tok-alice', { visibility: 'private' }), { status: 200, body: { ok: true } });
+    assert.deepEqual(await s.ask('/-/api/hub/default-visibility', 'tok-alice', { visibility: 'public' }), { status: 200, body: { ok: true } });
+    assert.equal((await s.ask('/-/api/hub/default-visibility', 'tok-alice', { visibility: 'secret' })).status, 400);
+    assert.equal((await s.ask('/-/api/hub/default-visibility', 'tok-alice', { on: true })).status, 400);
+    assert.equal((await s.ask('/-/api/hub/default-visibility', 'tok-bob', { visibility: 'private' })).status, 403);
+    assert.equal((await s.ask('/-/api/hub/default-visibility', null, { visibility: 'private' })).status, 401);
+    assert.equal((await s.ask('/-/api/hub/default-visibility', 'tok-alice')).status, 405);
+    assert.deepEqual(s.calls, ['default private as tok-alice', 'default public as tok-alice']);
+  } finally {
+    s.close();
+  }
+});
+
+test('the default visibility is read from hub_state; no row is public', async () => {
+  for (const [rows, want] of [[{ defaultVisibility: 'private' }, 'private'], [{}, 'public'], [{ defaultVisibility: 'odd' }, 'public']] as const) {
+    const sql = await fakeSql(rows, {}, []);
+    try {
+      assert.equal(await hubDefaultVisibility(sql.cfg), want);
+    } finally {
+      sql.close();
+    }
   }
 });
 

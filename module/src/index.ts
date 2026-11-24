@@ -41,8 +41,8 @@ import { schema, table, t, Router, SenderError, SyncResponse, type InferSchema, 
 import { Identity, Timestamp } from 'spacetimedb';
 import { Sha1, objectHeader } from './sha1';
 import {
-  CHUNK_SIZE, PRESENCE_STALE_SECONDS, checkAccessTable, commitParents, ensureHubRow, inSpace, isAdminIdentity, isMember as isHubMember, mayReadHub, memberKey, objectKey, ownsSpace,
-  projectFor, publicReaderFor, readObject, refKey, refreshAccess, refreshAllAccess, refreshIdentityAccess, refreshSpaceAccess, roleKey, spaceFor, type Db,
+  CHUNK_SIZE, PRESENCE_STALE_SECONDS, checkAccessTable, commitParents, defaultVisibility, ensureHubRow, inSpace, isAdminIdentity, isMember as isHubMember, mayReadHub, memberKey, objectKey, ownsSpace,
+  projectFor, publicReaderFor, readObject, refKey, refreshAccess, refreshAllAccess, refreshIdentityAccess, refreshSpaceAccess, roleKey, spaceFor, type Db, type Visibility,
 } from './store';
 import { renderUi } from './ui';
 import { ApiError, parseQuery, renderApi, templateFiles } from './workspace';
@@ -1265,6 +1265,16 @@ export const setMembersOnly = spacetimedb.reducer({ on: t.bool() }, (ctx, { on }
   setHubState(ctx, 'membersOnly', on ? 'true' : null);
 });
 
+// The owner chooses whether new projects start public or private when whoever
+// creates them does not choose. Public removes the setting, so the hub is
+// exactly as one that never had it. Projects already made keep theirs. Asking
+// for what is already set changes nothing.
+export const setDefaultVisibility = spacetimedb.reducer({ visibility: t.string() }, (ctx, { visibility }) => {
+  requireHubOwner(ctx);
+  if (visibility !== 'public' && visibility !== 'private') throw new SenderError('visibility is "public" or "private"');
+  setHubState(ctx, 'defaultVisibility', visibility === 'private' ? 'private' : null);
+});
+
 // Clerk user ids, as Clerk writes them (user_2abc...).
 const XO_SUBJECT = /^[A-Za-z0-9_]{1,64}$/;
 const MAX_XO_DOC = 256 * 1024;
@@ -1490,7 +1500,13 @@ function moveBuilder(ctx: Ctx, from: string, to: string) {
 
 // `system` names who creates it when the hub itself does (a repo room, opened
 // by the web service as the hub admin): no membership is needed then.
-function createProjectIn(ctx: Ctx, space: string, name: string, description: string, system?: string) {
+// `visibility` is the creator's choice; without one the project takes the
+// hub's default (hub_state "defaultVisibility", setDefaultVisibility). Every
+// way a project is made comes through here (create, template, chat, repo
+// room; a repo room is always public), so none skips the default, and the visibility row and its readers
+// are written in the same transaction as the project: a project meant to be
+// private is never readable by others, not even for a moment.
+function createProjectIn(ctx: Ctx, space: string, name: string, description: string, system?: string, visibility?: Visibility) {
   space = spaceFor(ctx.db, space);
   const me = system ?? (isSyncer(ctx, space) ? SYNCER : requireActor(ctx));
   if (!PROJECT_NAME.test(name) || name === '.' || name === '..' || name.endsWith('.git')) {
@@ -1514,14 +1530,35 @@ function createProjectIn(ctx: Ctx, space: string, name: string, description: str
     pushedAt: ctx.timestamp,
   });
   ctx.db.projectSize.insert({ projectId: created.id, bytes: 0n });
+  if ((visibility ?? defaultVisibility(ctx.db)) === 'private') {
+    ctx.db.projectVisibility.insert({ projectId: created.id, visibility: 'private', setBy: me, setAt: ctx.timestamp });
+  }
   refreshAccess(ctx.db, created.id);
   logActivity(ctx, { kind: 'project_created', projectId: created.id, path: fullName, agent: me });
   return created;
 }
 
+// A creator's explicit choice: "public" or "private", or "" for the hub's default.
+function chosenVisibility(visibility: string): Visibility | undefined {
+  const v = visibility.trim();
+  if (v === '') return undefined;
+  if (v !== 'public' && v !== 'private') throw new SenderError('visibility is "public" or "private"');
+  return v;
+}
+
 export const createProject = spacetimedb.reducer(
   { space: t.string(), name: t.string(), description: t.string() },
   (ctx, { space, name, description }) => { createProjectIn(ctx, space.trim().toLowerCase(), name, description); }
+);
+
+// createProject with the creator's choice of visibility ("" is the hub's
+// default). A new reducer, not a new argument to createProject: clients built
+// before it call createProject with three arguments and must keep working.
+export const createProjectWithVisibility = spacetimedb.reducer(
+  { space: t.string(), name: t.string(), description: t.string(), visibility: t.string() },
+  (ctx, { space, name, description, visibility }) => {
+    createProjectIn(ctx, space.trim().toLowerCase(), name, description, undefined, chosenVisibility(visibility));
+  }
 );
 
 // Start a project from a template (space.ts): the built-in goal space (""
@@ -1530,29 +1567,42 @@ export const createProject = spacetimedb.reducer(
 // filled in, all in one transaction.
 export const createProjectFromTemplate = spacetimedb.reducer(
   { space: t.string(), name: t.string(), description: t.string(), template: t.string(), goal: t.string() },
-  (ctx, { space, name, description, template, goal }) => {
-    const owner = spaceFor(ctx.db, space.trim().toLowerCase());
-    let files: ReturnType<typeof templateFiles>;
-    try {
-      files = templateFiles(ctx.db, template.trim());
-    } catch (err) {
-      throw new SenderError(err instanceof ApiError ? err.message : String(err));
-    }
-    const sp = createProjectIn(ctx, owner, name, description);
-    const me = requireActor(ctx);
-    const now = Number(ctx.timestamp.microsSinceUnixEpoch / 1_000_000n);
-    const date = new Date(now * 1000).toISOString().slice(0, 10);
-    const filled = instantiate(files, { space: owner, project: name, goal: goal.trim().replace(/\s+/g, ' ').slice(0, 500), owner: me, date });
-    const from = template.trim() && template.trim() !== BUILTIN_TEMPLATE ? template.trim() : 'the goal space template';
-    const built = commitFiles(filled, me, now, `Start ${sp.fullName} from ${from}`);
-    let added = 0n;
-    for (const object of built.objects) added += writeObject(ctx, sp, object);
-    ctx.db.gitRef.insert({ id: 0n, key: refKey(sp.id, 'refs/heads/main'), projectId: sp.id, name: 'refs/heads/main', oid: built.commit, updatedAt: ctx.timestamp, updatedBy: ctx.sender });
-    ctx.db.project.id.update({ ...sp, defaultBranch: 'main', pushedAt: ctx.timestamp });
-    grow(ctx, sp.id, added);
-    logActivity(ctx, { projectId: sp.id, path: sp.fullName, kind: 'ref_created', subject: 'refs/heads/main', oid: built.commit, text: `Start ${sp.fullName} from ${from}` });
-  }
+  (ctx, args) => { createFromTemplate(ctx, args); }
 );
+
+// createProjectFromTemplate with the creator's choice of visibility ("" is
+// the hub's default); a new reducer for the same reason as createProjectWithVisibility.
+export const createProjectFromTemplateWithVisibility = spacetimedb.reducer(
+  { space: t.string(), name: t.string(), description: t.string(), template: t.string(), goal: t.string(), visibility: t.string() },
+  (ctx, { visibility, ...args }) => { createFromTemplate(ctx, args, chosenVisibility(visibility)); }
+);
+
+function createFromTemplate(
+  ctx: Ctx,
+  { space, name, description, template, goal }: { space: string; name: string; description: string; template: string; goal: string },
+  visibility?: Visibility,
+) {
+  const owner = spaceFor(ctx.db, space.trim().toLowerCase());
+  let files: ReturnType<typeof templateFiles>;
+  try {
+    files = templateFiles(ctx.db, template.trim());
+  } catch (err) {
+    throw new SenderError(err instanceof ApiError ? err.message : String(err));
+  }
+  const sp = createProjectIn(ctx, owner, name, description, undefined, visibility);
+  const me = requireActor(ctx);
+  const now = Number(ctx.timestamp.microsSinceUnixEpoch / 1_000_000n);
+  const date = new Date(now * 1000).toISOString().slice(0, 10);
+  const filled = instantiate(files, { space: owner, project: name, goal: goal.trim().replace(/\s+/g, ' ').slice(0, 500), owner: me, date });
+  const from = template.trim() && template.trim() !== BUILTIN_TEMPLATE ? template.trim() : 'the goal space template';
+  const built = commitFiles(filled, me, now, `Start ${sp.fullName} from ${from}`);
+  let added = 0n;
+  for (const object of built.objects) added += writeObject(ctx, sp, object);
+  ctx.db.gitRef.insert({ id: 0n, key: refKey(sp.id, 'refs/heads/main'), projectId: sp.id, name: 'refs/heads/main', oid: built.commit, updatedAt: ctx.timestamp, updatedBy: ctx.sender });
+  ctx.db.project.id.update({ ...sp, defaultBranch: 'main', pushedAt: ctx.timestamp });
+  grow(ctx, sp.id, added);
+  logActivity(ctx, { projectId: sp.id, path: sp.fullName, kind: 'ref_created', subject: 'refs/heads/main', oid: built.commit, text: `Start ${sp.fullName} from ${from}` });
+}
 
 // Store one object the server built (chat turns, a template's files),
 // chunked when it is big; returns the bytes it added.
@@ -1902,7 +1952,9 @@ export const openRepoRoom = spacetimedb.reducer(
       if (!by || isSuspended(ctx, by.identity)) throw new SenderError('only builders of this hub open new rooms: sign in first');
     }
     const full =`${owner.trim()}/${repo.trim().replace(/\.git$/i, '')}`;
-    const sp = createProjectIn(ctx, space, name, (description.trim() || `The open room for github.com/${full}`).slice(0, 300), opener);
+    // Always public, whatever the hub's default: a room explains a public
+    // GitHub repository (members-only still hides it from strangers).
+    const sp = createProjectIn(ctx, space, name, (description.trim() || `The open room for github.com/${full}`).slice(0, 300), opener, 'public');
     const built = commitFiles(roomFiles(owner.trim(), repo.trim().replace(/\.git$/i, ''), space, description, opener), opener, nowSeconds(ctx), `Open the room for github.com/${full}`);
     let added = 0n;
     for (const object of built.objects) added += writeObject(ctx, sp, object);

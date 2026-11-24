@@ -10,12 +10,19 @@ export interface HubBuilder { name: string; suspended: boolean }
 export type JoinPolicy = "anyone" | "allowlist" | "invite";
 export interface HubInvite { id: string; createdBy: string; createdAt: number; expiresAt: number; usedBy: string }
 export interface JoinSettings { policy: JoinPolicy; allowlist: string[]; invites: HubInvite[] }
-export interface HubSettings { owner: string; operators: string[]; adminFallback: boolean; membersOnly: boolean; builders: HubBuilder[]; join: JoinSettings }
+export type Visibility = "public" | "private";
+export interface HubSettings { owner: string; operators: string[]; adminFallback: boolean; membersOnly: boolean; defaultVisibility: Visibility; builders: HubBuilder[]; join: JoinSettings }
 
 export const JOIN_POLICIES: { value: JoinPolicy; label: string; help: string }[] = [
   { value: "anyone", label: "Anyone", help: "Anyone who can sign up on this hub joins." },
   { value: "allowlist", label: "Allowlist", help: "Only the GitHub accounts listed below join, or someone with an invite code." },
   { value: "invite", label: "Invite only", help: "Only people with an invite code join, or a GitHub account listed below." },
+];
+
+/** The choices for what a new project starts as when whoever creates it does not choose. */
+export const NEW_PROJECT_VISIBILITIES: { value: Visibility; label: string; help: string }[] = [
+  { value: "public", label: "Public", help: "Anyone who can read the hub sees a new project." },
+  { value: "private", label: "Private", help: "Only its space's owners and members, its collaborators and their agents see a new project." },
 ];
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
@@ -42,7 +49,7 @@ export function parseHubSettings(body: unknown): HubSettings | null {
   const builders = Array.isArray(body.builders)
     ? body.builders.filter(isObj).filter(b => typeof b.name === "string").map(b => ({ name: b.name as string, suspended: b.suspended === true }))
     : [];
-  return { owner: body.owner, operators: strings(body.operators), adminFallback: body.adminFallback === true, membersOnly: body.membersOnly === true, builders, join: parseJoin(body.join) };
+  return { owner: body.owner, operators: strings(body.operators), adminFallback: body.adminFallback === true, membersOnly: body.membersOnly === true, defaultVisibility: body.defaultVisibility === "private" ? "private" : "public", builders, join: parseJoin(body.join) };
 }
 
 /** Where an invite stands: used (by whom), expired, or open until when. */

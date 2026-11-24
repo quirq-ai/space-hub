@@ -17,5 +17,8 @@ export const OLDEST_PROTOCOL = 2;
 // schema change decides on a bump: then set this to the hash the test prints.
 // No bump for project_visibility / project_access (private tables), the
 // setProjectVisibility and rebuildAccess reducers and the checkAccess
-// procedure: all additions, which break no client.
-export const BINDINGS_HASH = '0ed38fb361da2533';
+// procedure: all additions, which break no client. Nor for setDefaultVisibility,
+// createProjectWithVisibility and createProjectFromTemplateWithVisibility:
+// new reducers beside createProject / createProjectFromTemplate, whose
+// arguments stay as they were.
+export const BINDINGS_HASH = '1d24be3e12e37d39';
