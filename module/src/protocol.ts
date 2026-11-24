@@ -15,4 +15,7 @@ export const OLDEST_PROTOCOL = 2;
 // The generated client bindings this protocol was decided for. The CLI tests
 // fail when the bindings change (npm run generate) and this does not, so each
 // schema change decides on a bump: then set this to the hash the test prints.
-export const BINDINGS_HASH = '8213ecba7e14832f';
+// No bump for project_visibility / project_access (private tables), the
+// setProjectVisibility and rebuildAccess reducers and the checkAccess
+// procedure: all additions, which break no client.
+export const BINDINGS_HASH = '0ed38fb361da2533';

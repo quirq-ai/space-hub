@@ -64,6 +64,7 @@ import LinkSpaceReducer from "./link_space_reducer";
 import OpenRepoRoomReducer from "./open_repo_room_reducer";
 import PutChunkReducer from "./put_chunk_reducer";
 import PutObjectsReducer from "./put_objects_reducer";
+import RebuildAccessReducer from "./rebuild_access_reducer";
 import RecordRefSyncReducer from "./record_ref_sync_reducer";
 import RegisterUserReducer from "./register_user_reducer";
 import RegisterWithInviteReducer from "./register_with_invite_reducer";
@@ -81,6 +82,7 @@ import SetLinkStatusReducer from "./set_link_status_reducer";
 import SetMembersOnlyReducer from "./set_members_only_reducer";
 import SetOwnerLoginReducer from "./set_owner_login_reducer";
 import SetProjectBuilderReducer from "./set_project_builder_reducer";
+import SetProjectVisibilityReducer from "./set_project_visibility_reducer";
 import SetSpaceGithubReducer from "./set_space_github_reducer";
 import StartChatReducer from "./start_chat_reducer";
 import StartImportReducer from "./start_import_reducer";
@@ -99,6 +101,7 @@ import XoPutRecordReducer from "./xo_put_record_reducer";
 
 // Import all procedure arg schemas
 import * as AgentTokenProcedure from "./agent_token_procedure";
+import * as CheckAccessProcedure from "./check_access_procedure";
 import * as ClientProtocolProcedure from "./client_protocol_procedure";
 
 // Import all table schema definitions
@@ -293,6 +296,7 @@ const reducersSchema = __reducers(
   __reducerSchema("open_repo_room", OpenRepoRoomReducer),
   __reducerSchema("put_chunk", PutChunkReducer),
   __reducerSchema("put_objects", PutObjectsReducer),
+  __reducerSchema("rebuild_access", RebuildAccessReducer),
   __reducerSchema("record_ref_sync", RecordRefSyncReducer),
   __reducerSchema("register_user", RegisterUserReducer),
   __reducerSchema("register_with_invite", RegisterWithInviteReducer),
@@ -310,6 +314,7 @@ const reducersSchema = __reducers(
   __reducerSchema("set_members_only", SetMembersOnlyReducer),
   __reducerSchema("set_owner_login", SetOwnerLoginReducer),
   __reducerSchema("set_project_builder", SetProjectBuilderReducer),
+  __reducerSchema("set_project_visibility", SetProjectVisibilityReducer),
   __reducerSchema("set_space_github", SetSpaceGithubReducer),
   __reducerSchema("start_chat", StartChatReducer),
   __reducerSchema("start_import", StartImportReducer),
@@ -330,6 +335,7 @@ const reducersSchema = __reducers(
 /** The schema information for all procedures in this module. This is defined the same way as the procedures would have been defined in the server. */
 const proceduresSchema = __procedures(
   __procedureSchema("agent_token", AgentTokenProcedure.params, AgentTokenProcedure.returnType),
+  __procedureSchema("check_access", CheckAccessProcedure.params, CheckAccessProcedure.returnType),
   __procedureSchema("client_protocol", ClientProtocolProcedure.params, ClientProtocolProcedure.returnType),
 );
 

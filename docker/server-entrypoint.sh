@@ -188,6 +188,10 @@ if [ "${#OWNER}" -gt 39 ]; then
   exit 1
 fi
 spacetime --root-dir "$ROOT" call --server "http://$INTERNAL" "$DB" set_owner_login "\"$OWNER\"" >/dev/null
+# Who may read which project (project_access) is derived from the other
+# tables. Rebuilding it fills it on a hub from before it (one row a project)
+# and changes nothing after; it writes only that table.
+spacetime --root-dir "$ROOT" call --server "http://$INTERNAL" "$DB" rebuild_access >/dev/null
 
 # The web service first: the proxy asks it about every request (members-only,
 # cli/src/frontdoor.ts), so it should be answering before the port is handed over.

@@ -10,6 +10,17 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
+export const AccessCheck = __t.object("AccessCheck", {
+  projects: __t.u32(),
+  rows: __t.u32(),
+  missingCount: __t.u32(),
+  extraCount: __t.u32(),
+  missing: __t.array(__t.string()),
+  extra: __t.array(__t.string()),
+  repaired: __t.bool(),
+});
+export type AccessCheck = __Infer<typeof AccessCheck>;
+
 export const Activity = __t.object("Activity", {
   id: __t.u64(),
   at: __t.timestamp(),
@@ -171,6 +182,13 @@ export const Project = __t.object("Project", {
 });
 export type Project = __Infer<typeof Project>;
 
+export const ProjectAccess = __t.object("ProjectAccess", {
+  id: __t.u64(),
+  identity: __t.identity(),
+  projectId: __t.u64(),
+});
+export type ProjectAccess = __Infer<typeof ProjectAccess>;
+
 export const ProjectBuilder = __t.object("ProjectBuilder", {
   projectId: __t.u64(),
   handle: __t.string(),
@@ -204,6 +222,14 @@ export const ProjectSize = __t.object("ProjectSize", {
   bytes: __t.u64(),
 });
 export type ProjectSize = __Infer<typeof ProjectSize>;
+
+export const ProjectVisibility = __t.object("ProjectVisibility", {
+  projectId: __t.u64(),
+  visibility: __t.string(),
+  setBy: __t.string(),
+  setAt: __t.timestamp(),
+});
+export type ProjectVisibility = __Infer<typeof ProjectVisibility>;
 
 export const Question = __t.object("Question", {
   key: __t.string(),

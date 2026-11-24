@@ -20,6 +20,8 @@
 //   space_link      the GitHub user or organization a space mirrors
 //   ref_sync        where GitHub had each mirrored ref at the last sync
 //   question        a question asked in a repo room, and the agent that claimed it (explain.ts)
+//   project_visibility  which projects are private (no row: public)
+//   project_access  who may read which project (store.ts canRead, as rows)
 //
 // A database from before these names (when `space` held repositories) cannot
 // take this schema, since SpacetimeDB renames neither tables nor columns. The
@@ -38,7 +40,10 @@
 import { schema, table, t, Router, SenderError, SyncResponse, type InferSchema, type ReducerCtx } from 'spacetimedb/server';
 import { Identity, Timestamp } from 'spacetimedb';
 import { Sha1, objectHeader } from './sha1';
-import { CHUNK_SIZE, PRESENCE_STALE_SECONDS, commitParents, inSpace, isMember as isHubMember, mayReadHub, memberKey, objectKey, ownsSpace, projectFor, readObject, refKey, roleKey, spaceFor, type Db } from './store';
+import {
+  CHUNK_SIZE, PRESENCE_STALE_SECONDS, checkAccessTable, commitParents, inSpace, isMember as isHubMember, mayReadHub, memberKey, objectKey, ownsSpace,
+  projectFor, readObject, refKey, refreshAccess, refreshAllAccess, refreshIdentityAccess, refreshSpaceAccess, roleKey, spaceFor, type Db,
+} from './store';
 import { renderUi } from './ui';
 import { ApiError, parseQuery, renderApi, templateFiles } from './workspace';
 import { addFiles, appendTurns, type NewObject } from './chat';
@@ -99,7 +104,7 @@ const gitObject = table(
   {
     id: t.u64().primaryKey().autoInc(),
     key: t.string().unique(),
-    projectId: t.u64(),
+    projectId: t.u64().index('btree'), // single-column, for the views' semijoin from project_access
     pos: t.u64(),
     oid: t.string(),
     kind: t.string(),
@@ -117,7 +122,7 @@ const objectChunk = table(
   {
     id: t.u64().primaryKey().autoInc(),
     key: t.string().unique(),
-    projectId: t.u64(),
+    projectId: t.u64().index('btree'), // single-column, for the views' semijoin from project_access
     oid: t.string(),
     idx: t.u32(),
     data: t.byteArray(),
@@ -503,6 +508,36 @@ const question = table(
   }
 );
 
+// Which projects are private: "private", or "public" (no row is public, as
+// every project was before this table). A new table rather than a project
+// column, so no client has to change. Owners of the project's space set it
+// (setProjectVisibility).
+const projectVisibility = table(
+  { name: 'project_visibility' },
+  {
+    projectId: t.u64().primaryKey(),
+    visibility: t.string(), // private | public
+    setBy: t.string(),
+    setAt: t.timestamp(),
+  }
+);
+
+// Who may read which project, as rows: store.ts canRead, materialised so the
+// views can filter it by the caller and semijoin it to the content tables
+// (a semijoin compares single indexed columns only). One row for PUBLIC_READER
+// per public project, one per reader of a private one; store.ts explains the
+// choice. Derived data only: the reducers that change who may read keep it
+// current (refreshAccess), and rebuildAccess / checkAccess rebuild or check it
+// from scratch.
+const projectAccess = table(
+  { name: 'project_access' },
+  {
+    id: t.u64().primaryKey().autoInc(),
+    identity: t.identity().index('btree'),
+    projectId: t.u64().index('btree'),
+  }
+);
+
 const spacetimedb = schema({
   user,
   project,
@@ -534,6 +569,8 @@ const spacetimedb = schema({
   runner,
   worker,
   question,
+  projectVisibility,
+  projectAccess,
 });
 export default spacetimedb;
 
@@ -852,6 +889,8 @@ function addBuilder(ctx: Ctx, identity: Identity, username: string, join: JoinCr
   ctx.db.user.insert({ identity, username, createdAt: ctx.timestamp });
   ctx.db.space.insert({ name: username, kind: 'personal', displayName: username, description: '', parent: '', createdBy: username, createdAt: ctx.timestamp });
   logActivity(ctx, { kind: 'agent_registered', agent: username });
+  // A new builder reads no private project yet, unless rows already name it.
+  refreshIdentityAccess(ctx.db, identity);
 }
 
 // Where builders come from: "open" (anyone registers a name), "github" (sign
@@ -920,6 +959,8 @@ export const deleteBuilder = spacetimedb.reducer(ctx => {
   for (const r of [...ctx.db.runner.owner.filter(name)]) ctx.db.runner.id.delete(r.id);
   ctx.db.space.name.delete(name);
   ctx.db.user.identity.delete(ctx.sender);
+  // Its rows go, and an org it owned has one owner fewer for its agents.
+  refreshAllAccess(ctx.db);
 });
 
 // ---------------------------------------------------------------- admin and xo
@@ -971,7 +1012,7 @@ function setHubState(ctx: Ctx, key: string, value: string | null) {
 }
 
 // The builder that holds the owner's GitHub account, or null.
-function hubOwner(ctx: Ctx) {
+function hubOwner(ctx: { db: Db }) {
   const id = ctx.db.hubState.key.find('owner')?.value;
   if (!id || !/^[1-9][0-9]*$/.test(id)) return null;
   const account = ctx.db.githubAccount.githubId.find(BigInt(id));
@@ -1033,6 +1074,8 @@ export const suspendBuilder = spacetimedb.reducer({ username: t.string() }, (ctx
   const key = builder.identity.toHexString();
   if (ctx.db.builderSuspension.identity.find(key)) return;
   ctx.db.builderSuspension.insert({ identity: key, username, suspendedBy: by, suspendedAt: ctx.timestamp });
+  // It and the agents it alone owns read no private project any more.
+  refreshAllAccess(ctx.db);
 });
 
 // The owner lets a suspended builder back in. Restoring one who is not
@@ -1041,7 +1084,7 @@ export const restoreBuilder = spacetimedb.reducer({ username: t.string() }, (ctx
   requireHubOwner(ctx);
   const builder = ctx.db.user.username.find(username);
   if (!builder) throw new SenderError(`no builder named "${username}"`);
-  ctx.db.builderSuspension.identity.delete(builder.identity.toHexString());
+  if (ctx.db.builderSuspension.identity.delete(builder.identity.toHexString())) refreshAllAccess(ctx.db);
 });
 
 // ---------------------------------------------------------------- join gate
@@ -1308,6 +1351,7 @@ function renameBuilder(ctx: Ctx, from: string, to: string) {
   ctx.db.space.insert({ ...space, name: to, displayName: space.displayName === from ? to : space.displayName, createdBy: to });
   moveBuilder(ctx, from, to);
   ctx.db.space.name.delete(from);
+  refreshAllAccess(ctx.db);
 }
 
 // Builder `from` joins builder `into`: its projects, places in spaces and
@@ -1321,6 +1365,7 @@ function mergeBuilder(ctx: Ctx, from: string, into: string) {
   ctx.db.space.name.delete(from);
   ctx.db.builderSuspension.identity.delete(me.identity.toHexString());
   ctx.db.user.identity.delete(me.identity);
+  refreshAllAccess(ctx.db);
 }
 
 const ROLE_RANK: Record<string, number> = { member: 1, owner: 2 };
@@ -1405,6 +1450,7 @@ function createProjectIn(ctx: Ctx, space: string, name: string, description: str
     pushedAt: ctx.timestamp,
   });
   ctx.db.projectSize.insert({ projectId: created.id, bytes: 0n });
+  refreshAccess(ctx.db, created.id);
   logActivity(ctx, { kind: 'project_created', projectId: created.id, path: fullName, agent: me });
   return created;
 }
@@ -1462,15 +1508,17 @@ export const deleteProject = spacetimedb.reducer({ project: t.string() }, (ctx, 
   const sp = requireProjectAdmin(ctx, fullName);
   logActivity(ctx, { kind: 'project_deleted', projectId: sp.id, path: sp.fullName });
   for (const ref of [...ctx.db.gitRef.projectId.filter(sp.id)]) ctx.db.gitRef.id.delete(ref.id);
-  for (const obj of [...ctx.db.gitObject.byProjectPos.filter(sp.id)]) ctx.db.gitObject.id.delete(obj.id);
-  for (const chunk of [...ctx.db.objectChunk.byProjectOid.filter(sp.id)]) ctx.db.objectChunk.id.delete(chunk.id);
+  for (const obj of [...ctx.db.gitObject.projectId.filter(sp.id)]) ctx.db.gitObject.id.delete(obj.id);
+  for (const chunk of [...ctx.db.objectChunk.projectId.filter(sp.id)]) ctx.db.objectChunk.id.delete(chunk.id);
   for (const m of [...ctx.db.projectMember.projectId.filter(sp.id)]) ctx.db.projectMember.id.delete(m.id);
   for (const p of [...ctx.db.presence.projectId.filter(sp.id)]) ctx.db.presence.connectionId.delete(p.connectionId);
   for (const r of [...ctx.db.refSync.projectId.filter(sp.id)]) ctx.db.refSync.key.delete(r.key);
   ctx.db.projectSize.projectId.delete(sp.id);
   ctx.db.projectImport.projectId.delete(sp.id);
   ctx.db.projectBuilder.projectId.delete(sp.id);
+  ctx.db.projectVisibility.projectId.delete(sp.id);
   ctx.db.project.id.delete(sp.id);
+  refreshAccess(ctx.db, sp.id);
 });
 
 // Credit the GitHub account (user or organization) that built the project's
@@ -1921,6 +1969,10 @@ export const addSpaceMember = spacetimedb.reducer(
     const me = requireActor(ctx);
     if (current) ctx.db.spaceRole.id.update({ ...current, role });
     else ctx.db.spaceRole.insert({ id: 0n, key, space, member, role, addedBy: me, addedAt: ctx.timestamp });
+    // A change of owners changes who owns the space's agents, and they read
+    // anywhere their owners do; a member reads only the space's projects.
+    if (role === 'owner' || current?.role === 'owner') refreshAllAccess(ctx.db);
+    else refreshSpaceAccess(ctx.db, space);
     logActivity(ctx, { kind: 'space_member_added', path: space, subject: member, text: role });
   }
 );
@@ -1939,6 +1991,8 @@ export const removeSpaceMember = spacetimedb.reducer({ space: t.string(), member
     throw new SenderError(`${member} is the last owner of "${space}"; add another owner first`);
   }
   ctx.db.spaceRole.id.delete(row.id);
+  if (row.role === 'owner') refreshAllAccess(ctx.db);
+  else refreshSpaceAccess(ctx.db, space);
   logActivity(ctx, { kind: 'space_member_removed', path: space, subject: member });
 });
 
@@ -1964,6 +2018,8 @@ export const createAgent = spacetimedb.reducer(
     ctx.db.space.insert({ name, kind: 'agent', displayName: raw.trim(), description: description.slice(0, 500), parent, createdBy: me, createdAt: ctx.timestamp });
     ctx.db.agent.insert({ name, identity, createdBy: me, createdAt: ctx.timestamp });
     ctx.db.agentSecret.insert({ name, token });
+    // It reads the private projects its owners read.
+    refreshIdentityAccess(ctx.db, identity);
     logActivity(ctx, { kind: 'agent_created', path: name, subject: parent });
   }
 );
@@ -1980,13 +2036,18 @@ export const deleteAgent = spacetimedb.reducer({ name: t.string() }, (ctx, { nam
   if (!isOwner(ctx, name, actorName(ctx))) throw new SenderError(`permission denied: only the owners of "${name}" delete it`);
   const projects = [...ctx.db.project.owner.filter(name)].length;
   if (projects) throw new SenderError(`"${name}" still has ${projects} projects; delete them first`);
-  for (const r of [...ctx.db.spaceRole.member.filter(name)]) ctx.db.spaceRole.id.delete(r.id);
+  const roles = [...ctx.db.spaceRole.member.filter(name)];
+  for (const r of roles) ctx.db.spaceRole.id.delete(r.id);
   for (const r of [...ctx.db.spaceRole.space.filter(name)]) ctx.db.spaceRole.id.delete(r.id);
   for (const m of [...ctx.db.projectMember.agent.filter(name)]) ctx.db.projectMember.id.delete(m.id);
   for (const p of [...ctx.db.presence.iter()]) if (p.agent === name) ctx.db.presence.connectionId.delete(p.connectionId);
+  const identity = ctx.db.agent.name.find(name)?.identity;
   ctx.db.agentSecret.name.delete(name);
   ctx.db.agent.name.delete(name);
   ctx.db.space.name.delete(name);
+  // Its rows go; an org it owned has one owner fewer for that org's agents.
+  if (roles.some(r => r.role === 'owner')) refreshAllAccess(ctx.db);
+  else if (identity) refreshIdentityAccess(ctx.db, identity);
   logActivity(ctx, { kind: 'agent_deleted', path: name });
 });
 
@@ -2002,6 +2063,7 @@ export const connectAgent = spacetimedb.reducer({ agent: t.string(), space: t.st
   const key = roleKey(space, name);
   if (ctx.db.spaceRole.key.find(key)) return;
   ctx.db.spaceRole.insert({ id: 0n, key, space, member: name, role: 'member', addedBy: me, addedAt: ctx.timestamp });
+  refreshSpaceAccess(ctx.db, space);
   logActivity(ctx, { kind: 'agent_connected', path: space, subject: name });
 });
 
@@ -2014,6 +2076,8 @@ export const disconnectAgent = spacetimedb.reducer({ agent: t.string(), space: t
   const row = ctx.db.spaceRole.key.find(roleKey(space, name));
   if (!row) throw new SenderError(`${name} is not connected to "${space}"`);
   ctx.db.spaceRole.id.delete(row.id);
+  if (row.role === 'owner') refreshAllAccess(ctx.db);
+  else refreshSpaceAccess(ctx.db, space);
   logActivity(ctx, { kind: 'agent_disconnected', path: space, subject: name });
 });
 
@@ -2170,6 +2234,7 @@ export const addProjectMember = spacetimedb.reducer({ project: t.string(), agent
   const key = memberKey(sp.id, name);
   if (ctx.db.projectMember.key.find(key)) return;
   ctx.db.projectMember.insert({ id: 0n, key, projectId: sp.id, agent: name, addedBy: requireActor(ctx), addedAt: ctx.timestamp });
+  refreshAccess(ctx.db, sp.id);
   logActivity(ctx, { kind: 'project_member_added', projectId: sp.id, path: sp.fullName, subject: name });
 });
 
@@ -2185,8 +2250,77 @@ export const removeProjectMember = spacetimedb.reducer({ project: t.string(), ag
   const row = ctx.db.projectMember.key.find(memberKey(sp.id, name));
   if (!row) throw new SenderError(`${name} is not a collaborator on "${sp.fullName}"`);
   ctx.db.projectMember.id.delete(row.id);
+  refreshAccess(ctx.db, sp.id);
   logActivity(ctx, { kind: 'project_member_removed', projectId: sp.id, path: sp.fullName, subject: name });
 });
+
+// ---------------------------------------------------------------- visibility
+
+// Owners of a project's space make it private (readable only by the space's
+// owners and members, its collaborators and their agents) or public again.
+// Public removes the row, so the project is as one that never had it. Asking
+// for what is already set changes nothing.
+export const setProjectVisibility = spacetimedb.reducer({ project: t.string(), visibility: t.string() }, (ctx, { project: fullName, visibility }) => {
+  fullName = projectFor(ctx.db, fullName);
+  const sp = requireProject(ctx, fullName);
+  const me = actorName(ctx);
+  if (!isOwner(ctx, sp.owner, me)) throw new SenderError(`permission denied: only owners of "${sp.owner}" change who can see "${sp.fullName}"`);
+  if (visibility !== 'public' && visibility !== 'private') throw new SenderError('visibility is "public" or "private"');
+  const current = ctx.db.projectVisibility.projectId.find(sp.id)?.visibility ?? 'public';
+  if (current === visibility) return;
+  if (visibility === 'public') ctx.db.projectVisibility.projectId.delete(sp.id);
+  else ctx.db.projectVisibility.insert({ projectId: sp.id, visibility, setBy: me!, setAt: ctx.timestamp });
+  refreshAccess(ctx.db, sp.id);
+  logActivity(ctx, { kind: 'visibility_changed', projectId: sp.id, path: sp.fullName, subject: visibility, text: `made it ${visibility}` });
+});
+
+// The hub's owner, or the admin: who may check and rebuild project_access.
+function mayCheckAccess(db: Db, sender: Identity) {
+  if (db.hubState.key.find('admin')?.value === sender.toHexString()) return true;
+  const owner = hubOwner({ db });
+  return !!owner && owner.identity.isEqual(sender) && !db.builderSuspension.identity.find(sender.toHexString());
+}
+
+// Rebuild project_access from the rule (store.ts canRead): rows that should
+// not be there go, missing ones are added. The entrypoint calls it on every
+// start, which fills the table on a hub from before it (one row per project,
+// all public) and is a no-op after; only project_access is ever written.
+export const rebuildAccess = spacetimedb.reducer(ctx => {
+  if (!mayCheckAccess(ctx.db, ctx.sender)) throw new SenderError("permission denied: only the hub's owner or admin can do this");
+  refreshAllAccess(ctx.db);
+});
+
+// Compare project_access with a rebuild from scratch, and say how they
+// differ: "<projectId> <identity hex>" rows missing from the table, and rows
+// in it that should not be. Writes nothing unless `repair`, which then makes
+// the table equal to the rebuild. For checks (tests, rehearsals) and repair.
+const AccessCheck = t.object('AccessCheck', {
+  projects: t.u32(),
+  rows: t.u32(),
+  missingCount: t.u32(),
+  extraCount: t.u32(),
+  missing: t.array(t.string()), // the first 200
+  extra: t.array(t.string()), // the first 200
+  repaired: t.bool(),
+});
+
+export const checkAccess = spacetimedb.procedure({ repair: t.bool() }, AccessCheck, (ctx, { repair }) =>
+  ctx.withTx(tx => {
+    const db = tx.db as Db;
+    if (!mayCheckAccess(db, ctx.sender)) throw new SenderError("permission denied: only the hub's owner or admin can do this");
+    const report = checkAccessTable(db, repair);
+    const differs = report.missing.length + report.extra.length > 0;
+    return {
+      projects: report.projects,
+      rows: report.rows,
+      missingCount: report.missing.length,
+      extraCount: report.extra.length,
+      missing: report.missing.slice(0, 200),
+      extra: report.extra.slice(0, 200),
+      repaired: repair && differs,
+    };
+  })
+);
 
 // ---------------------------------------------------------------- presence
 

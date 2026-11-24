@@ -239,6 +239,11 @@ else
     || { cat "$WORK/call.log" >&2; echo "rehearse: FAILED: claim_admin failed; the hub would not start" >&2; exit 2; }
   spacetime --root-dir "$COPY" call --server "http://127.0.0.1:$PORT" "$DB" set_accounts "\"$ACCOUNTS\"" >"$WORK/call.log" 2>&1 \
     || { cat "$WORK/call.log" >&2; echo "rehearse: FAILED: set_accounts failed; the hub would not start" >&2; exit 2; }
+  # As the image's start does since project_access (a module from before it has no such reducer).
+  if ! spacetime --root-dir "$COPY" call --server "http://127.0.0.1:$PORT" "$DB" rebuild_access >"$WORK/call.log" 2>&1; then
+    if grep -qi 'no such reducer\|not found' "$WORK/call.log"; then say "this module has no rebuild_access (older than project_access)"
+    else cat "$WORK/call.log" >&2; echo "rehearse: FAILED: rebuild_access failed; the hub would not start" >&2; exit 2; fi
+  fi
 fi
 record "$WORK/after.txt"
 close_copy

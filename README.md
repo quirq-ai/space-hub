@@ -466,7 +466,8 @@ hub's data. `scripts/rehearse.sh` (Linux or WSL, with Docker) copies a backup
 of the hub's `/data` (it never writes to the backup), opens the copy as it
 is and records every table's row count and a checksum of its rows, and, per
 project, its refs, git objects and chunks. It then starts the new image on
-the copy (its own start: publish, `claim_admin`, `set_accounts`), records
+the copy (its own start: publish, `claim_admin`, `set_accounts`, ...,
+`rebuild_access`), records
 again and compares. Tables the image adds are listed and allowed; anything
 else that changed is printed and the script exits 1 (2 if it could not run,
 or if the image would not start on the data).
