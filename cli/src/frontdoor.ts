@@ -146,18 +146,27 @@ export class FrontDoor {
 
   /** Whether this request's viewer is a member: a builder, not suspended. Reused per session token for the interval. */
   async isMember(req: http.IncomingMessage): Promise<boolean> {
+    return (await this.builder(req)) !== null;
+  }
+
+  /**
+   * The verified builder of this request (viewer.ts), or null: signed out, a
+   * token with no builder, or a suspended one. Reused per session token for
+   * the interval, like isMember (module pages ask on every request, modulepage.ts).
+   */
+  async builder(req: http.IncomingMessage): Promise<string | null> {
     const token = cookieValue(req, 'spacehub_session');
-    if (!token) return false;
+    if (!token) return null;
     const now = this.now();
     const known = this.members.get(token);
-    if (known && now < known.until) return known.member;
+    if (known && now < known.until) return known.member ? known.name : null;
     const epoch = this.epoch;
     const viewer = await this.deps.viewer(req);
-    const member = !!viewer && viewer.name !== null;
-    if (epoch !== this.epoch) return member;
+    const name = viewer?.name ?? null;
+    if (epoch !== this.epoch) return name;
     if (this.members.size >= MAX_REMEMBERED) this.members.clear();
-    this.members.set(token, { member, name: viewer?.name ?? null, until: now + this.ttl });
-    return member;
+    this.members.set(token, { member: name !== null, name, until: now + this.ttl });
+    return name;
   }
 
   /**

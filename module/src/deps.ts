@@ -102,7 +102,7 @@ export interface Dep {
 const iso = (seconds: number) => new Date(seconds * 1000).toISOString();
 
 export function depsView(db: Db, project: Project, now: number) {
-  const r = new Renderer(db, { uri: 'http://localhost/', forwardedUri: null, cookie: null, proto: null, now }, new Map());
+  const r = new Renderer(db, { uri: 'http://localhost/', forwardedUri: null, viewer: null, proto: null, now }, new Map());
   const headOid = db.gitRef.key.find(refKey(project.id, `refs/heads/${project.defaultBranch}`))?.oid ?? '';
   const head = headOid ? r.commit(project, headOid) : null;
   const text = head ? depsText(db, project, r.tree(project, head.tree)) : null;

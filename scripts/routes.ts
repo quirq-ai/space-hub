@@ -28,7 +28,7 @@ export interface Probe {
   stream?: boolean;
 }
 
-// The project the leak test makes, and one of its commits (filled in by the test).
+// The project the leak test makes (private in the private run), and one of its commits (filled in by the test).
 const P = '/alice/leakproj';
 
 /** Inventory key → the requests that cover it. */
@@ -91,7 +91,16 @@ export const LIST: Record<string, Probe[]> = {
   "web '/-/live'": [{ path: `/-/live?path=${encodeURIComponent(P)}`, stream: true, shows: true }],
   "web '/-/live.js'": [{ path: '/-/live.js' }],
   "web regex ^\\/-\\/avatar\\/([^/]+)$": [{ path: '/-/avatar/alice' }],
-  "web '/-/api/view'": [{ path: '/-/api/view', api: true, shows: true }, { path: '/-/api/view?space=alice&project=leakproj', api: true, shows: true }],
+  "web '/-/api/view'": [
+    { path: '/-/api/view', api: true, shows: true },
+    { path: '/-/api/view?space=alice', api: true, shows: true },
+    { path: '/-/api/view?space=alice&project=leakproj', api: true, shows: true },
+    { path: '/-/api/view?space=alice&project=leakproj&view=tree&ref=main', api: true },
+    { path: '/-/api/view?space=alice&project=leakproj&activity=1', api: true },
+    { path: '/-/api/view?activity=1', api: true, shows: true },
+  ],
+  // The module's pages through the web service (modulepage.ts); asked directly, the proxy drops X-Spacehub-Uri and it is the home page.
+  "web '/-/ui'": [{ path: '/-/ui' }],
   "web '/-/api/me'": [{ path: '/-/api/me', api: true }],
   "web '/-/api/chat'": [{ path: '/-/api/chat', method: 'POST', json: {}, api: true }],
   "web '/-/api/space-picture'": [{ path: '/-/api/space-picture', method: 'POST', json: {}, api: true }],

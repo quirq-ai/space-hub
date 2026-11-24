@@ -46,6 +46,7 @@ import {
 } from './store';
 import { renderUi } from './ui';
 import { ApiError, parseQuery, renderApi, templateFiles } from './workspace';
+import { SECRET_HEADER, VIEWER_HEADER, WEB_SECRET, WEB_SECRET_KEY, webViewer } from './reader';
 import { addFiles, appendTurns, type NewObject } from './chat';
 import { commitFiles, instantiate } from './space';
 import { BUILTIN_TEMPLATE } from './spacetemplate';
@@ -1046,6 +1047,16 @@ function requireAdmin(ctx: Ctx) {
     throw new SenderError('permission denied: only the hub admin can do this');
   }
 }
+
+// The secret the web service sends with every page it asks for on a viewer's
+// behalf (reader.ts). The web service makes a new one each time the container
+// starts and sets it here as the admin; it never leaves the container, and
+// hub_state is private. The same secret again changes nothing.
+export const setWebSecret = spacetimedb.reducer({ secret: t.string() }, (ctx, { secret }) => {
+  requireAdmin(ctx);
+  if (!WEB_SECRET.test(secret)) throw new SenderError('the web secret is 32 to 256 letters, digits, "-" or "_"');
+  setHubState(ctx, WEB_SECRET_KEY, secret);
+});
 
 // "open": anyone can register a name; "github": builders sign up with a
 // GitHub account and get its login as their name; "xo": only xo makes them.
@@ -2536,14 +2547,16 @@ export const updateImport = spacetimedb.reducer(
   }
 );
 
-// The web UI. Behind the server image's proxy every page lands here with
-// the original request URI in X-Spacehub-Uri; see ui.ts for the pages.
+// The web UI. Every page comes through the web service (cli/src/modulepage.ts)
+// with the original request URI in X-Spacehub-Uri and the verified viewer in
+// X-Spacehub-Viewer, vouched for by X-Spacehub-Secret (reader.ts); without
+// the secret the page is for someone signed out. See ui.ts for the pages.
 export const ui = spacetimedb.httpHandler((ctx, req) => {
   const res = ctx.withTx(tx =>
     renderUi(tx.db, {
       uri: req.uri,
       forwardedUri: req.headers.get('x-spacehub-uri'),
-      cookie: req.headers.get('cookie'),
+      viewer: webViewer(tx.db, req.headers.get(SECRET_HEADER), req.headers.get(VIEWER_HEADER)),
       proto: req.headers.get('x-forwarded-proto'),
       range: req.headers.get('range'),
       now: Number(ctx.timestamp.microsSinceUnixEpoch / 1_000_000n),
@@ -2552,15 +2565,19 @@ export const ui = spacetimedb.httpHandler((ctx, req) => {
   return new SyncResponse(res.body, { status: res.status, headers: res.headers });
 });
 
-// The app's data: the hub, a space or a project's files as JSON (workspace.ts).
-// The display cookie names the viewer only to say whether saving is possible;
-// the reducers check every write.
+// The app's data: the hub, a space or a project's files as JSON (workspace.ts),
+// for the viewer the web service vouches for, as for ui above. The viewer
+// decides what may be read and shows what is possible; the reducers check
+// every write.
 export const api = spacetimedb.httpHandler((ctx, req) => {
   const q = req.uri.indexOf('?');
   const query = parseQuery(q >= 0 ? req.uri.slice(q + 1) : '');
-  const viewer = /(?:^|;\s*)spacehub_user=([^;]*)/.exec(req.headers.get('cookie') ?? '')?.[1];
   const res = ctx.withTx(tx =>
-    renderApi(tx.db, { query, viewer: viewer ? decodeURIComponent(viewer) : null, now: Number(ctx.timestamp.microsSinceUnixEpoch / 1_000_000n) })
+    renderApi(tx.db, {
+      query,
+      viewer: webViewer(tx.db, req.headers.get(SECRET_HEADER), req.headers.get(VIEWER_HEADER)),
+      now: Number(ctx.timestamp.microsSinceUnixEpoch / 1_000_000n),
+    })
   );
   return new SyncResponse(res.body, { status: res.status, headers: res.headers });
 });

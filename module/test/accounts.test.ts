@@ -27,7 +27,7 @@ function hub() {
 }
 
 const link = (over: object = {}) => ({ subject: SUBJECT, githubId: GH, login: 'SharmaSuraj0123', xoName: 'Suraj', alias: 'suraj', identity: '', token: '', ...over });
-const page = (db: any, path: string) => renderUi(db, { uri: '/', forwardedUri: path, cookie: null, proto: 'https', now: 1_800_000_000 });
+const page = (db: any, path: string) => renderUi(db, { uri: '/', forwardedUri: path, viewer: null, proto: 'https', now: 1_800_000_000 });
 const view = (db: any, space: string, project = '') =>
   JSON.parse(renderApi(db, { query: new Map([['space', space], ['project', project]]), viewer: null, now: 1_800_000_000 }).body);
 

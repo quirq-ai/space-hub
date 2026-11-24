@@ -199,7 +199,7 @@ describe('workspace API', () => {
 
 describe('raw files', () => {
   const raw = (db: Db, path: string, range?: string) =>
-    renderUi(db, { uri: '/', forwardedUri: `/quirq/quirq/raw/main/${path}`, cookie: null, proto: 'https', range, now: 1_800_000_100 });
+    renderUi(db, { uri: '/', forwardedUri: `/quirq/quirq/raw/main/${path}`, viewer: null, proto: 'https', range, now: 1_800_000_100 });
 
   it('read the bytes a Range header asks for, at most MAX_RANGE of them', () => {
     expect(byteRange(null, 100)).toBeNull();

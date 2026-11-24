@@ -195,8 +195,16 @@ spacetime --root-dir "$ROOT" call --server "http://$INTERNAL" "$DB" rebuild_acce
 
 # The web service first: the proxy asks it about every request (members-only,
 # cli/src/frontdoor.ts), so it should be answering before the port is handed over.
-SPACEHUB_SERVER="ws://$INTERNAL" SPACEHUB_INTERNAL_HTTP="http://$INTERNAL" SPACEHUB_DB="$DB" node /opt/spacehub/cli/dist/web.mjs &
+# A new secret every start, for the web service alone: it sets it in the
+# module as the admin (set_web_secret, a private hub_state row) and sends it
+# with each module page it asks for on a signed-in viewer's behalf, which is
+# how the module knows the viewer is real (cli/src/modulepage.ts). It is in no
+# other process's environment and never leaves the container; Caddy drops it
+# from client requests.
+SPACEHUB_WEB_SECRET="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))')"
+SPACEHUB_WEB_SECRET="$SPACEHUB_WEB_SECRET" SPACEHUB_SERVER="ws://$INTERNAL" SPACEHUB_INTERNAL_HTTP="http://$INTERNAL" SPACEHUB_DB="$DB" node /opt/spacehub/cli/dist/web.mjs &
 web=$!
+unset SPACEHUB_WEB_SECRET
 for _ in $(seq 1 50); do
   curl -s -o /dev/null "http://127.0.0.1:${SPACEHUB_WEB_PORT:-3002}/-/auth/check" && break
   sleep 0.2

@@ -8,10 +8,14 @@
 // imports, builder credits). When rows behind a
 // page change, it renders that page again on the server, through the
 // module's own UI route, and streams the result; live.js swaps it in. The
-// browser only ever talks to this service, never to SpacetimeDB.
+// browser only ever talks to this service, never to SpacetimeDB. Each page is
+// rendered as the verified builder who opened it (modulepage.ts), so it only
+// ever shows that builder what it may read; viewers share a render only when
+// they are the same builder (or both signed out).
 import http from 'node:http';
 import { connectTo, errorMessage, tables, type Conn } from './conn';
 import { closeBuilder, LIVE_JS, liveTopic, pageParts } from './livepage';
+import { asViewer, moduleUrl, type ModuleLink } from './modulepage';
 
 const MAX_CLIENTS = 500;
 const DEBOUNCE_MS = 250;
@@ -36,6 +40,10 @@ export interface LiveConfig {
   server: string; // websocket address of SpacetimeDB
   db: string;
   http: string; // its HTTP address, where the module's UI route answers
+  /** The module, asked for pages as a viewer (modulepage.ts); without it every page is rendered signed out. */
+  module?: ModuleLink;
+  /** Who follows the tables: the hub admin's token (sees every project), or none (anonymous). */
+  token?: string;
 }
 
 export class LiveHub {
@@ -61,7 +69,7 @@ export class LiveHub {
   }
 
   private async connect() {
-    const { conn } = await connectTo(this.config.server, this.config.db, undefined, { reconnect: true });
+    const { conn } = await connectTo(this.config.server, this.config.db, this.config.token, { reconnect: true });
     this.conn = conn;
     const db = conn.db;
     const live = (ctx: { event: { tag: string } }) => ctx.event.tag !== 'SubscribeApplied' && ctx.event.tag !== 'UnsubscribeApplied';
@@ -225,7 +233,7 @@ export class LiveHub {
 
   // The page as the browser would get it through the server's proxy.
   private fetchPage(path: string, headers: Record<string, string>): Promise<string | null> {
-    const url = new URL(`${this.config.http}/v1/database/${encodeURIComponent(this.config.db)}/route/ui`);
+    const url = new URL(moduleUrl(this.config.module ?? { http: this.config.http, db: this.config.db, secret: null }, 'ui'));
     return new Promise((resolve, reject) => {
       const req = http.request(
         url,
@@ -293,12 +301,10 @@ export class LiveHub {
       res.end('too many live pages open\n');
       return true;
     }
-    // Pages depend only on the display name cookie, the host and the scheme.
-    const user = /(?:^|;\s*)spacehub_user=([^;]*)/.exec(req.headers.cookie ?? '')?.[1];
-    const headers: Record<string, string> = { host: req.headers.host ?? 'localhost' };
+    // Pages depend only on the verified builder, the host and the scheme.
+    const headers: Record<string, string> = { host: req.headers.host ?? 'localhost', ...(this.config.module ? asViewer(this.config.module, builder) : {}) };
     const proto = req.headers['x-forwarded-proto'];
     if (typeof proto === 'string') headers['x-forwarded-proto'] = proto;
-    if (user) headers.cookie = `spacehub_user=${user}`;
     // Gone while its builder was looked up: its 'close' has already fired.
     if (res.destroyed || req.socket?.destroyed) return true;
     res.writeHead(200, {

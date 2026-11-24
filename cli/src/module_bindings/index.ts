@@ -87,6 +87,7 @@ import SetOwnerLoginReducer from "./set_owner_login_reducer";
 import SetProjectBuilderReducer from "./set_project_builder_reducer";
 import SetProjectVisibilityReducer from "./set_project_visibility_reducer";
 import SetSpaceGithubReducer from "./set_space_github_reducer";
+import SetWebSecretReducer from "./set_web_secret_reducer";
 import StartChatReducer from "./start_chat_reducer";
 import StartImportReducer from "./start_import_reducer";
 import SuspendBuilderReducer from "./suspend_builder_reducer";
@@ -322,6 +323,7 @@ const reducersSchema = __reducers(
   __reducerSchema("set_project_builder", SetProjectBuilderReducer),
   __reducerSchema("set_project_visibility", SetProjectVisibilityReducer),
   __reducerSchema("set_space_github", SetSpaceGithubReducer),
+  __reducerSchema("set_web_secret", SetWebSecretReducer),
   __reducerSchema("start_chat", StartChatReducer),
   __reducerSchema("start_import", StartImportReducer),
   __reducerSchema("suspend_builder", SuspendBuilderReducer),

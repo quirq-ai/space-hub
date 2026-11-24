@@ -194,6 +194,15 @@ export function canRead(db: Db, identity: Identity, projectId: bigint): boolean 
   return !!name && readsPrivate(db, p, name);
 }
 
+// canRead for a person the web service vouches for (reader.ts): a builder by
+// name, or null for someone signed out. Someone signed out reads what a fresh
+// identity would: public projects, on a hub that is not members-only.
+export function canReadAs(db: Db, name: string | null, projectId: bigint): boolean {
+  const user = name ? db.user.username.find(name) : null;
+  if (user) return canRead(db, user.identity, projectId);
+  return !!db.project.id.find(projectId) && !membersOnly(db) && !isPrivate(db, projectId);
+}
+
 // ---------------------------------------------------------------- project_access, kept equal to canRead
 //
 // project_access holds one row per (identity, project) that canRead allows,

@@ -74,6 +74,8 @@ export interface WorkersDeps {
   sameOrigin: (req: http.IncomingMessage) => boolean;
   /** CONNECT_CALLBACK's full URL, as the browser reached this hub. */
   callbackUrl: (req: http.IncomingMessage) => string;
+  /** Whether the builder may read the project "<space>/<project>" (the module's canRead, modulepage.ts). */
+  canRead: (session: Session, project: string) => Promise<boolean>;
 }
 // allowLocal: runners at http://127.0.0.1 or localhost may be connected (local development only).
 // launchpad: "Connect Agents Hub" is on (agentshub.ts), so Settings shows its button; launchpadCreatePage: Launchpad's
@@ -362,7 +364,12 @@ export async function handleWorkers(cfg: WorkersConfig, deps: WorkersDeps, req: 
       if (req.method === 'GET') {
         if (url.searchParams.get('mine') === '1') {
           if (!session) throw new Reply(401, 'Sign in to see your workers.');
-          return json(res, 200, { workers: await store.listWorkers({ launcher: session.username }) }), true;
+          // Not the workers of a project the launcher may no longer read: they name it.
+          const all = await store.listWorkers({ launcher: session.username });
+          const readable = new Map<string, Promise<boolean>>();
+          const reads = (where: string) => readable.get(where) ?? readable.set(where, deps.canRead(session, where)).get(where)!;
+          const shown = await Promise.all(all.map(async w => ((await reads(`${w.space}/${w.project}`)) ? w : null)));
+          return json(res, 200, { workers: shown.filter(w => w !== null) }), true;
         }
         const space = (url.searchParams.get('space') ?? '').toLowerCase();
         const project = url.searchParams.get('project') ?? '';
@@ -413,7 +420,8 @@ export async function handleWorkers(cfg: WorkersConfig, deps: WorkersDeps, req: 
     if (!TASK_ID.test(id) || extra !== undefined) throw new Reply(404, 'No such worker.');
     if (!session) throw new Reply(401, 'Sign in to follow workers.');
     const w = await store.getWorker(id);
-    if (!w) throw new Reply(404, 'Unknown worker.');
+    // A worker of a project this builder may not read is unknown, like one that never was.
+    if (!w || !(await deps.canRead(session, `${w.space}/${w.project}`))) throw new Reply(404, 'Unknown worker.');
     const steering = !reading;
     if (!inSpace(await placesOf(steering), w.space)) throw new Reply(403, `Only members of ${w.space} can follow its workers.`);
     const r = await store.getRunner(w.runnerId);

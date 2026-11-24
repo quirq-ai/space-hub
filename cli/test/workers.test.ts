@@ -104,6 +104,8 @@ const people: Record<string, { spaces: string[]; projects: string[] }> = {
   outsider: { spaces: ['outsider'], projects: [] },
 };
 const chats: { who: string; project: string; content: string }[] = [];
+// Who may not read a project (the module's canRead says no): "<project>" -> builders.
+const unreadable = new Map<string, Set<string>>();
 const deps: WorkersDeps = {
   sessionOf: async req => {
     const who = /(?:^|;\s*)spacehub_session=([a-z]+)/.exec(req.headers.cookie ?? '')?.[1];
@@ -113,6 +115,7 @@ const deps: WorkersDeps = {
   appendChat: async (session, input) => { chats.push({ who: session.username, project: input.project, content: input.turns[0].content }); },
   sameOrigin: req => req.headers.origin === 'https://hub.test',
   callbackUrl: () => 'https://hub.test/-/runners/connect/callback',
+  canRead: async (session, project) => !unreadable.get(project)?.has(session.username),
 };
 const KEY = sealKey({ SPACEHUB_SECRET_KEY: randomBytes(48).toString('base64') });
 const store = memoryStore();
@@ -218,6 +221,25 @@ test("every member reads a worker with the launcher's token; outsiders cannot", 
   assert.equal((await as(null, 'GET', `/-/api/workers/${taskA}`)).status, 401);
   assert.equal((await as('arjun', 'GET', `/-/api/workers/${taskA}/events?after=0`)).json.events.length, 1);
   assert.equal((await as('arjun', 'GET', '/-/api/workers/unknown-task')).status, 404);
+});
+
+test('a worker of a project the viewer may not read is unknown, exactly like one that never was', async () => {
+  unreadable.set('acme/site', new Set(['arjun', 'priya']));
+  try {
+    const missing = await as('arjun', 'GET', '/-/api/workers/unknown-task');
+    for (const path of [`/-/api/workers/${taskA}`, `/-/api/workers/${taskA}/events?after=0`]) {
+      const hidden = await as('arjun', 'GET', path);
+      assert.deepEqual([hidden.status, hidden.text], [missing.status, missing.text], path);
+    }
+    const steer = await as('priya', 'POST', `/-/api/workers/${taskA}/stop`);
+    assert.equal(steer.status, 404, 'not even its launcher steers it');
+    const mine = await as('priya', 'GET', '/-/api/workers?mine=1');
+    assert.equal(mine.status, 200);
+    assert.ok(!mine.text.includes('site'), 'nor lists it');
+  } finally {
+    unreadable.clear();
+  }
+  assert.ok((await as('priya', 'GET', '/-/api/workers?mine=1')).text.includes(taskA), 'with access, as before');
 });
 
 test('only the launcher follows up, stops or tears down', async () => {

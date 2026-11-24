@@ -18,7 +18,8 @@ export const OLDEST_PROTOCOL = 2;
 // No bump for project_visibility / project_access (private tables), the
 // setProjectVisibility and rebuildAccess reducers and the checkAccess
 // procedure: all additions, which break no client. Nor for setDefaultVisibility,
-// createProjectWithVisibility and createProjectFromTemplateWithVisibility:
-// new reducers beside createProject / createProjectFromTemplate, whose
-// arguments stay as they were.
-export const BINDINGS_HASH = '1d24be3e12e37d39';
+// createProjectWithVisibility and createProjectFromTemplateWithVisibility
+// (new reducers beside createProject / createProjectFromTemplate, whose
+// arguments stay as they were), nor for the setWebSecret reducer (the web
+// service's, over HTTP).
+export const BINDINGS_HASH = '56c2f533da61b89f';

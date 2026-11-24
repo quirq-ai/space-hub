@@ -28,13 +28,18 @@
 //   POST     /-/api/ask          chat, opened on the first visit; asking there (rooms.ts)
 //   POST     /-/api/explain      open a room from a GitHub URL, for the explain org's chat (rooms.ts)
 //   GET      /-/auth/check       members-only: Caddy's forward_auth asks before every request (frontdoor.ts)
+//   GET      /-/ui               the module's own pages (tree, blob, raw, commits, guide, ...): the proxy
+//                                sends them here, and they are asked for as the verified viewer (modulepage.ts)
 //
 // On a members-only hub every route here but the open ones in frontdoor.ts
 // ROUTES (sign-in and sign-up) answers members only.
 //
-// Pages are read by the module (ui.ts); this service only acts. A session is
-// the user's identity token in an HttpOnly cookie, so every action runs as
-// that user and the module's own ownership checks apply.
+// Pages are read by the module (ui.ts) for the viewer this service vouches
+// for (modulepage.ts), so a private project is shown only to those who may
+// read it (canRead); this service reads as the admin, so every route here
+// that names a project checks the same rule first. A session is the user's
+// identity token in an HttpOnly cookie, so every action runs as that user and
+// the module's own ownership checks apply.
 import http from 'node:http';
 import path from 'node:path';
 import { connectTo, errorMessage, findProject, findUser, quietSdkLogs, snapshot, tables, type Conn } from './conn';
@@ -64,6 +69,7 @@ import { bearerToken, cookieValue, viewerOf, type CheckToken, type Viewer } from
 import { hubDefaultVisibility, hubMembersOnly, hubOwnerName, hubPeople, isSuspended, joinPolicy, joinSettings, type JoinPolicy } from './hubowner';
 import { handleHubSettings } from './hubsettings';
 import { FrontDoor, signInNotice, suspendedMessage } from './frontdoor';
+import { asViewer, canReadProject, moduleUrl, proxyPage, registerSecret, webSecret, type ModuleLink } from './modulepage';
 
 quietSdkLogs();
 
@@ -78,7 +84,6 @@ const INTERNAL_HTTP = (process.env.SPACEHUB_INTERNAL_HTTP ?? SERVER.replace(/^ws
 const GITHUB = githubApi();
 const XO = xoConfig(DB, INTERNAL_HTTP, GITHUB);
 const XO_SIGNIN = xoSignInConfig(XO);
-const LIVE = new LiveHub({ server: SERVER, db: DB, http: INTERNAL_HTTP });
 const APP_DIR = appDir();
 const githubInfo = (owner: string, repo: string) => infoOf(GITHUB, owner, repo);
 const githubBuilder = (login: string) => builderOf(GITHUB, login);
@@ -87,6 +92,13 @@ const SIGNIN = signInConfig(DB, INTERNAL_HTTP, GITHUB);
 // Spaces linked to GitHub sync as the hub admin, whose token the entrypoint
 // hands over.
 const ADMIN_TOKEN = process.env.SPACEHUB_ADMIN_TOKEN ?? '';
+// The module's pages and data, asked for as a verified viewer (modulepage.ts):
+// this start's secret, set in the module as the admin before pages need it.
+const MODULE: ModuleLink = { http: INTERNAL_HTTP, db: DB, secret: ADMIN_TOKEN ? webSecret() : null };
+if (MODULE.secret) void registerSecret({ adminToken: ADMIN_TOKEN, http: INTERNAL_HTTP, db: DB }, MODULE.secret);
+else void registerSecret(null, '');
+// Live pages follow every project, so they read as the admin when there is one.
+const LIVE = new LiveHub({ server: SERVER, db: DB, http: INTERNAL_HTTP, module: MODULE, token: ADMIN_TOKEN || undefined });
 // Runners and workers live in the module's private tables; without the admin token or the sealing key, connecting is off.
 // "Connect Agents Hub" (SPACEHUB_LAUNCHPAD_API): Launchpad finds the hub with a pass from a fresh XO sign-in, never
 // stored. A mistyped setting turns the button off (and says so) rather than stopping the hub.
@@ -500,10 +512,11 @@ function serverOf(req: http.IncomingMessage) {
 // The templates a project can start from (the module's ?templates view);
 // the built-in goal space alone when the module cannot be asked.
 type Template = { id: string; title: string; about: string; builtin: boolean };
-async function templatesList(): Promise<Template[]> {
+// Template projects the builder may not read are not offered.
+async function templatesList(viewer: string): Promise<Template[]> {
   const builtin: Template[] = [{ id: 'goal', title: 'Goal space', about: '', builtin: true }];
   try {
-    const response = await fetch(`${INTERNAL_HTTP}/v1/database/${encodeURIComponent(DB)}/route/api?templates`);
+    const response = await fetch(moduleUrl(MODULE, 'api', '?templates'), { headers: asViewer(MODULE, viewer) });
     if (!response.ok) return builtin;
     const body = (await response.json()) as { templates?: Template[] };
     return body.templates?.length ? body.templates : builtin;
@@ -570,18 +583,19 @@ const ROOMS: Parameters<typeof handleRooms>[0] = {
   space: explainSpace(),
   canOpen: !!ADMIN_TOKEN,
   buildersOnly: async () => (await joinMode()) !== 'anyone',
-  exists: async fullName => {
-    const [space, project] = fullName.split('/');
-    const query = new URLSearchParams({ space, project });
-    return (await fetch(`${INTERNAL_HTTP}/v1/database/${encodeURIComponent(DB)}/route/api?${query}`, { signal: AbortSignal.timeout(5_000) })).ok;
-  },
+  // A room this viewer may not read is not there for it (canRead).
+  exists: async (fullName, req) => canReadProject(MODULE, req ? await DOOR.builder(req) : null, fullName),
   info: async (owner, repo) => {
     const info = await githubInfo(owner, repo);
     return info && { owner: info.ownerLogin, repo: info.name, description: info.description, private: info.private };
   },
   open: input => withConn(ADMIN_TOKEN, conn => conn.reducers.openRepoRoom(input)),
   sessionOf,
-  ask: (token, input) => withConn(token, conn => conn.reducers.askQuestion(input)),
+  // A room this builder may not read answers as one that does not exist (the module's own words for it).
+  ask: async (token, input, username) => {
+    if (!(await canReadProject(MODULE, username ?? null, input.project))) throw new Error(`project "${input.project}" not found`);
+    await withConn(token, conn => conn.reducers.askQuestion(input));
+  },
   page: (res, status, title, message) => {
     send(res, status, page(`${title} · spacehub`, null, `<h1><b>${esc(title)}</b></h1><div class="banner err">${esc(message)}</div><p><a href="/">Go to the hub</a></p>`));
   },
@@ -612,6 +626,11 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   }, req, res, url)) return;
   // A live page remembers its verified builder, so a suspension can end it (LIVE.closeFor).
   if (LIVE.handle(req, res, url, route === '/-/live' ? ((await sessionOf(req).catch(() => null))?.username ?? null) : null)) return;
+  // The module's pages, as this viewer (modulepage.ts); the proxy sends the page asked for in X-Spacehub-Uri.
+  if (route === '/-/ui') {
+    const uri = req.headers['x-spacehub-uri'];
+    return proxyPage(MODULE, req, res, typeof uri === 'string' ? uri : '/', await DOOR.builder(req));
+  }
   if (req.method === 'POST' && !sameOrigin(req)) return send(res, 403, page('Forbidden', null, '<h1>Forbidden</h1><p class="desc">This form must be sent from this site.</p>'));
   if (await handleAgentsHub(WORKERS.key ? AGENTS_HUB : null, {
     sessionOf,
@@ -621,7 +640,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     send,
     allowLocal: WORKERS.allowLocal,
   }, req, res)) return;
-  if (await handleWorkers(WORKERS, { sessionOf, placesOf, appendChat, sameOrigin, callbackUrl: r => callbackOf(r, CONNECT_CALLBACK) }, req, res, url)) return;
+  if (await handleWorkers(WORKERS, { sessionOf, placesOf, appendChat, sameOrigin, callbackUrl: r => callbackOf(r, CONNECT_CALLBACK),
+    canRead: (session, project) => canReadProject(MODULE, session.username, project) }, req, res, url)) return;
   if (await handleRooms(ROOMS, req, res, url)) return;
   if (await handleHubSettings({
     sessionOf,
@@ -651,7 +671,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     defaultVisibility: () => hubDefaultVisibility(ADMIN_SQL!),
     setDefaultVisibility: (token, visibility) => withConn(token, conn => conn.reducers.setDefaultVisibility({ visibility })),
   }, req, res, url)) return;
-  if (await handleApp({ dir: APP_DIR, internalHttp: INTERNAL_HTTP, db: DB, withConn, sessionOf, operator: recoveryOperator, owner: ownerName }, req, res, url)) return;
+  if (await handleApp({ dir: APP_DIR, internalHttp: INTERNAL_HTTP, db: DB, withConn, sessionOf, operator: recoveryOperator, owner: ownerName,
+    module: MODULE, viewerName: r => DOOR.builder(r) }, req, res, url)) return;
 
   if (route === '/-/login') {
     const session = await sessionOf(req);
@@ -780,7 +801,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     // Keep ?template= through sign-in, so "Use this template" still picks it.
     if (!session) return redirect(res, `/-/login?next=${encodeURIComponent('/-/new' + url.search)}`);
     const spaces = await spacesOf(session);
-    const templates = await templatesList();
+    const templates = await templatesList(session.username);
     if (req.method === 'GET') {
       const template = url.searchParams.get('template');
       return send(res, 200, newPage(session.username, spaces, templates, '', template === null ? {} : { template }));
@@ -832,6 +853,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     const project = `${decodeURIComponent(sync[1])}/${decodeURIComponent(sync[2])}`;
     const back = `/${sync[1]}/${sync[2]}`;
     try {
+      // A project this builder may not read is no project (canRead).
+      if (!(await canReadProject(MODULE, session.username, project))) throw new Fail(`No project ${project}.`);
       const source = await withConn(session.token, async conn => {
         const sp = await findProject(conn, project);
         if (!sp) throw new Fail(`No project ${project}.`);

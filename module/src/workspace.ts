@@ -15,6 +15,7 @@
 // is current. Writes go through the append_chat reducer (chat.ts).
 import { PRESENCE_STALE_SECONDS, inSpace, objectKey, readObject, refKey, spaceFor, type Db } from './store';
 import { Sha1 } from './sha1';
+import { readerDb } from './reader';
 import { CodeError, README_BYTES, commitView, commitsView, filesView, refsView, treeView } from './code';
 import { DEPS_FILE, depsText, depsView, parseDeps } from './deps';
 import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_FILES, SPACE_FILE, parseSpace, progressOf, textFiles, type SpaceGoal, type TemplateFile } from './space';
@@ -913,7 +914,7 @@ export function parseQuery(qs: string) {
 
 export interface ApiRequest {
   query: Map<string, string>;
-  /** The signed-in builder's name, from the display cookie; only used to show what is possible. */
+  /** The verified builder asking (index.ts api, reader.ts webViewer), or null when signed out. */
   viewer: string | null;
   now: number;
 }
@@ -951,13 +952,21 @@ export function codeView(db: Db, req: ApiRequest): unknown {
   }
 }
 
-export function renderApi(db: Db, req: ApiRequest): { status: number; headers: Record<string, string>; body: string } {
+export function renderApi(all: Db, req: ApiRequest): { status: number; headers: Record<string, string>; body: string } {
+  // Only what this viewer may read: a private project is a missing one.
+  const db = readerDb(all, req.viewer);
   const headers: Record<string, string> = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' };
   try {
     // A builder's second name answers as the builder.
     for (const key of ['space', 'avatar']) {
       const name = req.query.get(key);
       if (name) req = { ...req, query: new Map([...req.query, [key, spaceFor(db, name.toLowerCase())]]) };
+    }
+    // ?readable=<space>/<project>: whether the viewer may read it (the web service's one check, cli/src/modulepage.ts).
+    if (req.query.has('readable')) {
+      const [space = '', ...name] = (req.query.get('readable') ?? '').split('/');
+      const readable = !!space && !!db.project.fullName.find(`${spaceFor(db, space.toLowerCase())}/${name.join('/')}`);
+      return { status: 200, headers, body: JSON.stringify({ readable }) };
     }
     if (req.query.has('avatar')) return { status: 200, headers, body: JSON.stringify(avatarOf(db, (req.query.get('avatar') ?? '').toLowerCase())) };
     if (req.query.has('activity')) return { status: 200, headers, body: JSON.stringify(activityPage(db, req)) };

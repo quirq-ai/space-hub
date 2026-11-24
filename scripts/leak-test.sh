@@ -13,7 +13,9 @@
 # Then the same over every web route, through the server image's Caddyfile
 # and the web service (scripts/routeprobe.ts, routes listed in scripts/routes.ts):
 # an anonymous browser and a signed-in stranger get only sign-in, a member
-# sees no change, and off is today.
+# sees no change, and off is today. Last, the project made private: a builder
+# who may not read it (and anyone else) finds it nowhere, as if it did not
+# exist, whatever cookie or proxy header it forges; its owner sees no change.
 #   scripts/leak-test.sh                  (needs: spacetime, git, node 22+, python3,
 #                                          caddy, or docker to copy it from caddy:$CADDY_VERSION)
 #   OLD_CLI=<old spacehub> scripts/leak-test.sh   also checks an old CLI gets the update message
@@ -229,6 +231,14 @@ curl -s -X POST -H "origin: $FRONT" -H 'accept: text/html' --data 'username=caro
   && ok "on: sign-up through the front door (a form body passes)" || fail "on: sign-up through the front door"
 members_only false; settle
 routes off "$WORK/routes-off-again.json"
+
+echo "a private project, over every web route"
+# bob is a builder of the hub who may not read alice/leakproj once it is private.
+as bob spacehub auth login --builder bob >/dev/null
+OUTSIDER_TOKEN="$(as bob spacehub auth token)"
+curl -sf -X POST -H "authorization: Bearer $ALICE_TOKEN" -H 'content-type: application/json' --data '["alice/leakproj","private"]'   "$HTTP/v1/database/$SPACEHUB_DB/call/set_project_visibility" >/dev/null || fail "make alice/leakproj private"
+export OUTSIDER_TOKEN LEAK_PROJECT_MARKERS="leakproj,leakdesc,leakcontent"
+routes private "$WORK/routes-private.json" "$WORK/routes-off.json"
 
 if [[ -n "${OLD_CLI:-}" ]]; then
   out="$(SPACEHUB_HOME="$WORK/home-alice" "$OLD_CLI" project list alice 2>&1 || true)"

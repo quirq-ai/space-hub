@@ -31,7 +31,7 @@ export class CodeError extends Error {
 }
 
 function renderer(db: Db, now: number) {
-  return new Renderer(db, { uri: 'http://localhost/', forwardedUri: null, cookie: null, proto: null, now }, new Map());
+  return new Renderer(db, { uri: 'http://localhost/', forwardedUri: null, viewer: null, proto: null, now }, new Map());
 }
 
 const iso = (seconds: number) => new Date(seconds * 1000).toISOString();

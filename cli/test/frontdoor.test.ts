@@ -138,6 +138,20 @@ test('suspending a builder forgets its memberships at once, on every session, an
   assert.equal(reads, 5, "alice's membership is still remembered");
 });
 
+test("the viewer of a module page: the verified builder, reused per session like membership, and gone once suspended", async () => {
+  const { door, state } = hub(false);
+  const as = (token: string) => request({ cookie: `spacehub_session=${token}; spacehub_user=alice` });
+  assert.equal(await door.builder(as('tok-alice')), 'alice');
+  assert.equal(await door.builder(as('tok-alice')), 'alice');
+  assert.equal(state.viewerReads, 1, 'looked up once in the interval');
+  assert.equal(await door.builder(as('tok-nobody')), null, 'a valid identity with no builder');
+  assert.equal(await door.builder(as('tok-bob')), null, 'suspended');
+  assert.equal(await door.builder(request({ cookie: 'spacehub_user=alice' })), null, 'the display cookie alone is nobody');
+  state.time += 10_000;
+  assert.equal(await door.builder(as('tok-alice')), 'alice');
+  assert.equal(state.viewerReads, 4, 'and again after the interval');
+});
+
 test('a membership looked up while its builder is being suspended is not remembered', async () => {
   let release!: () => void;
   let reads = 0;
@@ -234,9 +248,17 @@ test('the Caddyfile asks the front door before everything but /healthz and the d
   const caddy = fs.readFileSync(path.join(root, 'docker/server.Caddyfile'), 'utf8');
   assert.match(caddy, /^\t@door not path \/healthz \/v1\/identity\/websocket-token \/v1\/database\/\{\$SPACEHUB_DB:spacehub\}\/subscribe$/m);
   assert.match(caddy, /^\tforward_auth @door 127\.0\.0\.1:\{\$SPACEHUB_WEB_PORT:3002\} \{\n\t\turi \/-\/auth\/check\n\t\}$/m);
-  for (const h of ['X-Forwarded-Method', 'X-Forwarded-Uri', 'X-Spacehub-Uri']) assert.match(caddy, new RegExp(`^\\trequest_header -${h}$`, 'm'));
+  for (const h of ['X-Forwarded-Method', 'X-Forwarded-Uri', 'X-Spacehub-Uri', 'X-Spacehub-Viewer', 'X-Spacehub-Secret']) assert.match(caddy, new RegExp(`^\\trequest_header -${h}$`, 'm'));
   // forward_auth runs before every handle; it must not sit inside one.
   assert.ok(caddy.indexOf('\tforward_auth') < caddy.indexOf('\thandle'));
+});
+
+test("the Caddyfile sends the module's pages through the web service, never to the module itself", () => {
+  const caddy = fs.readFileSync(path.join(root, 'docker/server.Caddyfile'), 'utf8');
+  const config = caddy.replace(/^\s*#.*$/gm, '');
+  assert.doesNotMatch(config, /route\/(?:ui|api)/, 'only the web service asks the module for pages, as a verified viewer (modulepage.ts)');
+  const toWeb = /\t\trewrite \* \/-\/ui\n\t\treverse_proxy 127\.0\.0\.1:\{\$SPACEHUB_WEB_PORT:3002\} \{\n\t\t\theader_up X-Spacehub-Uri \{http\.request\.orig_uri\}\n\t\t\}/g;
+  assert.equal([...config.matchAll(toWeb)].length, 2, 'the hub pages and the catch-all');
 });
 
 test("every route in the code is on the leak test's list (scripts/routes.ts)", () => {

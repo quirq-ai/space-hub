@@ -16,8 +16,9 @@
 //   POST /-/api/start-chat                 start an org's, an agent's or a project's chat (start_chat)
 //
 // The browser never talks to SpacetimeDB: reads come from the module over
-// HTTP, and a chat is saved with the session's own token, so the module's
-// push rules decide who may write.
+// HTTP, asked for as the verified viewer (modulepage.ts), so a private project
+// is there only for those who may read it; a chat is saved with the session's
+// own token, so the module's push rules decide who may write.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import type http from 'node:http';
@@ -27,6 +28,7 @@ import type { Conn } from './conn';
 import { findUser } from './conn';
 import { forgetAvatar, handleAvatar } from './avatar';
 import { visitorLanding } from './visitor';
+import { asViewer, moduleUrl, type ModuleLink } from './modulepage';
 
 export const APP_CSP =
   "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self'; connect-src 'self'; frame-src 'self' https:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
@@ -54,6 +56,10 @@ export interface AppDeps {
   operator?: (req: http.IncomingMessage) => Promise<boolean>;
   /** The hub owner's builder name, or null (hubowner.ts); the owner alone sees Settings → Hub. */
   owner?: () => Promise<string | null>;
+  /** The module, asked for data as a viewer (modulepage.ts). */
+  module: ModuleLink;
+  /** The verified builder's name, or null (frontdoor.ts builder, cached briefly). */
+  viewerName: (req: http.IncomingMessage) => Promise<string | null>;
 }
 
 /** Where the built app lives: SPACEHUB_APP_DIR, else app/dist beside this checkout. */
@@ -158,7 +164,8 @@ export async function handleApp(deps: AppDeps, req: http.IncomingMessage, res: h
   }
 
   if (req.method === 'GET' && route === '/-/api/view') {
-    const upstream = await fetch(`${deps.internalHttp}/v1/database/${encodeURIComponent(deps.db)}/route/api${url.search}`, { headers: { cookie: req.headers.cookie ?? '' } });
+    // As the verified viewer, never as a cookie says: a private project it may not read is not there.
+    const upstream = await fetch(moduleUrl(deps.module, 'api', url.search), { headers: asViewer(deps.module, await deps.viewerName(req)) });
     const body = await upstream.text();
     const etag = upstream.headers.get('etag');
     const matches = etag && (req.headers['if-none-match'] ?? '').split(',').some(value => value.trim().replace(/^W\//, '') === etag);

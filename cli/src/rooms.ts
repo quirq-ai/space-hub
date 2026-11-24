@@ -34,15 +34,15 @@ export interface RoomsDeps {
   canOpen: boolean;
   /** Whether only builders open new rooms: the hub's join policy is not "anyone" (the module checks too). */
   buildersOnly?: () => Promise<boolean>;
-  /** Whether a project is on the hub. */
-  exists: (fullName: string) => Promise<boolean>;
+  /** Whether a project is on the hub for this request's viewer (a private one it may not read is not). */
+  exists: (fullName: string, req?: http.IncomingMessage) => Promise<boolean>;
   /** GitHub's word on a repository: null when it does not answer; throws when it does not exist. */
   info: (owner: string, repo: string) => Promise<RepoInfo | null>;
   /** Open the room as the hub admin. */
   open: (input: { owner: string; repo: string; description: string; openedBy: string }) => Promise<void>;
   sessionOf: (req: http.IncomingMessage) => Promise<{ token: string; username: string } | null>;
   /** Ask as the signed-in builder; rejects with the module's reason. */
-  ask: (token: string, input: { project: string; id: string; content: string }) => Promise<void>;
+  ask: (token: string, input: { project: string; id: string; content: string }, username?: string) => Promise<void>;
   /** A simple page with a heading and a message, for problems. */
   page: (res: http.ServerResponse, status: number, title: string, message: string) => void;
 }
@@ -93,7 +93,7 @@ type OpenedRoom = { name: string } | { status: number; title: string; message: s
 // The repository's room, opened now when this is its first visit.
 async function openRoom(deps: RoomsDeps, wanted: { owner: string; repo: string }, req: http.IncomingMessage, now: number): Promise<OpenedRoom> {
   const name = roomName(wanted.owner, wanted.repo)!;
-  if (await deps.exists(`${deps.space}/${name}`).catch(() => false)) return { name };
+  if (await deps.exists(`${deps.space}/${name}`, req).catch(() => false)) return { name };
   if (!deps.canOpen) return { status: 503, title: 'Rooms are off on this hub', message: 'This hub has no admin token, so it cannot open rooms for GitHub repositories.' };
   const session = await deps.sessionOf(req).catch(() => null);
   // A hub that chooses who joins: only its builders open new rooms. When the
@@ -117,7 +117,7 @@ async function openRoom(deps: RoomsDeps, wanted: { owner: string; repo: string }
     await deps.open({ owner: info.owner, repo: info.repo, description: info.description, openedBy: session?.username ?? '' });
   } catch (error) {
     // Two first visits at once: the other one made it.
-    if (!(await deps.exists(`${deps.space}/${name}`).catch(() => false))) {
+    if (!(await deps.exists(`${deps.space}/${name}`, req).catch(() => false))) {
       return { status: 500, title: 'The room did not open', message: (error instanceof Error ? error.message : String(error)).replace(/^Error: /, '') };
     }
   }
@@ -145,7 +145,7 @@ export async function handleRooms(deps: RoomsDeps, req: http.IncomingMessage, re
     const content = o.content.trim();
     if (!content || content.length > 4000) return json(res, 400, { error: 'A question has 1 to 4000 characters.' }), true;
     try {
-      await deps.ask(session.token, { project: `${o.space}/${o.project}`, id: o.id, content });
+      await deps.ask(session.token, { project: `${o.space}/${o.project}`, id: o.id, content }, session.username);
       return json(res, 200, { ok: true }), true;
     } catch (error) {
       const message = (error instanceof Error ? error.message : String(error)).replace(/^Error: /, '');

@@ -398,6 +398,14 @@ public port (`$PORT`, default 3000) is a built-in Caddy allowlist. It serves:
 - `/-/*`: the web service (sign in, sign up, create and import projects, live pages);
 - everything else: the web UI (see below).
 
+The module's pages (the code views, the guide, builders) always go through the
+web service, which checks who is signed in and asks the module as that builder
+(`X-Spacehub-Viewer`), vouched for by a secret made fresh on every start
+(`X-Spacehub-Secret`, set in the module's private `hub_state`). The proxy drops
+both headers from clients, and without the secret the module answers as for
+someone signed out. So a private project shows only to those who may read it,
+everywhere, and to anyone else is exactly like one that does not exist.
+
 Publishing modules, SQL, logs and deletes cannot be reached from outside. On
 every start, the module is published or updated in place. A schema change
 that would delete data makes startup fail rather than wipe projects, with one
@@ -715,7 +723,7 @@ Raw files are served as `text/plain`, an image or video type, or
 `application/octet-stream`, inside a sandbox, so a pushed HTML file can't
 run on the server's origin. On a bare `spacetime start` (no web service),
 browse at `http://127.0.0.1:3000/v1/database/spacehub/route/ui`, where links
-use `?p=<path>`.
+use `?p=<path>`; there every page is for someone signed out (public projects only).
 
 ## Install the client
 
