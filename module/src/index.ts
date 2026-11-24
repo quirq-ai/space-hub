@@ -712,6 +712,14 @@ export const visibleQuestion = spacetimedb.view({ name: 'visible_question', publ
   if (who === 'admin') return ctx.from.question;
   return myAccess(ctx).rightSemijoin(ctx.from.question, (a, q) => a.projectId.eq(q.projectId));
 });
+// Which of the projects the caller reads are private, for the CLI's project
+// list and view. A new view, so older clients see no change.
+export const visibleProjectVisibility = spacetimedb.view({ name: 'visible_project_visibility', public: true }, t.array(projectVisibility.rowType), ctx => {
+  const who = viewer(ctx);
+  if (who === 'nobody') return ctx.from.projectVisibility.where(NOTHING);
+  if (who === 'admin') return ctx.from.projectVisibility;
+  return myAccess(ctx).rightSemijoin(ctx.from.projectVisibility, (a, v) => a.projectId.eq(v.projectId));
+});
 
 const ObjectIn = t.object('ObjectIn', {
   oid: t.string(),

@@ -17,6 +17,8 @@ export interface Entry {
   goal?: string;
   progress?: { done: number; total: number };
   template?: boolean;
+  /** A private project, in a space's listing (absent when public). */
+  private?: boolean;
 }
 
 /** A Markdown document of a folder, shown under its listing. */

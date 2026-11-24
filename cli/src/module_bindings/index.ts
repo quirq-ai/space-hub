@@ -120,6 +120,7 @@ import VisibleProjectBuilderRow from "./visible_project_builder_table";
 import VisibleProjectImportRow from "./visible_project_import_table";
 import VisibleProjectMemberRow from "./visible_project_member_table";
 import VisibleProjectSizeRow from "./visible_project_size_table";
+import VisibleProjectVisibilityRow from "./visible_project_visibility_table";
 import VisibleQuestionRow from "./visible_question_table";
 import VisibleRefSyncRow from "./visible_ref_sync_table";
 import VisibleSpaceRow from "./visible_space_table";
@@ -210,6 +211,13 @@ const tablesSchema = __schema({
     constraints: [
     ],
   }, VisibleProjectSizeRow),
+  visibleProjectVisibility: __table({
+    name: 'visible_project_visibility',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, VisibleProjectVisibilityRow),
   visibleQuestion: __table({
     name: 'visible_question',
     indexes: [

@@ -773,6 +773,17 @@ a.overview-tile:hover { border-color: var(--line-strong); text-decoration: none;
 .hub-choice:has(input:checked) .hub-choice-check { visibility: visible; }
 .hub-choices:disabled .hub-choice { cursor: not-allowed; }
 @media (max-width: 720px) { .hub-choices { grid-template-columns: 1fr; } }
+/* Private projects (lib/visibility.ts): the lock on lists, and the Public / Private choice on a project's page, the hub's choice cards two-up. */
+.private-label svg { flex: none; }
+.private-mark { display: inline-flex; flex: none; align-items: center; color: var(--text-3); }
+.nav-item .private-mark, .nav-sub-item .private-mark { margin-left: auto; }
+.shell.rail .nav-item .private-mark { display: none; }
+.palette-row .private-mark { margin-left: -4px; }
+.dock-private { position: absolute; top: 0; left: 8px; display: inline-flex; padding: 2px; border-radius: 50%; background: var(--panel); color: var(--text-2); box-shadow: 0 0 0 1px var(--line); }
+.visibility-panel .hub-choices { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.visibility-panel .hub-choice-title strong { display: inline-flex; align-items: center; gap: 6px; }
+.visibility-panel .launch-note { margin-top: 10px; }
+@media (max-width: 560px) { .visibility-panel .hub-choices { grid-template-columns: 1fr; } }
 /* A new invite, shown once: the link to copy, then the terminal way. */
 .hub-invite-made { display: grid; gap: 8px; margin: 10px 0; padding: 12px 14px; border-radius: 7px; background: var(--fill); color: var(--text-2); font-size: 12.5px; line-height: 1.5; }
 .hub-invite-made p { margin: 0; }

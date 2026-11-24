@@ -26,6 +26,7 @@ const PROJECT_VIEWS = {
   visibleRefSync: (r: any) => r.projectId,
   visibleProjectSize: (r: any) => r.projectId,
   visibleQuestion: (r: any) => r.projectId,
+  visibleProjectVisibility: (r: any) => r.projectId,
 } as const;
 
 const admin = as('admin');
@@ -70,7 +71,7 @@ describe('visible_* views and private projects', () => {
   it('the admin reads every row; the private project has rows in most views (the test means something)', () => {
     const { pid, whole, of } = hub();
     const secret = of(whole(), pid('bob/secret'));
-    for (const v of ['visibleProject', 'visibleGitRef', 'visibleGitObject', 'visibleActivity', 'visibleProjectSize', 'visiblePresence']) {
+    for (const v of ['visibleProject', 'visibleGitRef', 'visibleGitObject', 'visibleActivity', 'visibleProjectSize', 'visiblePresence', 'visibleProjectVisibility']) {
       expect(secret[v], v).toBeGreaterThan(0);
     }
   });

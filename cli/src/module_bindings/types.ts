@@ -369,6 +369,9 @@ export type VisibleProjectMember = __Infer<typeof VisibleProjectMember>;
 export const VisibleProjectSize = __t.object("VisibleProjectSize", {});
 export type VisibleProjectSize = __Infer<typeof VisibleProjectSize>;
 
+export const VisibleProjectVisibility = __t.object("VisibleProjectVisibility", {});
+export type VisibleProjectVisibility = __Infer<typeof VisibleProjectVisibility>;
+
 export const VisibleQuestion = __t.object("VisibleQuestion", {});
 export type VisibleQuestion = __Infer<typeof VisibleQuestion>;
 

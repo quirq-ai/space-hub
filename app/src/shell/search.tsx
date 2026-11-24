@@ -4,8 +4,9 @@ import { codeUrl, placeUrl, viewUrl, type Files, type HubMeta, type Place, type 
 import { useLive } from "@/hooks/use-live";
 import { hashOf, navigate } from "@/router";
 import { Avatar } from "@/ui/primitives";
+import { PrivateMark } from "@/components/private-badge";
 
-type Result = { key: string; kind: "space" | "project" | "file"; label: string; detail: string; href: string; name?: string };
+type Result = { key: string; kind: "space" | "project" | "file"; label: string; detail: string; href: string; name?: string; locked?: boolean };
 
 /** Spaces and projects of the hub, and the files of the project you are in. */
 export function SearchPalette({ place, onClose }: { place: Place; onClose: () => void }) {
@@ -29,7 +30,7 @@ export function SearchPalette({ place, onClose }: { place: Place; onClose: () =>
       const s = q ? Math.max(score(project.fullName), score(project.description) - 1) : 0;
       if (s >= 0 || (!q && out.length < 12)) {
         const [space, name] = project.fullName.split("/");
-        out.push({ key: "p:" + project.fullName, kind: "project", label: project.fullName, detail: project.description || "Project", href: placeUrl({ space, project: name }), score: s + 0.2 });
+        out.push({ key: "p:" + project.fullName, kind: "project", label: project.fullName, detail: project.description || "Project", href: placeUrl({ space, project: name }), locked: project.private === true, score: s + 0.2 });
       }
     }
     if (q) for (const path of files.data?.paths ?? []) {
@@ -62,7 +63,7 @@ export function SearchPalette({ place, onClose }: { place: Place; onClose: () =>
             const selected = row === index;
             return <button key={result.key} type="button" role="option" aria-selected={selected} className={`palette-row${selected ? " selected" : ""}`} onMouseEnter={() => setIndex(results.indexOf(result))} onClick={() => go(result)}>
               {result.kind === "space" ? <Avatar name={result.name!} size={22} /> : result.kind === "project" ? <FolderGit2 size={18} /> : <FileText size={18} />}
-              <span className="palette-label">{result.label}</span><span className="palette-detail">{result.detail}</span>
+              <span className="palette-label">{result.label}</span>{result.locked && <PrivateMark />}<span className="palette-detail">{result.detail}</span>
             </button>;
           })}</div>;
         })}

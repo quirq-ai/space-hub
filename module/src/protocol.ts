@@ -21,5 +21,7 @@ export const OLDEST_PROTOCOL = 2;
 // createProjectWithVisibility and createProjectFromTemplateWithVisibility
 // (new reducers beside createProject / createProjectFromTemplate, whose
 // arguments stay as they were), nor for the setWebSecret reducer (the web
-// service's, over HTTP).
-export const BINDINGS_HASH = '56c2f533da61b89f';
+// service's, over HTTP). Nor for the visible_project_visibility view: a new
+// view, which older clients never subscribe to (and this CLI reads it as
+// "nothing private" from a hub that predates it).
+export const BINDINGS_HASH = 'c624904ae1c37b1f';

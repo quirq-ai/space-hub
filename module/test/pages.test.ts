@@ -146,6 +146,26 @@ describe('a private project on the module pages', () => {
     }
   });
 
+  it('says which projects are private to those who read them, and who may change it', () => {
+    const { api } = hub();
+    for (const viewer of ['bob', 'dave']) {
+      const cards = JSON.parse(api(viewer, '').body).meta.allProjects;
+      expect(cards.find((c: any) => c.fullName === 'bob/xsecretx').private, viewer).toBe(true);
+      expect('private' in cards.find((c: any) => c.fullName === 'bob/shown'), 'a public card says nothing').toBe(false);
+      const entries = JSON.parse(api(viewer, 'space=bob').body).snapshot.directory.entries;
+      expect(entries.find((e: any) => e.name === 'xsecretx').private).toBe(true);
+      expect(entries.find((e: any) => e.name === 'shown').private).toBe(undefined);
+      const project = JSON.parse(api(viewer, 'space=bob&project=xsecretx').body).meta;
+      expect(project.visibility).toBe('private');
+      expect(project.canSetVisibility, `${viewer} owns bob?`).toBe(viewer === 'bob');
+    }
+    expect(JSON.parse(api('dave', 'space=dave').body).meta.privateCollaborates).toEqual(['bob/xsecretx']);
+    expect(JSON.parse(api('carol', 'space=dave').body).meta.privateCollaborates, 'carol reads none of it').toEqual([]);
+    const shown = JSON.parse(api('carol', 'space=bob&project=shown').body).meta;
+    expect([shown.visibility, shown.canSetVisibility]).toEqual(['public', false]);
+    expect(JSON.parse(api(null, 'space=bob&project=shown').body).meta.canSetVisibility).toBe(false);
+  });
+
   it('a members-only hub shows a signed-out viewer nothing', () => {
     const { h, db } = hub();
     // Members-only straight in the table: its reducer is the hub owner's, and this hub has none.

@@ -1,5 +1,6 @@
 import type { WorkspaceSnapshot } from "@/lib/types";
 import { hashOf } from "@/router";
+import { visibilityActivity, type Visibility } from "@/lib/visibility";
 
 /** Where the page is: the hub (no space), a space, or a project. */
 export type Place = { space: string; project: string };
@@ -9,7 +10,8 @@ export type Here = { agent: string; mode: string; project: string };
 export type ActivityItem = { id: string; at: string; agent: string; kind: string; path: string; subject: string; text: string; count: number; oid: string };
 export type Membership = { space: string; kind: string; role: string; founder?: boolean };
 export type AgentInfo = { name: string; description: string; parent: string; owned: boolean; connected: boolean; spaces: string[]; running: { host: string; since: string }[] };
-export type ProjectCard = { fullName: string; description: string; pushedAt: string };
+/** `private` only on a private project (the hub lists only projects the viewer may read). */
+export type ProjectCard = { fullName: string; description: string; pushedAt: string; private?: boolean };
 /** A project's SPACE.md, read by the hub: what it is for and how far along it is. */
 export type SpaceGoal = {
   title: string; goal: string; due: string; outcomes: { text: string; done: boolean; owner: string }[];
@@ -21,12 +23,16 @@ export type SpaceMeta = {
   level: "space"; name: string; displayName: string; kind: string; description: string; parent: string; founder?: string; owners: string[]; members: string[];
   projects: number; bytes: number; github: string; githubLogin: string; aliases?: string[]; createdAt: string; memberOf: Membership[]; agents: string[]; agentList: AgentInfo[];
   collaborates: string[]; here: Here[]; activity: ActivityItem[]; activityTotal?: number;
+  /** Which of `collaborates` are private (absent from an older hub). */
+  privateCollaborates?: string[];
   /** Its projects are repo rooms, and its chat opens them from a GitHub URL. */
   rooms?: boolean;
 };
 export type ProjectMeta = {
   level: "project"; fullName: string; space: string; name: string; description: string; defaultBranch: string; bytes: number;
   head: { oid: string; subject: string; author: string; time: string } | null; deps: number; canWrite: boolean; founder?: string; owners: string[]; members: string[]; agents: string[];
+  /** Who reads it (absent from an older hub: public), and whether the viewer owns its space and so may change that. */
+  visibility?: Visibility; canSetVisibility?: boolean;
   collaborators: string[]; here: Here[]; activity: ActivityItem[]; activityTotal?: number; goal: SpaceGoal | null;
   /** A repo room (/gh/<owner>/<repo>): its repository, caps and questions. */
   room?: RoomInfo;
@@ -116,6 +122,11 @@ export async function setSpacePicture(space: string, login: string): Promise<voi
   pictureVersions.set(space.toLowerCase(), Date.now());
 }
 
+/** An owner of the project's space makes it public or private (the hub refuses anyone else). */
+export async function setProjectVisibility(place: Place, visibility: Visibility): Promise<void> {
+  await act("/-/api/project-visibility", { project: `${place.space}/${place.project}`, visibility }, "change who can see the project");
+}
+
 /** Start the one chat of an org, an agent or a project (lib/chat-place.ts says where it goes). */
 export async function startChat(place: Place): Promise<void> {
   await act("/-/api/start-chat", { space: place.space, project: place.project }, "start the chat");
@@ -165,13 +176,15 @@ const VERBS: Record<string, string> = {
 
 /** One activity row: who, what, where, and link targets when there are some (the place, and the commit pushed). */
 export function activityLine(item: ActivityItem): { verb: string; where: string; detail: string; href: string; commit: string } {
-  const verb = VERBS[item.kind] ?? item.kind.replace(/_/g, " ");
+  const changed = item.kind === "visibility_changed" ? visibilityActivity(item.subject) : null;
+  const verb = changed?.verb ?? VERBS[item.kind] ?? item.kind.replace(/_/g, " ");
   const branch = item.subject.replace(/^refs\/(heads|tags)\//, "");
   const [space, project] = item.path.split("/");
   const href = project ? placeUrl({ space, project }) : space ? placeUrl({ space, project: "" }) : "";
   const commits = item.kind === "ref_updated" && item.count > 1 ? ` · ${item.count} commits` : "";
   const commit = project && item.oid && PUSHES.has(item.kind) ? placeUrl({ space, project }, hashOf("commit", { oid: item.oid })) : "";
-  return { verb, where: item.path || item.subject, detail: (item.kind.startsWith("ref_") ? branch + (item.text ? " · " + item.text : "") : item.text) + commits, href, commit };
+  const detail = changed ? changed.detail : (item.kind.startsWith("ref_") ? branch + (item.text ? " · " + item.text : "") : item.text) + commits;
+  return { verb, where: item.path || item.subject, detail, href, commit };
 }
 
 const PUSHES = new Set(["ref_created", "ref_updated", "ref_forced"]);

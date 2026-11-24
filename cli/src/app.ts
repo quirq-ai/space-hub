@@ -14,6 +14,8 @@
 //   POST /-/api/space-picture              an org owner picks the GitHub organization whose picture
 //                                          the org shows, or clears it (set_space_github)
 //   POST /-/api/start-chat                 start an org's, an agent's or a project's chat (start_chat)
+//   POST /-/api/project-visibility         an owner of the project's space makes it public or private
+//                                          (set_project_visibility)
 //
 // The browser never talks to SpacetimeDB: reads come from the module over
 // HTTP, asked for as the verified viewer (modulepage.ts), so a private project
@@ -134,6 +136,14 @@ const ACTIONS: Record<string, { what: string; usage: string; call: (input: Recor
     what: 'start a chat',
     usage: 'Send a space, and a project or "".',
     call: ({ space, project }) => (typeof space === 'string' && typeof project === 'string' ? conn => conn.reducers.startChat({ space, project }) : null),
+  },
+  // Only owners of the project's space may; the module refuses anyone else (setProjectVisibility).
+  '/-/api/project-visibility': {
+    what: 'change who can see the project',
+    usage: 'Send a project (space/name) and a visibility, "public" or "private".',
+    call: ({ project, visibility }) => (typeof project === 'string' && (visibility === 'public' || visibility === 'private')
+      ? conn => conn.reducers.setProjectVisibility({ project, visibility })
+      : null),
   },
 };
 

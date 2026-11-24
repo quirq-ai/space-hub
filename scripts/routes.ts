@@ -105,6 +105,7 @@ export const LIST: Record<string, Probe[]> = {
   "web '/-/api/chat'": [{ path: '/-/api/chat', method: 'POST', json: {}, api: true }],
   "web '/-/api/space-picture'": [{ path: '/-/api/space-picture', method: 'POST', json: {}, api: true }],
   "web '/-/api/start-chat'": [{ path: '/-/api/start-chat', method: 'POST', json: {}, api: true }],
+  "web '/-/api/project-visibility'": [{ path: '/-/api/project-visibility', method: 'POST', json: {}, api: true }],
   "web '/-/api/ask'": [{ path: '/-/api/ask', method: 'POST', json: {}, api: true }],
   "web '/-/api/explain'": [{ path: '/-/api/explain', method: 'POST', json: {}, api: true }],
   "web regex ^\\/(?:-\\/)?gh\\/([^/]+)\\/([^/]+?)\\/?$": [{ path: '/-/gh/octocat/hello-world' }, { path: '/gh/octocat/hello-world' }],

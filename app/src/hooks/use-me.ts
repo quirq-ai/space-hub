@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useLive } from "./use-live";
 import { viewUrl, type View, type SpaceMeta } from "@/api";
 import { setSignedIn } from "@/lib/signed-out";
+import { markPrivate } from "@/lib/visibility";
 
 /** Who is signed in (checked by the web service), and the spaces they belong to. */
 export function useMe() {
@@ -23,6 +24,17 @@ const RECENT = "spacehub:recent:v1";
 /** Projects opened recently in this browser, newest first. */
 export function recentProjects(): string[] {
   try { const value = JSON.parse(localStorage.getItem(RECENT) || "[]"); return Array.isArray(value) ? value.filter(item => typeof item === "string").slice(0, 6) : []; } catch { return []; }
+}
+
+const PRIVATE = "spacehub:private:v1";
+
+/** Of the projects opened in this browser, the ones that were private when last opened (for Recent's lock). */
+export function privateProjects(): Set<string> {
+  try { const value = JSON.parse(localStorage.getItem(PRIVATE) || "[]"); return new Set(Array.isArray(value) ? value.filter(item => typeof item === "string") : []); } catch { return new Set(); }
+}
+
+export function rememberVisibility(fullName: string, isPrivate: boolean) {
+  try { localStorage.setItem(PRIVATE, JSON.stringify(markPrivate([...privateProjects()], fullName, isPrivate))); } catch { /* Storage may be blocked. */ }
 }
 
 export function rememberProject(fullName: string) {

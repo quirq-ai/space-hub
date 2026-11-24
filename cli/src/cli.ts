@@ -22,6 +22,7 @@ import { cloneProject, findManifest, SpaceSync, writeManifest } from './spacesyn
 import { DEFAULT_HUB_HOST, githubTokenTarget, hubUrl, parseHubUrl, REMOTE } from './url';
 import { deviceSignIn } from './devicelogin';
 import { instanceSubhubCommand } from './instancesubhub';
+import { createProject, parseVisibilityArgs, privateIds, takeVisibilityFlag, visibilityLine } from './visibility';
 
 quietSdkLogs();
 
@@ -116,8 +117,12 @@ PROJECTS (alias: repo)
                                     [-d <text>] [--source <dir> [--remote <name>] [--push]] [--clone]
                                     [--template goal | <space>/<project>] [--goal <text>]
                                     (a template: the built-in goal space, or a project with "## Template" in SPACE.md)
-  project list [<space>]                   List projects
-  project view [<project>]                 Default branch, size and refs
+                                    [--private | --public] (default: the hub's setting)
+  project list [<space>]                   List projects, public or private
+  project view [<project>]                 Default branch, who can see it, size and refs
+  project visibility [<project>] [public|private]
+                                    Who can see it; owners of its space change it. Private:
+                                    its space's owners and members, collaborators and their agents
   project clone <project> [<dir>]          git clone a project (extra flags after --)
   project edit [<project>]                 [--description <text>] [--default-branch <name>]
                                     [--builder <GitHub user/org or github.com URL>]
@@ -204,6 +209,12 @@ function formatBytes(n: bigint) {
 // still measuring has no entry.
 function projectSizes(conn: Conn) {
   return snapshot(conn, tables.visibleProjectSize, () => new Map([...conn.db.visibleProjectSize.iter()].map(r => [r.projectId, r.bytes])));
+}
+
+// Which projects the caller reads are private (visible_project_visibility);
+// none on a hub whose module is older than that view.
+function privateProjects(conn: Conn) {
+  return snapshot(conn, tables.visibleProjectVisibility, () => privateIds(conn.db.visibleProjectVisibility.iter())).catch(() => new Set<bigint>());
 }
 
 function sizeText(sizes: Map<bigint, bigint>, id: bigint) {
@@ -650,7 +661,8 @@ async function projectCreate(args: string[]) {
   const cloneAfter = bool(args, '--clone', '-c');
   const goal = opt(args, '--goal', '-g');
   const template = opt(args, '--template', '-t') ?? (goal !== undefined ? 'goal' : undefined);
-  const target = (args[0] ?? die('usage: spacehub project create <name> | <space>/<name>')).replace(/\.git$/, '');
+  const visibility = takeVisibilityFlag(args);
+  const target =(args[0] ?? die('usage: spacehub project create <name> | <space>/<name>')).replace(/\.git$/, '');
   const [spaceArg, name] = target.includes('/') ? target.split('/', 2) : [undefined, target];
   if (pushAfter && !source) die('--push needs --source <dir>');
   if (template !== undefined && source) die('--template starts the project with its own first commit; leave out --source');
@@ -665,11 +677,13 @@ async function projectCreate(args: string[]) {
   }
   const space = (spaceArg ?? (await username())).toLowerCase();
   const { conn } = await open();
-  if (template !== undefined) await conn.reducers.createProjectFromTemplate({ space, name, description, template, goal: goal ?? '' });
-  else await conn.reducers.createProject({ space, name, description });
+  await createProject(conn.reducers, { space, name, description, template, goal, visibility });
   const fullName = `${space}/${name}`;
   const url = hubUrl(loadConfig().server, fullName);
-  out(`Created project ${fullName}${template !== undefined ? ` from ${template === 'goal' || !template ? 'the goal space template' : template}` : ''}`);
+  // Say what it became: without a flag, that is the hub's default.
+  const made = await findProject(conn, fullName);
+  const isPrivate = made ? (await privateProjects(conn)).has(made.id) : visibility === 'private';
+  out(`Created project ${fullName}${template !== undefined ? ` from ${template === 'goal' || !template ? 'the goal space template' : template}` : ''} (${isPrivate ? 'private' : 'public'})`);
   if (source) {
     await runOrDie('git', ['-C', source, 'remote', 'add', remote!, url]);
     out(`Added remote ${remote} -> ${url}`);
@@ -693,10 +707,22 @@ async function projectList(args: string[]) {
     return;
   }
   const sizes = await projectSizes(conn);
+  const hidden = await privateProjects(conn);
   const width = Math.max(...spaces.map(s => s.fullName.length));
   for (const s of spaces.sort((a, b) => Number(b.pushedAt.microsSinceUnixEpoch - a.pushedAt.microsSinceUnixEpoch))) {
-    out(`${s.fullName.padEnd(width)}  ${sizeText(sizes, s.id).padStart(9)}  ${when(s.pushedAt)}  ${s.description}`.trimEnd());
+    out(`${s.fullName.padEnd(width)}  ${(hidden.has(s.id) ? 'private' : 'public').padEnd(7)}  ${sizeText(sizes, s.id).padStart(9)}  ${when(s.pushedAt)}  ${s.description}`.trimEnd());
   }
+}
+
+// Show who can see a project, or (owners of its space) change it.
+async function projectVisibility(args: string[]) {
+  const { project, visibility } = parseVisibilityArgs(args);
+  const fullName = await resolveProject(project);
+  const sp = await requireProject(fullName);
+  const { conn } = await open();
+  if (!visibility) return out(`${sp.fullName} is ${visibilityLine((await privateProjects(conn)).has(sp.id) ? 'private' : 'public')}`);
+  await conn.reducers.setProjectVisibility({ project: sp.fullName, visibility });
+  out(`${sp.fullName} is now ${visibilityLine(visibility)}`);
 }
 
 // Same rule as the web UI: the credited GitHub account, else the GitHub
@@ -731,6 +757,7 @@ async function projectView(args: string[]) {
   out(`url       ${hubUrl(loadConfig().server, sp.fullName)}`);
   out(`default   ${sp.defaultBranch}`);
   out(`space     ${sp.owner}`);
+  out(`visible   ${visibilityLine((await privateProjects(conn)).has(sp.id) ? 'private' : 'public')}`);
   const members = await memberRows(conn, sp.id);
   out(`collaborators  ${members.map(m => m.agent).join(', ') || 'none'}`);
   out(`builder   ${await builderLine(conn, sp)}`);
@@ -1515,8 +1542,9 @@ async function main() {
       case 'watch': return projectWatch(args);
       case 'who': return projectWho(args);
       case 'member': case 'members': return projectMember(args);
+      case 'visibility': return projectVisibility(args);
     }
-    die(`usage: spacehub project <create|list|view|clone|edit|delete|sync|watch|who|member>`);
+    die(`usage: spacehub project <create|list|view|clone|edit|delete|sync|watch|who|member|visibility>`);
   }
 
   if (group === 'agent' || group === 'agents') {

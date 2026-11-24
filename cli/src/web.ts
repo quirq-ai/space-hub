@@ -70,6 +70,7 @@ import { hubDefaultVisibility, hubMembersOnly, hubOwnerName, hubPeople, isSuspen
 import { handleHubSettings } from './hubsettings';
 import { FrontDoor, signInNotice, suspendedMessage } from './frontdoor';
 import { asViewer, canReadProject, moduleUrl, proxyPage, registerSecret, webSecret, type ModuleLink } from './modulepage';
+import { createProject, parseVisibility, visibilityField, type Visibility } from './visibility';
 
 quietSdkLogs();
 
@@ -235,6 +236,13 @@ const checkToken: CheckToken = async token => {
 // The hub owner's builder name (hubowner.ts), or null: no owner, or no admin to ask.
 function ownerName(): Promise<string | null> {
   return ADMIN_SQL ? hubOwnerName(ADMIN_SQL) : Promise.resolve(null);
+}
+
+// What new projects start as (hub_state "defaultVisibility"), for the New
+// project page's choice; null without the admin to ask, and the module then
+// applies the default itself (createProject with no choice).
+async function newProjectVisibility(): Promise<Visibility | null> {
+  return ADMIN_SQL ? hubDefaultVisibility(ADMIN_SQL).catch(() => null) : null;
 }
 
 // Who may join this hub (hubowner.ts): "anyone" when unset, or without the
@@ -525,7 +533,8 @@ async function templatesList(viewer: string): Promise<Template[]> {
   }
 }
 
-function newPage(viewer: string, spaces: string[], templates: Template[], error = '', values: Record<string, string> = {}) {
+// `visibility` is the hub's default for new projects, checked unless the form sent another choice back.
+function newPage(viewer: string, spaces: string[], templates: Template[], visibility: Visibility | null, error = '', values: Record<string, string> = {}) {
   const v = (k: string) => esc(values[k] ?? '');
   const chosen = values.space || viewer;
   const options = spaces.map(sp => `<option value="${esc(sp)}"${sp === chosen ? ' selected' : ''}>${esc(sp)}</option>`).join('');
@@ -560,6 +569,7 @@ ${about ? `<p class="muted">${esc(about)}</p>` : ''}
 <input type="text" id="description" name="description" value="${v('description')}" maxlength="500">
 <label for="builder">Built by <span class="muted">optional; a GitHub user or organization (name or github.com URL). Defaults to the GitHub owner when importing, otherwise you</span></label>
 <input type="text" id="builder" name="builder" value="${v('builder')}" maxlength="100">
+${visibilityField(parseVisibility(values.visibility) ?? visibility)}
 <p><button class="btn primary" type="submit">Create project</button></p></form>`
   );
 }
@@ -801,13 +811,13 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     // Keep ?template= through sign-in, so "Use this template" still picks it.
     if (!session) return redirect(res, `/-/login?next=${encodeURIComponent('/-/new' + url.search)}`);
     const spaces = await spacesOf(session);
-    const templates = await templatesList(session.username);
+    const [templates, visibility] = await Promise.all([templatesList(session.username), newProjectVisibility()]);
     if (req.method === 'GET') {
       const template = url.searchParams.get('template');
-      return send(res, 200, newPage(session.username, spaces, templates, '', template === null ? {} : { template }));
+      return send(res, 200, newPage(session.username, spaces, templates, visibility, '', template === null ? {} : { template }));
     }
     const form = await readForm(req);
-    const values = Object.fromEntries(['github', 'space', 'name', 'description', 'builder', 'template', 'goal'].map(k => [k, (form.get(k) ?? '').trim()]));
+    const values = Object.fromEntries(['github', 'space', 'name', 'description', 'builder', 'template', 'goal', 'visibility'].map(k => [k, (form.get(k) ?? '').trim()]));
     try {
       const source = values.github ? parseGithub(values.github) : null;
       if (values.github && !source) throw new Fail('Use a GitHub repository URL like https://github.com/owner/repo.');
@@ -831,8 +841,9 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
       }
       const project = `${owner}/${name}`;
       await withConn(session.token, async conn => {
-        if (!source && values.template) await conn.reducers.createProjectFromTemplate({ space: owner, name, description, template: values.template, goal: values.goal });
-        else await conn.reducers.createProject({ space: owner, name, description });
+        // No choice (neither box checked) leaves it to the hub's default, in the module.
+        const chosen = parseVisibility(values.visibility) ?? undefined;
+        await createProject(conn.reducers, { space: owner, name, description, visibility: chosen, ...(!source && values.template ? { template: values.template, goal: values.goal } : {}) });
         if (builder) await conn.reducers.setProjectBuilder({ project, ...builder });
         if (source) await conn.reducers.startImport({ project, source: source.url });
       });
@@ -842,7 +853,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
       }
       return redirect(res, `/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`);
     } catch (err) {
-      return send(res, 400, newPage(session.username, spaces, templates, errorMessage(err), values));
+      return send(res, 400, newPage(session.username, spaces, templates, visibility, errorMessage(err), values));
     }
   }
 

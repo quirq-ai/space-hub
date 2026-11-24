@@ -6,6 +6,7 @@ import type { Entry } from "@/lib/types";
 import { Browser, Glyph } from "@/ui/cards";
 import { hashOf, onLink } from "@/router";
 import { ClaudeOnboard } from "@/components/claude-onboard";
+import { PrivateBadge } from "@/components/private-badge";
 import { Ago, Avatar, AvatarStack, CommandTabs, Empty, Popover, SkeletonRows } from "@/ui/primitives";
 import { ActivityStream, HereNow, PageHeader, People, placeOf, Tabs } from "./common";
 import { ChatSection } from "./chat-section";
@@ -65,12 +66,12 @@ export function SpacePage({ name, tab, view, error, me, signIn, seen }: { name: 
         { key: "projects", title: "Projects", note: `Each one is a git repository on the hub that ${meta.kind === "org" ? "the org's members" : name} push to.`, cards: projects.map(project => {
           const fullName = `${name}/${project.name}`;
           return { key: project.name, name: project.name, search: [project.goal, project.detail].filter(Boolean).join(" "), people: peopleByProject.get(fullName), href: placeUrl({ space: name, project: project.name }), icon: <Glyph tone={project.goal ? "accent" : undefined}>{project.template ? <LayoutTemplate size={17} /> : project.goal ? <Target size={17} /> : <FolderGit2 size={17} />}</Glyph>, title: project.name,
-            labels: <GoalLabels progress={project.progress} template={project.template} />,
+            labels: <>{project.private && <PrivateBadge />}<GoalLabels progress={project.progress} template={project.template} /></>,
             detail: project.goal || project.detail || undefined, latest: latestOf(byProject.get(fullName)), time: project.modifiedAt, fresh: !!seen[fullName] && project.modifiedAt > seen[fullName] };
         }) },
         { key: "collaborates", title: "Collaborates on", note: "Projects of other spaces they may push to.", compact: true, cards: meta.collaborates.map(fullName => {
           const [space, project] = fullName.split("/");
-          return { key: fullName, name: fullName, href: placeUrl({ space, project }), icon: <Glyph><FolderGit2 size={16} /></Glyph>, title: fullName };
+          return { key: fullName, name: fullName, href: placeUrl({ space, project }), icon: <Glyph><FolderGit2 size={16} /></Glyph>, title: fullName, labels: meta.privateCollaborates?.includes(fullName) ? <PrivateBadge /> : undefined };
         }) },
       ]} /> : <Empty icon={<FolderGit2 size={20} />} title="No projects yet"><p>Create one with <code>spacehub project create {name}/&lt;name&gt; --source . --push</code>.</p></Empty>}
     </>}
