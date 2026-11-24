@@ -1,10 +1,12 @@
 import { useState } from "react";
 import { Bot, Boxes, Check, Download, FolderGit2, GitBranch, Globe, HardDrive, Lock, UserPlus } from "lucide-react";
-import { placeUrl, rawUrl, setProjectMember, setProjectVisibility, size, type Place, type ProjectMeta, type View } from "@/api";
-import { alreadyIn, builderOf, canAdd, canRemove, COLLABORATOR_HELP, removeConfirm } from "@/lib/collaborators";
+import { placeUrl, rawUrl, setProjectMember, setProjectVisibility, size, viewUrl, type HubMeta, type Place, type ProjectMeta, type View } from "@/api";
+import { useLive } from "@/hooks/use-live";
+import { BuilderPicker } from "@/components/builder-picker";
+import { canAdd, canRemove, candidatesOf, COLLABORATOR_HELP, removeConfirm } from "@/lib/collaborators";
 import { confirmText, PRIVATE_READERS, PROJECT_VISIBILITIES, PUBLIC_READERS, visibilityOf, type Visibility } from "@/lib/visibility";
 import { hashOf, onLink, type Route } from "@/router";
-import { Ago, Avatar, AvatarStack, CommandTabs, ErrorNote, Popover, Skeleton } from "@/ui/primitives";
+import { Ago, Avatar, AvatarStack, CommandTabs, Empty, ErrorNote, Popover, Skeleton } from "@/ui/primitives";
 import { ActivityStream, HereNow, PageHeader, People, placeOf, Tabs } from "./common";
 import { ChatSection } from "./chat-section";
 import { BranchesTab, CodeTab, CommitTab, CommitsTab } from "./code";
@@ -73,36 +75,34 @@ function Contributors({ place, meta }: { place: Place; meta: ProjectMeta }) {
 }
 
 /**
- * The project's collaborators, with Add and Remove for owners of its space (meta.canManageCollaborators) and Leave for
- * a collaborator; the hub refuses anyone else. Others see the list only. After a change the page's view is fetched
- * again (refresh), as the visibility control does, so the list and Contributors update without a reload.
+ * The project's collaborators, built like Settings → Hub's lists: rows with an avatar and a tag, a dashed card when
+ * there are none. Owners of its space (meta.canManageCollaborators) add from a picker of the hub's builders and
+ * remove anyone; a collaborator may leave; the hub refuses anyone else. Others see the list only. The picker reads
+ * the hub's view (as search does), only for those who may add. After a change the page's view is fetched again
+ * (refresh), as the visibility control does, so the list and Contributors update without a reload.
  */
 function Collaborators({ place, meta, me, refresh }: { place: Place; meta: ProjectMeta; me: string | null; refresh: () => void }) {
-  const [input, setInput] = useState("");
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const name = `${place.space}/${place.project}`;
   const manage = canAdd(meta);
-  const wanted = builderOf(input);
+  const hub = useLive<View<HubMeta>>(manage ? viewUrl({ space: "", project: "" }) : undefined, 0);
   if (!manage && meta.collaborators.length === 0) return null;
+  const candidates = candidatesOf(meta, { entries: hub.data?.snapshot.directory.entries ?? [], agents: hub.data?.meta.agentList ?? [] }, me);
   const change = async (builder: string, op: "add" | "remove") => {
     setBusy(`${op}:${builder}`); setError("");
     try {
       await setProjectMember(place, builder, op);
-      if (op === "add") setInput("");
       // Leaving a private project you could read only as its collaborator: it is gone for you, so go to its space.
-      if (op === "remove" && builder === me && !manage && visibilityOf(meta.visibility) === "private") return location.assign(placeUrl({ ...place, project: "" }));
+      if (op === "remove" && builder === me && !manage && visibilityOf(meta.visibility) === "private") { location.assign(placeUrl({ ...place, project: "" })); return true; }
       refresh();
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "That did not work.");
+      return false;
     } finally {
       setBusy("");
     }
-  };
-  const add = () => {
-    if (!wanted) return;
-    if (alreadyIn(meta, wanted)) return setError(`${wanted} is already a collaborator on ${name}.`);
-    void change(wanted, "add");
   };
   const remove = (who: string) => {
     if (!confirm(removeConfirm(name, who, me))) return;
@@ -111,17 +111,21 @@ function Collaborators({ place, meta, me, refresh }: { place: Place; meta: Proje
   return <section className="collaborators" aria-label="Collaborators">
     <h2 className="section-title">Collaborators</h2>
     <p className="quiet">{COLLABORATOR_HELP}</p>
-    {manage && <form className="runner-form" onSubmit={event => { event.preventDefault(); add(); }}>
-      <input value={input} onChange={event => { setInput(event.target.value); setError(""); }} placeholder="Builder name or GitHub login" aria-label="Builder name or GitHub login" spellCheck={false} autoCapitalize="off" />
-      <button type="submit" className="button primary small" disabled={!!busy || !wanted}><UserPlus size={14} />{busy.startsWith("add:") ? "Adding…" : "Add collaborator"}</button>
-    </form>}
+    {manage && <BuilderPicker candidates={candidates} loading={hub.loading && !hub.data} space={place.space} busy={!!busy} adding={busy.startsWith("add:")} onAdd={who => change(who, "add")} />}
+    {hub.error && <p className="launch-note is-error" role="alert">Could not load the hub's builders: {hub.error}</p>}
     {error && <p className="launch-note is-error" role="alert">{error}</p>}
     {meta.collaborators.length === 0
-      ? <p className="quiet">No collaborators yet. Owners and members of {place.space} can already push here.</p>
-      : <ul className="runner-list">{meta.collaborators.map(who => <li key={who} className="runner-row">
-        <div className="hub-row-main"><Avatar name={who} size={24} kind={meta.agents.includes(who) ? "agent" : undefined} /><strong>{who}</strong>{who === me && <span className="quiet">you</span>}</div>
-        {canRemove(meta, me, who) && <div className="subhub-actions"><button type="button" className="button small danger" disabled={!!busy} onClick={() => remove(who)}>{busy === `remove:${who}` ? "Removing…" : who === me && !manage ? "Leave" : "Remove"}</button></div>}
-      </li>)}</ul>}
+      ? <Empty icon={<UserPlus size={20} />} title="No collaborators yet"><p>Owners and members of {place.space} already have access.</p></Empty>
+      : <ul className="runner-list">{meta.collaborators.map(who => {
+        const agent = meta.agents.includes(who);
+        return <li key={who} className="runner-row">
+          <div className="hub-row-main">
+            <Avatar name={who} size={24} kind={agent ? "agent" : undefined} />
+            <div><strong>{who}</strong> <span className="label">collaborator</span>{agent && <> <span className="label">agent</span></>}{who === me && <> <span className="quiet">you</span></>}</div>
+          </div>
+          {canRemove(meta, me, who) && <div className="subhub-actions"><button type="button" className="button small danger" disabled={!!busy} onClick={() => remove(who)}>{busy === `remove:${who}` ? (who === me && !manage ? "Leaving…" : "Removing…") : who === me && !manage ? "Leave" : "Remove"}</button></div>}
+        </li>;
+      })}</ul>}
   </section>;
 }
 
