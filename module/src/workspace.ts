@@ -202,6 +202,8 @@ export type Meta =
       visibility: Visibility;
       /** The viewer owns the project's space, so may change its visibility (setProjectVisibility). */
       canSetVisibility: boolean;
+      /** The viewer owns the project's space, so may add and remove its collaborators (addProjectMember, removeProjectMember). */
+      canManageCollaborators: boolean;
       /** Who started the project's org (see the space meta); "" in a builder's space. */
       founder: string;
       owners: string[];
@@ -813,6 +815,8 @@ function projectLevel(db: Db, project: Project, requested: string, viewer: strin
       canWrite,
       visibility: isPrivate(db, project.id) ? 'private' : 'public',
       canSetVisibility: ownsSpace(db, project.owner, viewer),
+      // The reducers' rule for a builder: requireProjectAdmin (owners of the space; the syncer is never a web viewer).
+      canManageCollaborators: ownsSpace(db, project.owner, viewer),
       ...projectPeople(db, project),
       here: here(db, now, row => row.projectId === project.id),
       ...activity(db, row => row.projectId === project.id),

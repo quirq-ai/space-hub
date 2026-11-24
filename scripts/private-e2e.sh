@@ -6,7 +6,8 @@
 #   made private (only by an owner of its space): that builder's clone is
 #   refused, the project is "not found" and its page is a 404, as if missing,
 #   while the owner sees no change and the feed says what happened;
-#   made public again: access comes back.
+#   made public again: access comes back;
+#   a collaborator added by the owner reads a private project, and loses it when removed.
 #   scripts/private-e2e.sh            (needs: spacetime, git, node 22+, curl)
 #   PORT=4071 scripts/private-e2e.sh  another port
 set -euo pipefail
@@ -101,5 +102,16 @@ check "the other builder clones it again" clone bob c4
 [[ "$(page "$BOB" "space=$ALICE&project=notes")" == 200 ]] && ok "and reads its page again" || fail "and reads its page again"
 has "create --private makes a private one" "Created project $ALICE/hidden (private)" as alice spacehub project create hidden --private
 [[ "$(page "$BOB" "space=$ALICE&project=hidden")" == 404 ]] && ok "which the other builder cannot read" || fail "which the other builder cannot read"
+
+# The same reducers the app's collaborator route runs as the viewer (cli/src/app.ts /-/api/project-member).
+echo "a collaborator on a private project"
+[[ "$(page "$ALICE" "space=$ALICE&project=hidden")" == 200 ]] && grep -q '"canManageCollaborators":true' "$WORK/page.json" && ok "its owner may manage collaborators" || fail "owner manages collaborators"
+says "the other builder may not add themself" "permission denied" as bob spacehub project member add "$ALICE/hidden" "$BOB"
+has "its owner adds them" "$BOB is a collaborator" as alice spacehub project member add "$ALICE/hidden" "$BOB"
+[[ "$(page "$BOB" "space=$ALICE&project=hidden")" == 200 ]] && ok "now they read it" || fail "now they read it"
+grep -q "\"collaborators\":\[\"$BOB\"\]" "$WORK/page.json" && ok "listed as its collaborator" || fail "listed as its collaborator"
+grep -q '"canManageCollaborators":false' "$WORK/page.json" && ok "who may not manage collaborators" || fail "collaborator may not manage"
+has "its owner removes them" "$BOB is no longer a collaborator" as alice spacehub project member remove "$ALICE/hidden" "$BOB"
+[[ "$(page "$BOB" "space=$ALICE&project=hidden")" == 404 ]] && ok "and they lose it" || fail "and they lose it"
 
 echo "all $PASS checks passed"

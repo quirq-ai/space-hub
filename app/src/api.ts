@@ -33,6 +33,8 @@ export type ProjectMeta = {
   head: { oid: string; subject: string; author: string; time: string } | null; deps: number; canWrite: boolean; founder?: string; owners: string[]; members: string[]; agents: string[];
   /** Who reads it (absent from an older hub: public), and whether the viewer owns its space and so may change that. */
   visibility?: Visibility; canSetVisibility?: boolean;
+  /** The viewer owns the project's space, so may add and remove its collaborators (absent from an older hub: no). */
+  canManageCollaborators?: boolean;
   collaborators: string[]; here: Here[]; activity: ActivityItem[]; activityTotal?: number; goal: SpaceGoal | null;
   /** A repo room (/gh/<owner>/<repo>): its repository, caps and questions. */
   room?: RoomInfo;
@@ -125,6 +127,11 @@ export async function setSpacePicture(space: string, login: string): Promise<voi
 /** An owner of the project's space makes it public or private (the hub refuses anyone else). */
 export async function setProjectVisibility(place: Place, visibility: Visibility): Promise<void> {
   await act("/-/api/project-visibility", { project: `${place.space}/${place.project}`, visibility }, "change who can see the project");
+}
+
+/** An owner of the project's space adds or removes a collaborator, or a collaborator leaves (the hub refuses anyone else). */
+export async function setProjectMember(place: Place, builder: string, op: "add" | "remove"): Promise<void> {
+  await act("/-/api/project-member", { project: `${place.space}/${place.project}`, builder, op }, op === "add" ? "add the collaborator" : "remove the collaborator");
 }
 
 /** Start the one chat of an org, an agent or a project (lib/chat-place.ts says where it goes). */

@@ -158,11 +158,13 @@ describe('a private project on the module pages', () => {
       const project = JSON.parse(api(viewer, 'space=bob&project=xsecretx').body).meta;
       expect(project.visibility).toBe('private');
       expect(project.canSetVisibility, `${viewer} owns bob?`).toBe(viewer === 'bob');
+      expect(project.canManageCollaborators, `${viewer} adds and removes collaborators?`).toBe(viewer === 'bob');
     }
     expect(JSON.parse(api('dave', 'space=dave').body).meta.privateCollaborates).toEqual(['bob/xsecretx']);
     expect(JSON.parse(api('carol', 'space=dave').body).meta.privateCollaborates, 'carol reads none of it').toEqual([]);
     const shown = JSON.parse(api('carol', 'space=bob&project=shown').body).meta;
-    expect([shown.visibility, shown.canSetVisibility]).toEqual(['public', false]);
+    expect([shown.visibility, shown.canSetVisibility, shown.canManageCollaborators]).toEqual(['public', false, false]);
+    expect(JSON.parse(api(null, 'space=bob&project=shown').body).meta.canManageCollaborators).toBe(false);
     expect(JSON.parse(api(null, 'space=bob&project=shown').body).meta.canSetVisibility).toBe(false);
   });
 

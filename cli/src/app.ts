@@ -16,6 +16,8 @@
 //   POST /-/api/start-chat                 start an org's, an agent's or a project's chat (start_chat)
 //   POST /-/api/project-visibility         an owner of the project's space makes it public or private
 //                                          (set_project_visibility)
+//   POST /-/api/project-member             an owner of the project's space adds or removes a collaborator,
+//                                          or a collaborator leaves (add/remove_project_member)
 //
 // The browser never talks to SpacetimeDB: reads come from the module over
 // HTTP, asked for as the verified viewer (modulepage.ts), so a private project
@@ -31,6 +33,7 @@ import { findUser } from './conn';
 import { forgetAvatar, handleAvatar } from './avatar';
 import { visitorLanding } from './visitor';
 import { asViewer, moduleUrl, type ModuleLink } from './modulepage';
+import { projectMemberAction } from './projectmember';
 
 export const APP_CSP =
   "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self'; connect-src 'self'; frame-src 'self' https:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
@@ -145,6 +148,9 @@ const ACTIONS: Record<string, { what: string; usage: string; call: (input: Recor
       ? conn => conn.reducers.setProjectVisibility({ project, visibility })
       : null),
   },
+  // Owners of the project's space add and remove collaborators, and a collaborator may leave; the module
+  // refuses anyone else, and an agent only its own owners add (addProjectMember, removeProjectMember).
+  '/-/api/project-member': projectMemberAction,
 };
 
 /** Handle the app's routes; false when the request is not one of them. */
