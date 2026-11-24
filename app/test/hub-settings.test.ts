@@ -1,20 +1,41 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { builderAction, operatorsLine, parseHubSettings } from "../src/lib/hub-settings.ts";
+import { builderAction, inviteState, loginOf, operatorsLine, parseHubSettings } from "../src/lib/hub-settings.ts";
 
 const answer = {
   owner: "alice",
   operators: ["alice", "ops"],
   adminFallback: false,
   builders: [{ name: "alice", suspended: false }, { name: "bob", suspended: true }, { name: "carol", suspended: false }],
+  join: { policy: "invite" as const, allowlist: ["carol"], invites: [{ id: "1", createdBy: "alice", createdAt: 1000, expiresAt: 2000, usedBy: "" }] },
 };
+const NOBODY_LISTED = { policy: "anyone", allowlist: [], invites: [] };
 
 test("the hub's settings are read defensively", () => {
   assert.deepEqual(parseHubSettings(answer), answer);
   assert.equal(parseHubSettings(null), null);
   assert.equal(parseHubSettings({ error: "Only the hub's owner manages the hub." }), null);
   assert.deepEqual(parseHubSettings({ owner: "alice", operators: [1, "ops"], builders: [{ name: 2 }, { name: "bob", suspended: "yes" }] }),
-    { owner: "alice", operators: ["ops"], adminFallback: false, builders: [{ name: "bob", suspended: false }] });
+    { owner: "alice", operators: ["ops"], adminFallback: false, builders: [{ name: "bob", suspended: false }], join: NOBODY_LISTED });
+  // An older web service sends no join settings, or odd ones: the hub lets anyone in, as before.
+  assert.deepEqual(parseHubSettings({ owner: "alice", join: { policy: "members", allowlist: [3, "zed"], invites: [{ id: 4 }, null] } })?.join,
+    { policy: "anyone", allowlist: ["zed"], invites: [] });
+});
+
+test("an invite reads as used, expired or open for so long", () => {
+  const hour = 3_600_000;
+  assert.deepEqual(inviteState({ id: "1", createdBy: "a", createdAt: 0, expiresAt: 10 * hour, usedBy: "bob" }, 0), { kind: "used", text: "Used by bob" });
+  assert.deepEqual(inviteState({ id: "1", createdBy: "a", createdAt: 0, expiresAt: hour, usedBy: "" }, hour), { kind: "expired", text: "Expired" });
+  assert.equal(inviteState({ id: "1", createdBy: "a", createdAt: 0, expiresAt: hour, usedBy: "" }, 0).text, "Open, 1 more hour");
+  assert.equal(inviteState({ id: "1", createdBy: "a", createdAt: 0, expiresAt: 7 * 24 * hour, usedBy: "" }, 0).text, "Open, 7 more days");
+});
+
+test("a GitHub login is taken as typed, with @ or as a profile link", () => {
+  assert.equal(loginOf(" @octocat "), "octocat");
+  assert.equal(loginOf("https://github.com/Octo-Cat/"), "Octo-Cat");
+  assert.equal(loginOf("not a login"), null);
+  assert.equal(loginOf("-bad"), null);
+  assert.equal(loginOf(""), null);
 });
 
 test("the operators line names the owner first, always", () => {

@@ -313,7 +313,8 @@ const refSync = table(
 
 // The hub's settings: who its admin is ("admin") and where accounts come from
 // ("accounts": "github" for sign-up with GitHub, "xo" once xo makes them;
-// no row is open sign-up).
+// no row is open sign-up), its owner ("owner", "owner_login") and who may join
+// ("join": "anyone", "allowlist" or "invite"; no row is anyone).
 const hubState = table({ name: 'hub_state' }, { key: t.string().primaryKey(), value: t.string() });
 
 // What xo.quirq.dev keeps for each xo user (Clerk only says who they are):
@@ -374,6 +375,36 @@ const builderSuspension = table(
     username: t.string().unique(), // kept current when the builder is renamed
     suspendedBy: t.string(),
     suspendedAt: t.timestamp(),
+  }
+);
+
+// Who may join a hub whose join policy (hub_state "join") is "allowlist" or
+// "invite": GitHub logins the owner let in, lowercased. Organizations are left
+// for later (reading private org membership needs a GitHub scope the sign-in
+// does not ask for). Private: the web service reads it as the admin.
+const joinRule = table(
+  { name: 'join_rule' },
+  {
+    login: t.string().primaryKey(),
+    addedBy: t.string(),
+    addedAt: t.timestamp(),
+  }
+);
+
+// One-time invite codes the owner made: anyone holding one joins once, before
+// it runs out. Only the code's SHA-1 is kept (the owner is shown the code
+// once), so the table, its backups included, gives no one a way in.
+// `usedBy` is "" until someone joins with it. Private, like join_rule.
+const joinInvite = table(
+  { name: 'join_invite' },
+  {
+    id: t.u64().primaryKey().autoInc(),
+    codeHash: t.string().unique(),
+    createdBy: t.string(),
+    createdAt: t.timestamp(),
+    expiresAt: t.timestamp(),
+    usedBy: t.string(),
+    usedAt: t.timestamp(), // createdAt until used
   }
 );
 
@@ -494,6 +525,8 @@ const spacetimedb = schema({
   xoAgent,
   githubAccount,
   builderSuspension,
+  joinRule,
+  joinInvite,
   spaceAlias,
   xoLink,
   runner,
@@ -725,9 +758,13 @@ function checkSpaceName(ctx: Ctx, name: string) {
   }
 }
 
-// A builder's login and its personal space.
-function addBuilder(ctx: Ctx, identity: Identity, username: string) {
+// A builder's login and its personal space. Every way a new builder is made
+// ends here, so this is the one place the hub's join policy is checked
+// (mayJoin): `join` is what the caller knows of the person, a GitHub login the
+// web service checked with GitHub and/or an invite code they brought.
+function addBuilder(ctx: Ctx, identity: Identity, username: string, join: JoinCredentials) {
   checkSpaceName(ctx, username);
+  mayJoin(ctx, username, join);
   ctx.db.user.insert({ identity, username, createdAt: ctx.timestamp });
   ctx.db.space.insert({ name: username, kind: 'personal', displayName: username, description: '', parent: '', createdBy: username, createdAt: ctx.timestamp });
   logActivity(ctx, { kind: 'agent_registered', agent: username });
@@ -739,7 +776,9 @@ function accounts(ctx: Ctx) {
   return ctx.db.hubState.key.find('accounts')?.value ?? 'open';
 }
 
-export const registerUser = spacetimedb.reducer({ username: t.string() }, (ctx, { username }) => {
+// A name registered on an open hub is no GitHub login anyone checked, so on a
+// hub whose join policy is not "anyone" it joins only with an invite code.
+function registerBuilder(ctx: Ctx, username: string, invite: string) {
   const source = accounts(ctx);
   if (source === 'xo') throw new SenderError('builders on this hub are made by xo: run xo login');
   if (source === 'github') {
@@ -749,8 +788,15 @@ export const registerUser = spacetimedb.reducer({ username: t.string() }, (ctx, 
   if (existing) throw new SenderError(`this identity is already the builder "${existing.username}"`);
   const agent = ctx.db.agent.identity.find(ctx.sender);
   if (agent) throw new SenderError(`this identity is the agent "${agent.name}"`);
-  addBuilder(ctx, ctx.sender, username);
-});
+  addBuilder(ctx, ctx.sender, username, { invite });
+}
+
+export const registerUser = spacetimedb.reducer({ username: t.string() }, (ctx, { username }) => registerBuilder(ctx, username, ''));
+
+// The same with an invite code (spacehub auth login --builder <name> --invite <code>).
+export const registerWithInvite = spacetimedb.reducer({ username: t.string(), invite: t.string() }, (ctx, { username, invite }) =>
+  registerBuilder(ctx, username, invite)
+);
 
 // A builder leaves the hub: its login, its personal space, its places in
 // other spaces (its activity stays, recorded as builder_deleted). Its projects
@@ -914,6 +960,112 @@ export const restoreBuilder = spacetimedb.reducer({ username: t.string() }, (ctx
   ctx.db.builderSuspension.identity.delete(builder.identity.toHexString());
 });
 
+// ---------------------------------------------------------------- join gate
+
+// Who may become a builder here (hub_state "join"):
+//   "anyone"     anyone the sign-up path itself allows (no row: today's behaviour)
+//   "allowlist"  GitHub logins in join_rule, the owner's login, or an invite code
+//   "invite"     the same; the difference is how the hub presents itself
+// Every new builder passes mayJoin (addBuilder); builders that already exist
+// are never checked again, so changing the policy locks no one out.
+const JOIN_POLICIES = ['anyone', 'allowlist', 'invite'] as const;
+const INVITE_CODE = /^[A-Za-z0-9_-]{16,128}$/;
+const MAX_INVITE_HOURS = 30 * 24;
+const HOUR_MICROS = 3_600_000_000n;
+
+interface JoinCredentials {
+  login?: string; // a GitHub login the web service checked with GitHub
+  invite?: string; // an invite code the person brought
+}
+
+function joinPolicy(ctx: Ctx): (typeof JOIN_POLICIES)[number] {
+  const value = ctx.db.hubState.key.find('join')?.value;
+  return value === 'allowlist' || value === 'invite' ? value : 'anyone';
+}
+
+function inviteHash(code: string) {
+  return new Sha1().update(new TextEncoder().encode(code)).hex();
+}
+
+const refuseJoin = (why: string) => new SenderError(`not allowed to join this hub: ${why}`);
+
+function mayJoin(ctx: Ctx, username: string, { login = '', invite = '' }: JoinCredentials) {
+  const policy = joinPolicy(ctx);
+  if (policy === 'anyone') return;
+  const wanted = login.toLowerCase();
+  if (wanted) {
+    if (ctx.db.hubState.key.find('owner_login')?.value.toLowerCase() === wanted) return;
+    if (ctx.db.joinRule.login.find(wanted)) return;
+  }
+  const code = invite.trim();
+  if (code) {
+    const row = code.length <= 128 ? ctx.db.joinInvite.codeHash.find(inviteHash(code)) : null;
+    if (!row) throw refuseJoin('that invite code is not valid here; ask the hub\'s owner for a new one');
+    if (row.usedBy) throw refuseJoin('that invite code was already used; ask the hub\'s owner for a new one');
+    if (row.expiresAt.microsSinceUnixEpoch <= ctx.timestamp.microsSinceUnixEpoch) {
+      throw refuseJoin('that invite code has expired; ask the hub\'s owner for a new one');
+    }
+    ctx.db.joinInvite.id.update({ ...row, usedBy: username, usedAt: ctx.timestamp });
+    return;
+  }
+  if (policy === 'allowlist' && wanted) {
+    throw refuseJoin(`the GitHub account ${login} is not on its allowlist; ask the hub's owner to add it, or for an invite code`);
+  }
+  throw refuseJoin(
+    policy === 'allowlist'
+      ? "it lets in only GitHub accounts on its allowlist, or someone with an invite code (spacehub auth login --invite <code>)"
+      : "it is invite-only; ask the hub's owner for an invite code (spacehub auth login --invite <code>)"
+  );
+}
+
+// The owner sets the join policy. Builders already here stay.
+export const setJoinPolicy = spacetimedb.reducer({ policy: t.string() }, (ctx, { policy }) => {
+  requireHubOwner(ctx);
+  if (!(JOIN_POLICIES as readonly string[]).includes(policy)) throw new SenderError('the join policy is "anyone", "allowlist" or "invite"');
+  // "anyone" is kept as a row too, so a later "set if unset" (the template's first start) leaves the owner's choice.
+  setHubState(ctx, 'join', policy);
+});
+
+// The owner lets a GitHub login join (allowlist and invite hubs alike).
+// Adding one that is there changes nothing.
+export const allowJoin = spacetimedb.reducer({ login: t.string() }, (ctx, { login }) => {
+  const by = requireHubOwner(ctx);
+  const name = login.trim().replace(/^@/, '');
+  if (!GITHUB_LOGIN.test(name)) throw new SenderError(`invalid GitHub login "${name}"`);
+  const key = name.toLowerCase();
+  if (!ctx.db.joinRule.login.find(key)) ctx.db.joinRule.insert({ login: key, addedBy: by, addedAt: ctx.timestamp });
+});
+
+// The owner takes a login off the list. A builder who joined with it stays
+// (suspendBuilder removes one); removing one that is not there changes nothing.
+export const disallowJoin = spacetimedb.reducer({ login: t.string() }, (ctx, { login }) => {
+  requireHubOwner(ctx);
+  ctx.db.joinRule.login.delete(login.trim().replace(/^@/, '').toLowerCase());
+});
+
+// The owner makes a one-time invite code, good for `hours`. The web service
+// makes the code (a module has no secret randomness) and shows it once; only
+// its hash is kept.
+export const createInvite = spacetimedb.reducer({ code: t.string(), hours: t.u32() }, (ctx, { code, hours }) => {
+  const by = requireHubOwner(ctx);
+  if (!INVITE_CODE.test(code)) throw new SenderError('an invite code is 16 to 128 letters, digits, "-" or "_"');
+  if (hours < 1 || hours > MAX_INVITE_HOURS) throw new SenderError(`an invite lasts 1 to ${MAX_INVITE_HOURS} hours`);
+  const codeHash = inviteHash(code);
+  if (ctx.db.joinInvite.codeHash.find(codeHash)) throw new SenderError('that invite code exists already');
+  const expiresAt = new Timestamp(ctx.timestamp.microsSinceUnixEpoch + BigInt(hours) * HOUR_MICROS);
+  ctx.db.joinInvite.insert({ id: 0n, codeHash, createdBy: by, createdAt: ctx.timestamp, expiresAt, usedBy: '', usedAt: ctx.timestamp });
+});
+
+// The owner revokes an invite nobody used yet (expired ones too). A used one
+// stays as the record of who joined with it; one that is gone changes nothing.
+export const revokeInvite = spacetimedb.reducer({ id: t.u64() }, (ctx, { id }) => {
+  requireHubOwner(ctx);
+  const row = ctx.db.joinInvite.id.find(id);
+  if (!row) return;
+  if (row.usedBy) throw new SenderError(`that invite was already used by ${row.usedBy}`);
+  ctx.db.joinInvite.id.delete(id);
+});
+
 // Clerk user ids, as Clerk writes them (user_2abc...).
 const XO_SUBJECT = /^[A-Za-z0-9_]{1,64}$/;
 const MAX_XO_DOC = 256 * 1024;
@@ -955,7 +1107,8 @@ export const xoLinkAgent = spacetimedb.reducer(
     if (!token || token.length > 4096) throw new SenderError('invalid token');
     const identity = Identity.fromString(hex.replace(/^0x/, '').toLowerCase());
     if (ctx.db.user.identity.find(identity)) throw new SenderError('that identity is already a builder');
-    addBuilder(ctx, identity, username);
+    // No GitHub login here: on a hub whose join policy is not "anyone", xo makes no such builder.
+    addBuilder(ctx, identity, username, {});
     ctx.db.xoAgent.insert({ subject, username, identity, token, createdAt: ctx.timestamp });
   }
 );
@@ -964,24 +1117,33 @@ export const xoLinkAgent = spacetimedb.reducer(
 // the GitHub account `githubId`, named after its login. The web service calls
 // this once it has checked the account with GitHub; on a hub whose builders
 // come only from xo (accounts "xo"), GitHub sign-up is off.
+function linkGithubBuilder(ctx: Ctx, githubId: bigint, login: string, hex: string, token: string, invite: string) {
+  requireAdmin(ctx);
+  if (accounts(ctx) === 'xo') throw new SenderError('builders on this hub are made by xo: run xo login');
+  if (githubId === 0n) throw new SenderError('invalid GitHub account id');
+  if (!GITHUB_LOGIN.test(login)) throw new SenderError(`invalid GitHub login "${login}"`);
+  const known = ctx.db.githubAccount.githubId.find(githubId);
+  if (known) throw new SenderError(`that GitHub account is already the builder "${known.username}"`);
+  if (!/^(0x)?[0-9a-fA-F]{64}$/.test(hex)) throw new SenderError('identity must be 64 hex digits');
+  if (!token || token.length > 4096) throw new SenderError('invalid token');
+  const identity = Identity.fromString(hex.replace(/^0x/, '').toLowerCase());
+  if (ctx.db.user.identity.find(identity) || ctx.db.agent.identity.find(identity)) throw new SenderError('that identity is already a builder or an agent');
+  const username = login.toLowerCase();
+  addBuilder(ctx, identity, username, { login, invite });
+  ctx.db.githubAccount.insert({ githubId, login, username, identity, token, createdAt: ctx.timestamp });
+  noteOwner(ctx, githubId, login);
+}
+
 export const githubLinkBuilder = spacetimedb.reducer(
   { githubId: t.u64(), login: t.string(), identity: t.string(), token: t.string() },
-  (ctx, { githubId, login, identity: hex, token }) => {
-    requireAdmin(ctx);
-    if (accounts(ctx) === 'xo') throw new SenderError('builders on this hub are made by xo: run xo login');
-    if (githubId === 0n) throw new SenderError('invalid GitHub account id');
-    if (!GITHUB_LOGIN.test(login)) throw new SenderError(`invalid GitHub login "${login}"`);
-    const known = ctx.db.githubAccount.githubId.find(githubId);
-    if (known) throw new SenderError(`that GitHub account is already the builder "${known.username}"`);
-    if (!/^(0x)?[0-9a-fA-F]{64}$/.test(hex)) throw new SenderError('identity must be 64 hex digits');
-    if (!token || token.length > 4096) throw new SenderError('invalid token');
-    const identity = Identity.fromString(hex.replace(/^0x/, '').toLowerCase());
-    if (ctx.db.user.identity.find(identity) || ctx.db.agent.identity.find(identity)) throw new SenderError('that identity is already a builder or an agent');
-    const username = login.toLowerCase();
-    addBuilder(ctx, identity, username);
-    ctx.db.githubAccount.insert({ githubId, login, username, identity, token, createdAt: ctx.timestamp });
-    noteOwner(ctx, githubId, login);
-  }
+  (ctx, { githubId, login, identity, token }) => linkGithubBuilder(ctx, githubId, login, identity, token, '')
+);
+
+// The same for someone who brought an invite code (the sign-up page, or
+// spacehub auth login --invite <code>), on a hub whose join policy needs one.
+export const githubLinkBuilderWithInvite = spacetimedb.reducer(
+  { githubId: t.u64(), login: t.string(), identity: t.string(), token: t.string(), invite: t.string() },
+  (ctx, { githubId, login, identity, token, invite }) => linkGithubBuilder(ctx, githubId, login, identity, token, invite)
 );
 
 // An xo user signs in as the builder of the GitHub account they connected to
@@ -1020,7 +1182,7 @@ export const xoLinkGithub = spacetimedb.reducer(
       const id = Identity.fromString(hex.replace(/^0x/, '').toLowerCase());
       if (ctx.db.user.identity.find(id) || ctx.db.agent.identity.find(id)) throw new SenderError('that identity is already a builder or an agent');
       builder = login.toLowerCase();
-      addBuilder(ctx, id, builder);
+      addBuilder(ctx, id, builder, { login });
       ctx.db.githubAccount.insert({ githubId, login, username: builder, identity: id, token, createdAt: ctx.timestamp });
     }
     // One xo user per GitHub account: whoever connected it last.
@@ -1530,7 +1692,12 @@ export const openRepoRoom = spacetimedb.reducer(
     if (!name) throw new SenderError('use a GitHub owner and repository name');
     const opener = ctx.db.user.username.find(openedBy) ? openedBy : 'someone';
     if (ctx.db.project.fullName.find(`${space}/${name}`)) return;
-    const full = `${owner.trim()}/${repo.trim().replace(/\.git$/i, '')}`;
+    // A hub that chooses who joins lets only its builders open new rooms.
+    if (joinPolicy(ctx) !== 'anyone') {
+      const by = ctx.db.user.username.find(openedBy);
+      if (!by || isSuspended(ctx, by.identity)) throw new SenderError('only builders of this hub open new rooms: sign in first');
+    }
+    const full =`${owner.trim()}/${repo.trim().replace(/\.git$/i, '')}`;
     const sp = createProjectIn(ctx, space, name, (description.trim() || `The open room for github.com/${full}`).slice(0, 300), opener);
     const built = commitFiles(roomFiles(owner.trim(), repo.trim().replace(/\.git$/i, ''), space, description, opener), opener, nowSeconds(ctx), `Open the room for github.com/${full}`);
     let added = 0n;

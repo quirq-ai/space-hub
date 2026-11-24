@@ -46,7 +46,9 @@ AUTH
                   --with-token   log in with a token from "auth token" instead (read from stdin)
                   --builder <name>   register a name without GitHub, on hubs with open sign-up
                     (--agent and --username are aliases of --builder)
-  auth status     Show the server, builder and identity in use
+                  --invite <code>   sign up with an invite code, on a hub that lets in only
+                    invited or listed people
+  auth status    Show the server, builder and identity in use
   auth token      Print the identity token (log in elsewhere with --with-token)
   auth logout     Forget the token for the current server  [--yes]
   auth delete     Delete this builder from the server: its projects, agents and places in
@@ -431,6 +433,7 @@ async function authLogin(args: string[]) {
   const database = opt(args, '--db');
   const wanted = opt(args, '--builder', '-b', '--agent', '-a', '--username', '-u')?.toLowerCase();
   const withToken = bool(args, '--with-token');
+  const invite = opt(args, '--invite')?.trim() ?? '';
   if (server || database) saveSettings({ server, database });
   if (withToken) {
     let token = '';
@@ -439,7 +442,7 @@ async function authLogin(args: string[]) {
     if (!token) die('--with-token reads a token from stdin, and none arrived');
     saveToken(loadConfig().server, token);
   }
-  if (!withToken && !wanted) return githubSignIn();
+  if (!withToken && !wanted) return githubSignIn(invite);
   const { conn, identity, server: at, database: db } = await open();
   let user = await findUser(conn, identity);
   if (user && wanted && wanted !== user.username) {
@@ -452,7 +455,9 @@ async function authLogin(args: string[]) {
       name = (await ask('Choose a builder name: ')).toLowerCase();
     }
     if (!name) die('no builder name given');
-    await conn.reducers.registerUser({ username: name });
+    // Only a sign-up with a code calls the reducer that takes one (older hubs have only registerUser).
+    if (invite) await conn.reducers.registerWithInvite({ username: name, invite });
+    else await conn.reducers.registerUser({ username: name });
     user = await findUser(conn, identity);
   }
   out(`Logged in to ${at} (database ${db}) as builder ${user?.username ?? wanted}`);
@@ -486,7 +491,7 @@ function webUrl(server: string) {
 // Sign up or log in with GitHub: the hub learns whose GitHub account it is
 // (from its own device flow, or by asking GitHub about gh's token) and answers with that account's builder and token, making the builder the
 // first time. The saved token is kept when it already is a builder.
-async function githubSignIn() {
+async function githubSignIn(invite = '') {
   const cfg = loadConfig();
   if (cfg.token) {
     const { conn, identity, server: at, database: db } = await open();
@@ -519,7 +524,7 @@ async function githubSignIn() {
       );
       if (!/^y(es)?$/i.test(answer)) throw new Error('nothing was done');
     };
-    body = (await deviceSignIn(web, host, note, confirm)) as Answer | null;
+    body = (await deviceSignIn(web, host, note, confirm, undefined, invite)) as Answer | null;
   } catch (err) {
     die((err as Error).message);
   }
@@ -535,7 +540,9 @@ async function githubSignIn() {
     process.stderr.write(`Checking your GitHub account with ${host} (the GitHub token is used once, not kept)\n`);
     let res: Response;
     try {
-      res = await fetch(url, { method: 'POST', headers: { authorization: `Bearer ${github}` }, redirect: 'error', signal: AbortSignal.timeout(60_000) });
+      // An invite code goes as JSON; without one the request is as before.
+      const headers: Record<string, string> = { authorization: `Bearer ${github}`, ...(invite ? { 'content-type': 'application/json' } : {}) };
+      res = await fetch(url, { method: 'POST', headers, ...(invite ? { body: JSON.stringify({ invite }) } : {}), redirect: 'error', signal: AbortSignal.timeout(60_000) });
     } catch {
       die(`could not reach ${url}`);
     }
@@ -921,7 +928,7 @@ async function projectWho(args: string[]) {
 
 // Flags that take a value, so the first positional argument can be found
 // before a command decides whether it names a space or a project.
-const VALUE_FLAGS = new Set(['-d', '--description', '--default-branch', '--builder', '-r', '--remote', '--exec', '--interval', '-s', '--source']);
+const VALUE_FLAGS = new Set(['-d', '--description', '--default-branch', '--builder', '-r', '--remote', '--exec', '--interval', '-s', '--source', '--invite']);
 
 function firstPositional(args: string[]): string | undefined {
   for (let i = 0; i < args.length; i++) {

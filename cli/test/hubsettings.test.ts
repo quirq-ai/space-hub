@@ -3,15 +3,21 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { handleHubSettings, operatorsOf, type HubSettingsDeps } from '../src/hubsettings.ts';
-import { hubOwnerName, hubPeople, isSuspended } from '../src/hubowner.ts';
+import { handleHubSettings, INVITE_HOURS, operatorsOf, type HubSettingsDeps } from '../src/hubsettings.ts';
+import { hubOwnerName, hubPeople, isSuspended, joinPolicy, joinSettings, type JoinSettings } from '../src/hubowner.ts';
+
+const JOIN: JoinSettings = {
+  policy: 'invite',
+  allowlist: ['carol'],
+  invites: [{ id: '1', createdBy: 'alice', createdAt: 1000, expiresAt: 2000, usedBy: '' }],
+};
 
 function listen(server: http.Server) {
   return new Promise<string>(r => server.listen(0, '127.0.0.1', () => r(`http://127.0.0.1:${(server.address() as AddressInfo).port}`)));
 }
 
 // SpacetimeDB's SQL as the admin: hub_state, github_account and builder_suspension.
-async function fakeSql(state: Record<string, string>, accounts: Record<string, string>, suspended: string[]) {
+async function fakeSql(state: Record<string, string>, accounts: Record<string, string>, suspended: string[], join: { join_rule?: unknown[][]; join_invite?: unknown[][] } = {}) {
   const asked: string[] = [];
   const server = http.createServer(async (req, res) => {
     let body = '';
@@ -20,6 +26,8 @@ async function fakeSql(state: Record<string, string>, accounts: Record<string, s
     const table = (names: string[], rows: unknown[][]) => res.end(JSON.stringify([{ schema: { elements: names.map(n => ({ name: { some: n } })) }, rows }]));
     const key = /key = '([^']*)'/.exec(body)?.[1];
     if (body.includes('FROM hub_state')) return table(['value'], key && state[key] ? [[state[key]]] : []);
+    if (body.includes('FROM join_rule')) return table(['login'], join.join_rule ?? []);
+    if (body.includes('FROM join_invite')) return table(['id', 'created_by', 'created_at', 'expires_at', 'used_by'], join.join_invite ?? []);
     if (body.includes('FROM github_account')) {
       const name = accounts[/github_id = (\d+)/.exec(body)![1]];
       return table(['username'], name ? [[name]] : []);
@@ -83,11 +91,21 @@ async function site(over: Partial<HubSettingsDeps> = {}) {
     operators: ['ops'],
     adminFallback: false,
     people: async () => ({ builders: [{ name: 'alice', suspended: false }, { name: 'bob', suspended: false }] }),
+    join: async () => JOIN,
     suspend: async (token, name) => {
       if (name === 'alice') throw new Error("Error: the hub's owner cannot be suspended");
       calls.push(`suspend ${name} as ${token}`);
     },
     restore: async (token, name) => void calls.push(`restore ${name} as ${token}`),
+    setJoinPolicy: async (token, policy) => {
+      if (!['anyone', 'allowlist', 'invite'].includes(policy)) throw new Error('Error: the join policy is "anyone", "allowlist" or "invite"');
+      calls.push(`join ${policy} as ${token}`);
+    },
+    allow: async (token, login) => void calls.push(`allow ${login} as ${token}`),
+    disallow: async (token, login) => void calls.push(`disallow ${login} as ${token}`),
+    createInvite: async (token, code, hours) => void calls.push(`invite ${code} ${hours}h as ${token}`),
+    revokeInvite: async (token, id) => void calls.push(`revoke ${id} as ${token}`),
+    signupUrl: () => 'https://hub.example/-/signup',
     ...over,
   };
   const server = http.createServer(async (req, res) => {
@@ -115,9 +133,87 @@ test('the owner sees the hub: its operators and its builders', async () => {
       operators: ['alice', 'ops'],
       adminFallback: false,
       builders: [{ name: 'alice', suspended: false }, { name: 'bob', suspended: false }],
+      join: JOIN,
     });
   } finally {
     s.close();
+  }
+});
+
+test('the owner sets the join policy, edits the allowlist and makes and revokes invites, as itself', async () => {
+  const s = await site();
+  try {
+    assert.deepEqual(await s.ask('/-/api/hub/join', 'tok-alice', { policy: 'invite' }), { status: 200, body: { ok: true } });
+    assert.deepEqual(await s.ask('/-/api/hub/allow', 'tok-alice', { login: 'carol' }), { status: 200, body: { ok: true } });
+    assert.deepEqual(await s.ask('/-/api/hub/disallow', 'tok-alice', { login: 'carol' }), { status: 200, body: { ok: true } });
+    const made = await s.ask('/-/api/hub/invite', 'tok-alice', { hours: 48 });
+    assert.equal(made.status, 200);
+    const code = String(made.body?.code);
+    assert.match(code, /^[A-Za-z0-9_-]{22}$/);
+    assert.equal(made.body?.link, `https://hub.example/-/signup?invite=${code}`);
+    const other = await s.ask('/-/api/hub/invite', 'tok-alice', {});
+    assert.notEqual(other.body?.code, code, 'every code is new');
+    assert.deepEqual(await s.ask('/-/api/hub/revoke', 'tok-alice', { id: '3' }), { status: 200, body: { ok: true } });
+    assert.deepEqual(s.calls, [
+      'join invite as tok-alice',
+      'allow carol as tok-alice',
+      'disallow carol as tok-alice',
+      `invite ${code} 48h as tok-alice`,
+      `invite ${other.body?.code} ${INVITE_HOURS}h as tok-alice`,
+      'revoke 3 as tok-alice',
+    ]);
+    // Bad input, and the module's refusals, come back as 400 with the reason.
+    const bad = await s.ask('/-/api/hub/join', 'tok-alice', { policy: 'members' });
+    assert.equal(bad.status, 400);
+    assert.match(String(bad.body?.error), /"anyone", "allowlist" or "invite"/);
+    assert.equal((await s.ask('/-/api/hub/allow', 'tok-alice', {})).status, 400);
+    assert.equal((await s.ask('/-/api/hub/invite', 'tok-alice', { hours: 'soon' })).status, 400);
+    assert.equal((await s.ask('/-/api/hub/revoke', 'tok-alice', { id: '1 OR 1' })).status, 400);
+    assert.equal((await s.ask('/-/api/hub/nothing', 'tok-alice', {})).status, 418, 'not a route');
+  } finally {
+    s.close();
+  }
+});
+
+test('nobody but the owner edits who may join', async () => {
+  const s = await site();
+  try {
+    for (const [route, body] of [['join', { policy: 'anyone' }], ['allow', { login: 'bob' }], ['invite', {}], ['revoke', { id: '1' }]] as const) {
+      assert.equal((await s.ask(`/-/api/hub/${route}`, 'tok-bob', body)).status, 403, route);
+      assert.equal((await s.ask(`/-/api/hub/${route}`, null, body)).status, 401, route);
+    }
+    assert.deepEqual(s.calls, []);
+  } finally {
+    s.close();
+  }
+});
+
+test('the join settings are read from the private tables; codes never leave them', async () => {
+  const db = await fakeSql({ join: 'allowlist' }, {}, [], {
+    join_rule: [['zed'], ['carol']],
+    join_invite: [[2, 'alice', { __timestamp_micros_since_unix_epoch__: 2_000_000 }, { __timestamp_micros_since_unix_epoch__: 9_000_000 }, ''], [1, 'alice', { __timestamp_micros_since_unix_epoch__: 1_000_000 }, [5_000_000], 'carol']],
+  });
+  try {
+    assert.equal(await joinPolicy(db.cfg), 'allowlist');
+    assert.deepEqual(await joinSettings(db.cfg), {
+      policy: 'allowlist',
+      allowlist: ['carol', 'zed'],
+      invites: [
+        { id: '2', createdBy: 'alice', createdAt: 2000, expiresAt: 9000, usedBy: '' },
+        { id: '1', createdBy: 'alice', createdAt: 1000, expiresAt: 5000, usedBy: 'carol' },
+      ],
+    });
+    assert.ok(db.asked.every(q => !/code/.test(q)), 'the code hash is never read');
+  } finally {
+    db.close();
+  }
+  for (const [value, policy] of [[undefined, 'anyone'], ['anyone', 'anyone'], ['invite', 'invite'], ['odd', 'anyone']] as const) {
+    const one = await fakeSql(value ? { join: value } : {}, {}, []);
+    try {
+      assert.equal(await joinPolicy(one.cfg), policy, String(value));
+    } finally {
+      one.close();
+    }
   }
 });
 

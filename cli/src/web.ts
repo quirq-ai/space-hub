@@ -36,10 +36,10 @@ import path from 'node:path';
 import { connectTo, errorMessage, findProject, findUser, quietSdkLogs, snapshot, tables, type Conn } from './conn';
 import { configFile, githubLogin, normalizeServer } from './config';
 import { esc, PAGE_CSP, shell } from '../../module/src/style';
-import { signInButtons, signInWays, step, steps, type Hub } from '../../module/src/howto';
+import { cmd, DEFAULT_HOST, signInButtons, signInWays, step, steps, type Hub } from '../../module/src/howto';
 import { Fail, GithubSync, githubApi, githubBuilder as builderOf, githubInfo as infoOf, mirrorProject } from './github';
 import { LiveHub } from './live';
-import { accountsSetting, handleSignIn, signInConfig } from './signin';
+import { accountsSetting, handleSignIn, inviteOf, signInConfig } from './signin';
 import { handleXo, xoConfig } from './xo';
 import { CALLBACK_ROUTE, ConnectGithub, finishSignIn, offerFor, START_ROUTE, startSignIn, STATE_COOKIE, WAIT_SECONDS, xoSignInConfig } from './xosignin';
 import * as githubWeb from './githubsignin';
@@ -57,7 +57,7 @@ import { hubBackupConfig, startHubBackups } from './hubbackup';
 import { activityJournalDir, startActivityJournal } from './activityjournal';
 import { SubhubRelay } from './subhubrelay';
 import { bearerToken, cookieValue, viewerOf, type CheckToken, type Viewer } from './viewer';
-import { hubOwnerName, hubPeople, isSuspended } from './hubowner';
+import { hubOwnerName, hubPeople, isSuspended, joinPolicy, joinSettings, type JoinPolicy } from './hubowner';
 import { handleHubSettings } from './hubsettings';
 
 quietSdkLogs();
@@ -220,6 +220,12 @@ function ownerName(): Promise<string | null> {
   return ADMIN_SQL ? hubOwnerName(ADMIN_SQL) : Promise.resolve(null);
 }
 
+// Who may join this hub (hubowner.ts): "anyone" when unset, or without the
+// admin to ask (the module enforces it either way; this only shapes pages).
+async function joinMode(): Promise<JoinPolicy> {
+  return ADMIN_SQL ? joinPolicy(ADMIN_SQL).catch(() => 'anyone' as const) : 'anyone';
+}
+
 // Who this request is, checked against the database (viewer.ts). The one
 // lookup every route uses; opts.bearer also accepts an Authorization header.
 function viewer(req: http.IncomingMessage, opts: { bearer?: boolean } = {}): Promise<Viewer | null> {
@@ -370,28 +376,56 @@ ${hub.accounts === 'open' ? '<p class="muted">New here? <a href="/-/signup">Regi
   );
 }
 
-function signupPage(viewer: string | null, hub: Hub, error = '', username = '') {
+// Who may join, in a sentence, for a hub that chooses (join policy not "anyone").
+function joinNote(join: JoinPolicy) {
+  return join === 'invite'
+    ? '<div class="banner">This hub is invite-only: sign up with the invite code its owner gave you.</div>'
+    : join === 'allowlist'
+      ? '<div class="banner">This hub lets in the GitHub accounts its owner listed, or someone with an invite code.</div>'
+      : '';
+}
+
+// Sign up with an invite code: with GitHub on this site, or from the terminal.
+function inviteWays(hub: Hub, join: JoinPolicy, invite: string) {
+  if (join === 'anyone' && !invite) return '';
+  const server = hub.host === DEFAULT_HOST ? '' : ` --server ${hub.server}`;
+  const github = hub.github
+    ? `<form method="get" action="${githubWeb.START_ROUTE}"><label for="invite">Invite code</label>
+<input type="text" id="invite" name="invite" value="${esc(invite)}" required spellcheck="false" autocomplete="off">
+<p><button class="btn primary" type="submit">Sign up with GitHub and this code</button></p></form>`
+    : '';
+  return `<h2 class="section-title">Have an invite code?</h2>${github}
+<p class="desc">From the terminal:</p>${cmd(`spacehub auth login${server} --invite ${invite || '<code>'}`)}`;
+}
+
+function signupPage(viewer: string | null, hub: Hub, error = '', username = '', join: JoinPolicy = 'anyone', invite = '') {
+  const needsCode = join !== 'anyone';
   return page(
     'Register · spacehub',
     viewer,
     `<h1><b>Register</b></h1>
 <p class="desc">Pick your builder name. It is also your personal space: your projects live at <code>&lt;name&gt;/&lt;project&gt;</code>.</p>
 ${error ? `<div class="banner err">${esc(error)}</div>` : ''}
+${joinNote(join)}
 ${signInButtons(hub, 'Sign up', '/', 'Or pick a name')}
 <form method="post" action="/-/signup"><label for="username">Builder name <span class="muted">lowercase letters, digits and hyphens</span></label>
 <input type="text" id="username" name="username" value="${esc(username)}" required pattern="[a-z0-9][a-z0-9-]{0,38}" autocomplete="username">
+${needsCode || invite ? `<label for="signup-invite">Invite code${needsCode ? '' : ' <span class="muted">optional</span>'}</label>
+<input type="text" id="signup-invite" name="invite" value="${esc(invite)}"${needsCode ? ' required' : ''} spellcheck="false" autocomplete="off">` : ''}
 <p><button class="btn primary" type="submit">Register</button></p></form>
 <p class="muted">Already registered? <a href="/-/login">Sign in</a>.</p>`
   );
 }
 
 // On a hub where builders sign up with GitHub (or xo), they do it from the terminal.
-function terminalSignupPage(viewer: string | null, hub: Hub, error = '') {
+function terminalSignupPage(viewer: string | null, hub: Hub, error = '', join: JoinPolicy = 'anyone', invite = '') {
   return page(
     'Sign up · spacehub',
     viewer,
     `<div class="page-title"><h1>Sign up</h1><p>${hub.github || hub.xo ? 'Your builder on this hub is your GitHub account, named after its login. There is no password: sign in the same way on any machine to get your builder back.' : 'Builders on this hub sign up from the terminal. There is no password: run the same login on any machine to get your builder back.'}</p></div>
 ${error ? `<div class="banner err">${esc(error)}</div>` : ''}
+${joinNote(join)}
+${hub.accounts === 'github' ? inviteWays(hub, join, invite) : ''}
 ${signInButtons(hub, 'Sign up', '/')}
 ${signInWays(hub, true).replace('Paste it below.', 'Paste it at <a href="/-/login">Sign in</a> to use this site too.')}`,
     true
@@ -515,6 +549,7 @@ function welcomePage(username: string, token: string) {
 const ROOMS: Parameters<typeof handleRooms>[0] = {
   space: explainSpace(),
   canOpen: !!ADMIN_TOKEN,
+  buildersOnly: async () => (await joinMode()) !== 'anyone',
   exists: async fullName => {
     const [space, project] = fullName.split('/');
     const query = new URLSearchParams({ space, project });
@@ -574,6 +609,13 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     },
     suspend: (token, username) => withConn(token, conn => conn.reducers.suspendBuilder({ username })),
     restore: (token, username) => withConn(token, conn => conn.reducers.restoreBuilder({ username })),
+    join: () => joinSettings(ADMIN_SQL!),
+    setJoinPolicy: (token, policy) => withConn(token, conn => conn.reducers.setJoinPolicy({ policy })),
+    allow: (token, login) => withConn(token, conn => conn.reducers.allowJoin({ login })),
+    disallow: (token, login) => withConn(token, conn => conn.reducers.disallowJoin({ login })),
+    createInvite: (token, code, hours) => withConn(token, conn => conn.reducers.createInvite({ code, hours })),
+    revokeInvite: (token, id) => withConn(token, conn => conn.reducers.revokeInvite({ id })),
+    signupUrl: r => callbackOf(r, '/-/signup'),
   }, req, res, url)) return;
   if (await handleApp({ dir: APP_DIR, internalHttp: INTERNAL_HTTP, db: DB, withConn, sessionOf, operator: recoveryOperator, owner: ownerName }, req, res, url)) return;
 
@@ -612,7 +654,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     const next = localPath(url.searchParams.get('next'));
     if (!SIGNIN?.app) return send(res, 404, loginPage(null, await hubOf(req), 'Sign-in with GitHub is not set up on this hub. Sign in from the terminal below.', next));
     try {
-      const { state, location } = githubWeb.startSignIn(SIGNIN, callbackOf(req, githubWeb.CALLBACK_ROUTE), next);
+      const invite = inviteOf(url.searchParams.get('invite'));
+      const { state, location } = githubWeb.startSignIn(SIGNIN, callbackOf(req, githubWeb.CALLBACK_ROUTE), next, Date.now(), invite);
       return redirect(res, location, [githubCookie(req, state)]);
     } catch (err) {
       return send(res, err instanceof Reply ? err.status : 500, loginPage(null, await hubOf(req), errorMessage(err), next));
@@ -660,23 +703,28 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
 
   if (route === '/-/signup') {
     const session = await sessionOf(req);
-    const hub = await hubOf(req);
+    const [hub, join] = await Promise.all([hubOf(req), joinMode()]);
+    // An invite link (Settings → Hub) is /-/signup?invite=<code>.
+    const linked = inviteOf(url.searchParams.get('invite'));
     if (hub.accounts !== 'open') {
       const error = req.method === 'POST' ? 'Builders on this hub sign up from the terminal.' : '';
-      return send(res, error ? 400 : 200, terminalSignupPage(session?.username ?? null, hub, error));
+      return send(res, error ? 400 : 200, terminalSignupPage(session?.username ?? null, hub, error, join, linked));
     }
-    if (req.method === 'GET') return send(res, 200, signupPage(session?.username ?? null, hub));
+    if (req.method === 'GET') return send(res, 200, signupPage(session?.username ?? null, hub, '', '', join, linked));
     const form = await readForm(req);
     const username = (form.get('username') ?? '').trim().toLowerCase();
-    if (!USERNAME.test(username)) return send(res, 400, signupPage(null, hub, 'Use 1 to 39 lowercase letters, digits or inner hyphens.', username));
+    const invite = inviteOf(form.get('invite'));
+    if (!USERNAME.test(username)) return send(res, 400, signupPage(null, hub, 'Use 1 to 39 lowercase letters, digits or inner hyphens.', username, join, invite));
     try {
       const token = await withConn(undefined, async (conn, _identity, issued) => {
-        await conn.reducers.registerUser({ username });
+        // Only a sign-up with a code calls the reducer that takes one; the module decides.
+        if (invite) await conn.reducers.registerWithInvite({ username, invite });
+        else await conn.reducers.registerUser({ username });
         return issued;
       });
       return send(res, 200, welcomePage(username, token), { 'set-cookie': sessionCookies(req, token, username) });
     } catch (err) {
-      return send(res, 400, signupPage(null, hub, errorMessage(err), username));
+      return send(res, /not allowed to join/.test(errorMessage(err)) ? 403 : 400, signupPage(null, hub, errorMessage(err), username, join, invite));
     }
   }
 

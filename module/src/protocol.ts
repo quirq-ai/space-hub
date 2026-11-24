@@ -14,4 +14,4 @@ export const OLDEST_PROTOCOL = 1;
 // The generated client bindings this protocol was decided for. The CLI tests
 // fail when the bindings change (npm run generate) and this does not, so each
 // schema change decides on a bump: then set this to the hash the test prints.
-export const BINDINGS_HASH = '4dafda8f5cfd7c1f';
+export const BINDINGS_HASH = 'cd438d4593aa8dbb';

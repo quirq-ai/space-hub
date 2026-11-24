@@ -108,6 +108,24 @@ export const HubState = __t.object("HubState", {
 });
 export type HubState = __Infer<typeof HubState>;
 
+export const JoinInvite = __t.object("JoinInvite", {
+  id: __t.u64(),
+  codeHash: __t.string(),
+  createdBy: __t.string(),
+  createdAt: __t.timestamp(),
+  expiresAt: __t.timestamp(),
+  usedBy: __t.string(),
+  usedAt: __t.timestamp(),
+});
+export type JoinInvite = __Infer<typeof JoinInvite>;
+
+export const JoinRule = __t.object("JoinRule", {
+  login: __t.string(),
+  addedBy: __t.string(),
+  addedAt: __t.timestamp(),
+});
+export type JoinRule = __Infer<typeof JoinRule>;
+
 export const ObjectChunk = __t.object("ObjectChunk", {
   id: __t.u64(),
   key: __t.string(),

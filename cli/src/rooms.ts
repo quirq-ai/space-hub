@@ -3,7 +3,8 @@
 //
 //   GET  /gh/<owner>/<repo>        open the repository's room (made on the first visit, once GitHub
 //   GET  /-/gh/<owner>/<repo>      says the repository is public) and go to its group chat; anyone,
-//                                  signed in or not, can open one
+//                                  signed in or not, can open one, except on a hub whose join policy
+//                                  is not "anyone": there only its builders open new ones
 //   POST /-/api/explain            the same from the explain org's chat, which takes only a GitHub URL:
 //                                  {url}, answered with {project} or {error}
 //   POST /-/api/ask                ask in a room as the signed-in builder (ask_question), within the
@@ -31,6 +32,8 @@ export interface RoomsDeps {
   space: string;
   /** Whether the hub can open rooms: it has the admin token. */
   canOpen: boolean;
+  /** Whether only builders open new rooms: the hub's join policy is not "anyone" (the module checks too). */
+  buildersOnly?: () => Promise<boolean>;
   /** Whether a project is on the hub. */
   exists: (fullName: string) => Promise<boolean>;
   /** GitHub's word on a repository: null when it does not answer; throws when it does not exist. */
@@ -92,6 +95,12 @@ async function openRoom(deps: RoomsDeps, wanted: { owner: string; repo: string }
   const name = roomName(wanted.owner, wanted.repo)!;
   if (await deps.exists(`${deps.space}/${name}`).catch(() => false)) return { name };
   if (!deps.canOpen) return { status: 503, title: 'Rooms are off on this hub', message: 'This hub has no admin token, so it cannot open rooms for GitHub repositories.' };
+  const session = await deps.sessionOf(req).catch(() => null);
+  // A hub that chooses who joins: only its builders open new rooms. When the
+  // policy cannot be read, the module still refuses a stranger.
+  if (!session && (await deps.buildersOnly?.().catch(() => false))) {
+    return { status: 403, title: 'Sign in to open a room', message: 'On this hub only its builders open new rooms. Sign in first, or ask a builder to open it.' };
+  }
   opened = opened.filter(at => now - at < 60_000);
   if (opened.length >= OPENS_PER_MINUTE) return { status: 429, title: 'Too many new rooms', message: 'Many rooms were opened in the last minute. Try again in a minute.' };
   const missing = { status: 404, title: 'No such repository', message: `GitHub has no public repository ${wanted.owner}/${wanted.repo}.` };
@@ -104,7 +113,6 @@ async function openRoom(deps: RoomsDeps, wanted: { owner: string; repo: string }
   if (!info) return { status: 503, title: 'GitHub did not answer', message: 'The hub could not ask GitHub about this repository. Try again in a minute.' };
   if (info.private) return missing;
   opened.push(now);
-  const session = await deps.sessionOf(req).catch(() => null);
   try {
     await deps.open({ owner: info.owner, repo: info.repo, description: info.description, openedBy: session?.username ?? '' });
   } catch (error) {

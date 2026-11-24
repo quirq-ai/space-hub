@@ -101,16 +101,25 @@ function fakeDb(taken: string[] = []) {
       signedIn.push(JSON.parse(body));
       return res.end();
     }
-    if (req.url === '/v1/database/spacehub/call/github_link_builder') {
-      const [id, login, , token] = JSON.parse(body);
+    const link = /^\/v1\/database\/spacehub\/call\/(github_link_builder(?:_with_invite)?)$/.exec(req.url ?? '');
+    if (link) {
+      const [id, login, , token, invite] = JSON.parse(body);
       const name = login.toLowerCase();
       if (taken.includes(name)) return res.writeHead(530).end(`the name "${name}" is taken`);
+      // The module's join gate (mayJoin), as an invite-only hub with one good code.
+      if (gate.inviteOnly) {
+        if (link[1] === 'github_link_builder') return res.writeHead(530).end("Error: not allowed to join this hub: it is invite-only; ask the hub's owner for an invite code (spacehub auth login --invite <code>)");
+        if (invite !== gate.code || !gate.code) return res.writeHead(530).end("Error: not allowed to join this hub: that invite code is not valid here; ask the hub's owner for a new one");
+        gate.used.push(invite);
+        gate.code = '';
+      }
       builders.set(id, { username: name, token });
       return res.end();
     }
     res.writeHead(404).end();
   });
-  return { server, accounts, builders, seen, suspended, signedIn, identities: () => identities };
+  const gate = { inviteOnly: false, code: '', used: [] as string[] };
+  return { server, accounts, builders, seen, suspended, signedIn, gate, identities: () => identities };
 }
 
 async function setup(opts: { taken?: string[]; cfg?: boolean; app?: SignInConfig['app'] } = {}) {
@@ -139,11 +148,75 @@ async function setup(opts: { taken?: string[]; cfg?: boolean; app?: SignInConfig
     const res = await fetch(`${base}${route}`, { method: 'POST', ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     return { status: res.status, body: (await res.json()) as Record<string, unknown> };
   };
-  const start = () => post(DEVICE_ROUTE);
+  const start = (body?: unknown) => post(DEVICE_ROUTE, body);
   const poll = (session: unknown) => post(POLL_ROUTE, { session });
+  // The token route with an invite code, as spacehub auth login --invite sends it.
+  const signInInvited = async (token: string, invite: string) => {
+    const res = await fetch(`${base}${SIGNIN_ROUTE}`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ invite }) });
+    return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+  };
   const close = () => [github, db.server, web].forEach(s => s.close());
-  return { db, signIn, start, poll, close };
+  return { db, signIn, signInInvited, start, poll, close };
 }
+
+test('an invite-only hub refuses a sign-up without a code, with the reason, and takes a good code once', async () => {
+  const { db, signIn, signInInvited, close } = await setup();
+  try {
+    db.gate.inviteOnly = true;
+    db.gate.code = 'good-code-0123456789';
+    const refused = await signIn('gh-octo');
+    assert.equal(refused.status, 403);
+    assert.match(String(refused.body.error), /^not allowed to join this hub: it is invite-only/);
+    assert.equal(refused.body.token, undefined);
+    const bad = await signInInvited('gh-octo', 'wrong-code-0123456789');
+    assert.equal(bad.status, 403);
+    assert.match(String(bad.body.error), /invite code is not valid here/);
+    const good = await signInInvited('gh-octo', ' good-code-0123456789 ');
+    assert.equal(good.status, 200);
+    assert.equal(good.body.created, true);
+    assert.deepEqual(db.gate.used, ['good-code-0123456789']);
+    // Signing in again needs no code: the builder exists.
+    assert.equal((await signIn('gh-octo')).status, 200);
+    assert.equal((await signInInvited('gh-hubot', 'good-code-0123456789')).status, 403, 'used once');
+  } finally {
+    close();
+  }
+});
+
+test('a hub that lets anyone in signs up as before: the reducer without a code', async () => {
+  const { db, signIn, close } = await setup();
+  try {
+    assert.equal((await signIn('gh-octo')).status, 200);
+    assert.ok(db.seen.some(line => line.includes('/call/github_link_builder ')));
+    assert.ok(db.seen.every(line => !line.includes('with_invite')));
+  } finally {
+    close();
+  }
+});
+
+test('the device flow carries the invite code from its start to the sign-up', async () => {
+  const { db, start, poll, close } = await setup({ app: APP });
+  try {
+    db.gate.inviteOnly = true;
+    db.gate.code = 'good-code-0123456789';
+    const { session } = (await start({ invite: 'good-code-0123456789' })).body;
+    device.next = { access_token: 'app-octo' };
+    skipDeviceWaits();
+    const done = await poll(session);
+    assert.equal(done.status, 200);
+    assert.equal(done.body.created, true);
+    assert.deepEqual(db.gate.used, ['good-code-0123456789']);
+    // Without one, the hub's reason comes back.
+    db.builders.clear();
+    const { session: other } = (await start()).body;
+    skipDeviceWaits();
+    const refused = await poll(other);
+    assert.equal(refused.status, 403);
+    assert.match(String(refused.body.error), /invite-only/);
+  } finally {
+    close();
+  }
+});
 
 test('the first sign-in makes the builder; later ones get the same token back', async () => {
   const { db, signIn, close } = await setup();
