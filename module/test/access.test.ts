@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { ConnectionId } from 'spacetimedb';
 import { createModuleTestHarness, TestAuth } from 'spacetimedb/server/test-utils';
 import spacetimedb, * as mod from '../src/index';
-import { PUBLIC_READER, canRead, checkAccessTable, isPrivate } from '../src/store';
+import { HUB_ROW, PUBLIC_READER, canRead, checkAccessTable, isPrivate } from '../src/store';
 
 let nextConnection = 1n;
 function as(subject: string) {
@@ -51,7 +51,7 @@ function hub() {
   // The table, against what it should be, worked out here from canRead over
   // every builder and agent (not from the module's own candidate list).
   const inSync = () => {
-    const want = new Set<string>();
+    const want = new Set<string>([`${HUB_ROW} ${PUBLIC_READER.toHexString()}`]); // the hub row
     const identities = [...h.db.user.iter()].map(u => u.identity).concat([...h.db.agent.iter()].map(a => a.identity));
     for (const p of h.db.project.iter()) {
       if (!isPrivate(db(), p.id)) want.add(`${p.id} ${PUBLIC_READER.toHexString()}`);
@@ -213,11 +213,12 @@ describe('setProjectVisibility', () => {
 });
 
 describe('project_access', () => {
-  it('starts as one row a project, for everyone: no visibility rows is the hub as before', () => {
+  it('starts as one row a project (and the hub row), for everyone: no visibility rows is the hub as before', () => {
     const { h, inSync } = hub();
     expect([...h.db.projectVisibility.iter()]).toEqual([]);
     const rows = [...h.db.projectAccess.iter()];
-    expect(rows.length).toBe([...h.db.project.iter()].length);
+    expect(rows.length).toBe([...h.db.project.iter()].length + 1);
+    expect(rows.filter(r => r.projectId === HUB_ROW).length).toBe(1);
     expect(rows.every(r => r.identity.isEqual(PUBLIC_READER))).toBe(true);
     inSync();
   });

@@ -6,6 +6,10 @@
 # subscription and by SQL.
 #   members-only off: the stranger sees exactly what the admin sees (today)
 #   members-only on:  the stranger sees nothing; a builder still sees everything
+# Then a private project: a member without access (and a stranger) gets none
+# of its rows from any view, its owner and the admin get all of them, a
+# collaborator loses them live when removed, and they come back live when it
+# is made public; git clone works only for those who may read it.
 # Then the same over every web route, through the server image's Caddyfile
 # and the web service (scripts/routeprobe.ts, routes listed in scripts/routes.ts):
 # an anonymous browser and a signed-in stranger get only sign-in, a member
@@ -100,6 +104,90 @@ views_are("on: a builder still sees everything", member, lambda v: truth[view_ta
 check("on, while subscribed: the stranger's rows go away", len(watch) == 2 and all(n == 0 for n in watch[1]["afterToggle"].values()))
 views_are("off again: exactly today's data", again, lambda v: truth[view_table(v)])
 check("the data is not empty (the test means something)", sum(truth.get(t, 0) for t in ("project", "git_object", "git_ref", "user", "space")) >= 5)
+sys.exit(1 if bad else 0)
+PY
+
+echo "a private project"
+# A reducer called as a builder, over HTTP: call_as <token> <reducer> <json args>.
+call_as() { curl -sf -X POST -H "authorization: Bearer $1" -H 'content-type: application/json' --data "$3" \
+  "$HTTP/v1/database/$SPACEHUB_DB/call/$2" >/dev/null || fail "$2 $3"; }
+as alice spacehub project create hidden -d "hiddendesc of a private project" >/dev/null
+git init -q -b main "$WORK/h"
+(cd "$WORK/h" && echo hiddencontent >h.txt && git add . && git -c user.name=t -c user.email=t@e commit -qm hiddencommit \
+  && SPACEHUB_HOME="$WORK/home-alice" git push -q "quirq://127.0.0.1:$PORT/alice/hidden" main 2>/dev/null) || fail "push hidden"
+as bob spacehub auth login --builder bob >/dev/null
+BOB_TOKEN="$(as bob spacehub auth token)"
+call_as "$ALICE_TOKEN" set_project_visibility '["alice/hidden", "private"]'
+# Still pushable by its owner once private.
+(cd "$WORK/h" && echo more >>h.txt && git -c user.name=t -c user.email=t@e commit -qam hiddenmore \
+  && SPACEHUB_HOME="$WORK/home-alice" git push -q "quirq://127.0.0.1:$PORT/alice/hidden" main 2>/dev/null) || fail "push to a private project"
+ok "alice/hidden is private, with two pushes"
+export LEAK_FIND="hidden,hiddencontent"
+clones() { # clones <who> <dir>: whether <who> can clone alice/hidden
+  SPACEHUB_HOME="$WORK/home-$1" timeout 60 git clone -q "quirq://127.0.0.1:$PORT/alice/hidden" "$2" >/dev/null 2>&1 && grep -q hiddencontent "$2/h.txt"
+}
+clones alice "$WORK/c-alice" && ok "its owner clones it" || fail "its owner clones it"
+clones bob "$WORK/c-bob" && fail "a member without access clones it" || ok "a member without access cannot clone it"
+probe "$ADMIN_TOKEN" --no-raw >"$WORK/p-admin.json"
+probe "$ALICE_TOKEN" --no-raw >"$WORK/p-alice.json"
+probe "$BOB_TOKEN" --no-raw >"$WORK/p-bob.json"
+probe --no-raw >"$WORK/p-stranger.json"
+members_only true
+probe "$BOB_TOKEN" --no-raw >"$WORK/p-bob-on.json"
+probe "$ALICE_TOKEN" --no-raw >"$WORK/p-alice-on.json"
+members_only false
+# bob as a collaborator: reads it and clones it; then removed while subscribed.
+call_as "$ALICE_TOKEN" add_project_member '["alice/hidden", "bob"]'
+clones bob "$WORK/c-bob2" && ok "a collaborator clones it" || fail "a collaborator clones it"
+probe "$ADMIN_TOKEN" --no-raw >"$WORK/p-admin-collab.json"
+LEAK_SIGNAL="$WORK/removed" probe "$BOB_TOKEN" --no-raw --watch-toggle >"$WORK/p-bob-removed.json" &
+WATCH=$!
+for _ in $(seq 1 50); do [[ -s "$WORK/p-bob-removed.json" ]] && break; sleep 0.2; done
+call_as "$ALICE_TOKEN" remove_project_member '["alice/hidden", "bob"]'
+touch "$WORK/removed"
+wait "$WATCH"
+# Made public while bob is subscribed: it comes back.
+LEAK_SIGNAL="$WORK/public" probe "$BOB_TOKEN" --no-raw --watch-toggle >"$WORK/p-bob-public.json" &
+WATCH=$!
+for _ in $(seq 1 50); do [[ -s "$WORK/p-bob-public.json" ]] && break; sleep 0.2; done
+call_as "$ALICE_TOKEN" set_project_visibility '["alice/hidden", "public"]'
+touch "$WORK/public"
+wait "$WATCH"
+probe "$ADMIN_TOKEN" --no-raw >"$WORK/p-admin-public.json"
+clones bob "$WORK/c-bob3" && ok "anyone clones it once public" || fail "anyone clones it once public"
+call_as "$ALICE_TOKEN" set_project_visibility '["alice/hidden", "private"]' # for the web routes below
+
+python3 - "$WORK" <<'PY' || { tail -20 "$WORK/probe.err" >&2; exit 1; }
+import json, sys
+w = sys.argv[1]
+lines = lambda n: [json.loads(l) for l in open(f"{w}/{n}.json").read().splitlines()]
+load = lambda n: lines(n)[0]
+admin, alice, bob, stranger, bob_on, alice_on, admin_collab, admin_public = (load(n) for n in (
+    "p-admin", "p-alice", "p-bob", "p-stranger", "p-bob-on", "p-alice-on", "p-admin-collab", "p-admin-public"))
+removed, public = lines("p-bob-removed"), lines("p-bob-public")
+hid = admin["projects"]["alice/hidden"]
+of = lambda snap, p: {v: rows.get(p, 0) for v, rows in snap["byProject"].items() if rows.get(p, 0)}
+others = lambda snap: {v: {p: n for p, n in rows.items() if p != hid} for v, rows in snap["byProject"].items()}
+bad = []
+def check(label, cond, detail=""):
+    print(("  ok  " if cond else "  FAIL ") + label + ("" if cond else f" ({detail})"))
+    if not cond: bad.append(label)
+truth = of(admin, hid)
+print("rows of alice/hidden the admin sees:", truth)
+check("the private project has rows in the content views (the test means something)",
+      all(truth.get(v, 0) > 0 for v in ("visibleProject", "visibleGitRef", "visibleGitObject", "visibleActivity", "visibleProjectSize")), truth)
+check("its owner gets every row of it", of(alice, hid) == truth, of(alice, hid))
+for label, snap in (("a member without access", bob), ("a stranger", stranger), ("a member without access, members-only on", bob_on)):
+    check(f"{label} gets no row of it from any view", of(snap, hid) == {}, of(snap, hid))
+    check(f"{label}: no view holds its name or contents", snap["found"] == {}, snap["found"])
+check("a member without access still gets every other project, and rows about no project", others(bob) == others(admin),
+      {v: (others(bob)[v], others(admin)[v]) for v in others(admin) if others(bob).get(v) != others(admin)[v]})
+check("its owner, members-only on: every row of it", of(alice_on, hid) == truth, of(alice_on, hid))
+check("a collaborator gets every row of it", of(removed[0], hid) == of(admin_collab, hid), (of(removed[0], hid), of(admin_collab, hid)))
+check("removed while subscribed: its rows go away", len(removed) == 2 and of(removed[1]["after"], hid) == {} and removed[1]["after"]["found"] == {},
+      removed[-1].get("after", {}).get("found"))
+check("made public while subscribed: its rows come back", len(public) == 2 and of(public[0], hid) == {}
+      and of(public[1]["after"], hid) == of(admin_public, hid), (of(public[-1].get("after", public[0]), hid), of(admin_public, hid)))
 sys.exit(1 if bad else 0)
 PY
 

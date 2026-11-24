@@ -37,12 +37,12 @@
 // project), every object must hash to its id, and a ref only moves if the
 // caller saw its current value (compare-and-swap) and, unless forced, the
 // move is a fast-forward.
-import { schema, table, t, Router, SenderError, SyncResponse, type InferSchema, type ReducerCtx } from 'spacetimedb/server';
+import { schema, table, t, Router, SenderError, SyncResponse, type InferSchema, type ReducerCtx, type ViewCtx } from 'spacetimedb/server';
 import { Identity, Timestamp } from 'spacetimedb';
 import { Sha1, objectHeader } from './sha1';
 import {
-  CHUNK_SIZE, PRESENCE_STALE_SECONDS, checkAccessTable, commitParents, inSpace, isMember as isHubMember, mayReadHub, memberKey, objectKey, ownsSpace,
-  projectFor, readObject, refKey, refreshAccess, refreshAllAccess, refreshIdentityAccess, refreshSpaceAccess, roleKey, spaceFor, type Db,
+  CHUNK_SIZE, PRESENCE_STALE_SECONDS, checkAccessTable, commitParents, ensureHubRow, inSpace, isAdminIdentity, isMember as isHubMember, mayReadHub, memberKey, objectKey, ownsSpace,
+  projectFor, publicReaderFor, readObject, refKey, refreshAccess, refreshAllAccess, refreshIdentityAccess, refreshSpaceAccess, roleKey, spaceFor, type Db,
 } from './store';
 import { renderUi } from './ui';
 import { ApiError, parseQuery, renderApi, templateFiles } from './workspace';
@@ -580,73 +580,137 @@ type Ctx = ReducerCtx<InferSchema<typeof spacetimedb>>;
 //
 // Every table above is private: clients (the CLI, agents, the web service)
 // read them through these views, one per table, named visible_<table>. Each
-// is computed for the caller. On a hub that is not members-only (no
-// "membersOnly" in hub_state, the default) a view is its whole table, as the
-// public tables were. On a members-only hub (setMembersOnly) only members
-// (store.ts isMember) and the admin get rows; anyone else gets an empty query,
-// even with a raw SpacetimeDB client. Members see everything; per-project
-// privacy will narrow these same views, so clients won't change again.
+// is computed for the caller:
+//   - on a members-only hub (setMembersOnly) whoever is not a member (store.ts
+//     isMember) nor the admin gets an empty query, even with a raw SpacetimeDB
+//     client (no "membersOnly" in hub_state, the default: everyone passes);
+//   - the directory (builders, spaces, roles, agents, ...) is then whole:
+//     space names are not secret;
+//   - everything that belongs to a project (the project row, its refs,
+//     objects, members, activity, presence, questions, ...) holds only the
+//     projects the caller may read (store.ts canRead), as project_access rows:
+//     the caller's own rows and PUBLIC_READER's, semijoined to the table on
+//     its project id. The admin (the web service) gets every row and filters
+//     per person itself. Rows about no project (projectId 0) pass through
+//     the hub row (store.ts HUB_ROW). Activity of a deleted project has no
+//     access rows left, so only the admin reads it.
+// The views keep their names and rows, so clients did not change for this.
 
 const viewDb = (ctx: { db: unknown }) => ctx.db as Db;
 const NOTHING = () => false;
+type ViewContext = ViewCtx<InferSchema<typeof spacetimedb>>;
+
+// Who passes at all, and who reads every project.
+function viewer(ctx: ViewContext): 'nobody' | 'admin' | 'reader' {
+  const db = viewDb(ctx);
+  if (!mayReadHub(db, ctx.sender)) return 'nobody';
+  return isAdminIdentity(db, ctx.sender) ? 'admin' : 'reader';
+}
+
+// The caller's project_access rows: its own, and PUBLIC_READER's (public
+// projects and the hub row). publicReaderFor, not PUBLIC_READER: see store.ts.
+const myAccess = (ctx: ViewContext) =>
+  ctx.from.projectAccess.where(r => r.identity.eq(ctx.sender).or(r.identity.eq(publicReaderFor(ctx.sender))));
+
+// A directory table: whole for whoever may read the hub.
+const directory = <Q>(ctx: ViewContext, whole: Q, none: Q): Q => (viewer(ctx) === 'nobody' ? none : whole);
 
 export const visibleUser = spacetimedb.view({ name: 'visible_user', public: true }, t.array(user.rowType), ctx =>
-  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.user : ctx.from.user.where(NOTHING)
-);
-export const visibleProject = spacetimedb.view({ name: 'visible_project', public: true }, t.array(project.rowType), ctx =>
-  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.project : ctx.from.project.where(NOTHING)
-);
-export const visibleGitRef = spacetimedb.view({ name: 'visible_git_ref', public: true }, t.array(gitRef.rowType), ctx =>
-  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.gitRef : ctx.from.gitRef.where(NOTHING)
-);
-export const visibleGitObject = spacetimedb.view({ name: 'visible_git_object', public: true }, t.array(gitObject.rowType), ctx =>
-  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.gitObject : ctx.from.gitObject.where(NOTHING)
-);
-export const visibleObjectChunk = spacetimedb.view({ name: 'visible_object_chunk', public: true }, t.array(objectChunk.rowType), ctx =>
-  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.objectChunk : ctx.from.objectChunk.where(NOTHING)
-);
-export const visibleProjectImport = spacetimedb.view({ name: 'visible_project_import', public: true }, t.array(projectImport.rowType), ctx =>
-  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.projectImport : ctx.from.projectImport.where(NOTHING)
-);
-export const visibleProjectBuilder = spacetimedb.view({ name: 'visible_project_builder', public: true }, t.array(projectBuilder.rowType), ctx =>
-  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.projectBuilder : ctx.from.projectBuilder.where(NOTHING)
-);
-export const visibleActivity = spacetimedb.view({ name: 'visible_activity', public: true }, t.array(activity.rowType), ctx =>
-  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.activity : ctx.from.activity.where(NOTHING)
-);
-export const visibleProjectMember = spacetimedb.view({ name: 'visible_project_member', public: true }, t.array(projectMember.rowType), ctx =>
-  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.projectMember : ctx.from.projectMember.where(NOTHING)
-);
-export const visiblePresence = spacetimedb.view({ name: 'visible_presence', public: true }, t.array(presence.rowType), ctx =>
-  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.presence : ctx.from.presence.where(NOTHING)
+  directory(ctx, ctx.from.user, ctx.from.user.where(NOTHING))
 );
 export const visibleSpace = spacetimedb.view({ name: 'visible_space', public: true }, t.array(space.rowType), ctx =>
-  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.space : ctx.from.space.where(NOTHING)
+  directory(ctx, ctx.from.space, ctx.from.space.where(NOTHING))
 );
 export const visibleSpaceRole = spacetimedb.view({ name: 'visible_space_role', public: true }, t.array(spaceRole.rowType), ctx =>
-  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.spaceRole : ctx.from.spaceRole.where(NOTHING)
+  directory(ctx, ctx.from.spaceRole, ctx.from.spaceRole.where(NOTHING))
 );
 export const visibleSpaceLink = spacetimedb.view({ name: 'visible_space_link', public: true }, t.array(spaceLink.rowType), ctx =>
-  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.spaceLink : ctx.from.spaceLink.where(NOTHING)
+  directory(ctx, ctx.from.spaceLink, ctx.from.spaceLink.where(NOTHING))
 );
 export const visibleSpaceGithub = spacetimedb.view({ name: 'visible_space_github', public: true }, t.array(spaceGithub.rowType), ctx =>
-  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.spaceGithub : ctx.from.spaceGithub.where(NOTHING)
-);
-export const visibleRefSync = spacetimedb.view({ name: 'visible_ref_sync', public: true }, t.array(refSync.rowType), ctx =>
-  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.refSync : ctx.from.refSync.where(NOTHING)
-);
-export const visibleProjectSize = spacetimedb.view({ name: 'visible_project_size', public: true }, t.array(projectSize.rowType), ctx =>
-  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.projectSize : ctx.from.projectSize.where(NOTHING)
+  directory(ctx, ctx.from.spaceGithub, ctx.from.spaceGithub.where(NOTHING))
 );
 export const visibleAgent = spacetimedb.view({ name: 'visible_agent', public: true }, t.array(agent.rowType), ctx =>
-  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.agent : ctx.from.agent.where(NOTHING)
+  directory(ctx, ctx.from.agent, ctx.from.agent.where(NOTHING))
 );
 export const visibleSpaceAlias = spacetimedb.view({ name: 'visible_space_alias', public: true }, t.array(spaceAlias.rowType), ctx =>
-  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.spaceAlias : ctx.from.spaceAlias.where(NOTHING)
+  directory(ctx, ctx.from.spaceAlias, ctx.from.spaceAlias.where(NOTHING))
 );
-export const visibleQuestion = spacetimedb.view({ name: 'visible_question', public: true }, t.array(question.rowType), ctx =>
-  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.question : ctx.from.question.where(NOTHING)
-);
+
+// Project-scoped tables. Each spells out its three cases (the query builder's
+// types don't let one helper take every table).
+export const visibleProject = spacetimedb.view({ name: 'visible_project', public: true }, t.array(project.rowType), ctx => {
+  const who = viewer(ctx);
+  if (who === 'nobody') return ctx.from.project.where(NOTHING);
+  if (who === 'admin') return ctx.from.project;
+  return myAccess(ctx).rightSemijoin(ctx.from.project, (a, p) => a.projectId.eq(p.id));
+});
+export const visibleGitRef = spacetimedb.view({ name: 'visible_git_ref', public: true }, t.array(gitRef.rowType), ctx => {
+  const who = viewer(ctx);
+  if (who === 'nobody') return ctx.from.gitRef.where(NOTHING);
+  if (who === 'admin') return ctx.from.gitRef;
+  return myAccess(ctx).rightSemijoin(ctx.from.gitRef, (a, r) => a.projectId.eq(r.projectId));
+});
+export const visibleGitObject = spacetimedb.view({ name: 'visible_git_object', public: true }, t.array(gitObject.rowType), ctx => {
+  const who = viewer(ctx);
+  if (who === 'nobody') return ctx.from.gitObject.where(NOTHING);
+  if (who === 'admin') return ctx.from.gitObject;
+  return myAccess(ctx).rightSemijoin(ctx.from.gitObject, (a, o) => a.projectId.eq(o.projectId));
+});
+export const visibleObjectChunk = spacetimedb.view({ name: 'visible_object_chunk', public: true }, t.array(objectChunk.rowType), ctx => {
+  const who = viewer(ctx);
+  if (who === 'nobody') return ctx.from.objectChunk.where(NOTHING);
+  if (who === 'admin') return ctx.from.objectChunk;
+  return myAccess(ctx).rightSemijoin(ctx.from.objectChunk, (a, c) => a.projectId.eq(c.projectId));
+});
+export const visibleProjectImport = spacetimedb.view({ name: 'visible_project_import', public: true }, t.array(projectImport.rowType), ctx => {
+  const who = viewer(ctx);
+  if (who === 'nobody') return ctx.from.projectImport.where(NOTHING);
+  if (who === 'admin') return ctx.from.projectImport;
+  return myAccess(ctx).rightSemijoin(ctx.from.projectImport, (a, i) => a.projectId.eq(i.projectId));
+});
+export const visibleProjectBuilder = spacetimedb.view({ name: 'visible_project_builder', public: true }, t.array(projectBuilder.rowType), ctx => {
+  const who = viewer(ctx);
+  if (who === 'nobody') return ctx.from.projectBuilder.where(NOTHING);
+  if (who === 'admin') return ctx.from.projectBuilder;
+  return myAccess(ctx).rightSemijoin(ctx.from.projectBuilder, (a, b) => a.projectId.eq(b.projectId));
+});
+export const visibleActivity = spacetimedb.view({ name: 'visible_activity', public: true }, t.array(activity.rowType), ctx => {
+  const who = viewer(ctx);
+  if (who === 'nobody') return ctx.from.activity.where(NOTHING);
+  if (who === 'admin') return ctx.from.activity;
+  return myAccess(ctx).rightSemijoin(ctx.from.activity, (a, e) => a.projectId.eq(e.projectId));
+});
+export const visibleProjectMember = spacetimedb.view({ name: 'visible_project_member', public: true }, t.array(projectMember.rowType), ctx => {
+  const who = viewer(ctx);
+  if (who === 'nobody') return ctx.from.projectMember.where(NOTHING);
+  if (who === 'admin') return ctx.from.projectMember;
+  return myAccess(ctx).rightSemijoin(ctx.from.projectMember, (a, m) => a.projectId.eq(m.projectId));
+});
+export const visiblePresence = spacetimedb.view({ name: 'visible_presence', public: true }, t.array(presence.rowType), ctx => {
+  const who = viewer(ctx);
+  if (who === 'nobody') return ctx.from.presence.where(NOTHING);
+  if (who === 'admin') return ctx.from.presence;
+  return myAccess(ctx).rightSemijoin(ctx.from.presence, (a, p) => a.projectId.eq(p.projectId));
+});
+export const visibleRefSync = spacetimedb.view({ name: 'visible_ref_sync', public: true }, t.array(refSync.rowType), ctx => {
+  const who = viewer(ctx);
+  if (who === 'nobody') return ctx.from.refSync.where(NOTHING);
+  if (who === 'admin') return ctx.from.refSync;
+  return myAccess(ctx).rightSemijoin(ctx.from.refSync, (a, s) => a.projectId.eq(s.projectId));
+});
+export const visibleProjectSize = spacetimedb.view({ name: 'visible_project_size', public: true }, t.array(projectSize.rowType), ctx => {
+  const who = viewer(ctx);
+  if (who === 'nobody') return ctx.from.projectSize.where(NOTHING);
+  if (who === 'admin') return ctx.from.projectSize;
+  return myAccess(ctx).rightSemijoin(ctx.from.projectSize, (a, s) => a.projectId.eq(s.projectId));
+});
+export const visibleQuestion = spacetimedb.view({ name: 'visible_question', public: true }, t.array(question.rowType), ctx => {
+  const who = viewer(ctx);
+  if (who === 'nobody') return ctx.from.question.where(NOTHING);
+  if (who === 'admin') return ctx.from.question;
+  return myAccess(ctx).rightSemijoin(ctx.from.question, (a, q) => a.projectId.eq(q.projectId));
+});
 
 const ObjectIn = t.object('ObjectIn', {
   oid: t.string(),
@@ -2370,6 +2434,7 @@ export const unwatch = spacetimedb.reducer(ctx => {
 
 // Sweep presence left by connections whose close the server never saw.
 export const clientConnected = spacetimedb.clientConnected(ctx => {
+  ensureHubRow(ctx.db); // a new hub's: rows about no project pass the views through it
   const cutoff = ctx.timestamp.microsSinceUnixEpoch - PRESENCE_STALE_MICROS;
   for (const row of [...ctx.db.presence.iter()]) {
     if (row.seenAt.microsSinceUnixEpoch < cutoff) ctx.db.presence.connectionId.delete(row.connectionId);

@@ -113,7 +113,7 @@ export function mayReadHub(db: Db, identity: Identity): boolean {
 //
 // The one rule for "may this identity read this project" (spec section 3).
 // Reducers keep the project_access table equal to it (refreshAccess and
-// friends below), and the per-project views will read that table, so the rule
+// friends below), and the per-project views read that table, so the rule
 // itself lives here and nowhere else.
 
 // A project is private when project_visibility says so; no row is public, as
@@ -122,7 +122,7 @@ export function isPrivate(db: Db, projectId: bigint): boolean {
   return db.projectVisibility.projectId.find(projectId)?.visibility === 'private';
 }
 
-function isAdminIdentity(db: Db, identity: Identity): boolean {
+export function isAdminIdentity(db: Db, identity: Identity): boolean {
   return db.hubState.key.find('admin')?.value === identity.toHexString();
 }
 
@@ -204,10 +204,17 @@ export function canRead(db: Db, identity: Identity, projectId: bigint): boolean 
 //     and members-only is not in the table at all: the views check mayReadHub
 //     first, so switching it changes no row.
 //
-// So the table holds (projects + readers of private projects) rows, not
+//   - one more row, the hub row (PUBLIC_READER, HUB_ROW = project id 0, which
+//     no project has): rows about no project (activity of a space, presence
+//     following a whole space) carry projectId 0, and a view is one query
+//     (no union), so this row is how they pass the same semijoin. Space
+//     names are not secret, so everyone who may read the hub reads them.
+//
+// So the table holds (projects + readers of private projects + 1) rows, not
 // builders x projects, and nothing on an existing hub but one row a project.
-// The two kinds never overlap, so a semijoin never sees a project twice.
+// The kinds never overlap, so a semijoin never sees a project twice.
 export const PUBLIC_READER = Identity.zero();
+export const HUB_ROW = 0n;
 
 // PUBLIC_READER for a view's query. The query builder writes an identity
 // literal only when it is the server runtime's own Identity class, which the
@@ -225,6 +232,7 @@ export function publicReaderFor(sender: Identity): Identity {
 // Who should have a row for project `projectId`, by identity hex.
 function wantedReaders(db: Db, projectId: bigint): Map<string, Identity> {
   const want = new Map<string, Identity>();
+  if (projectId === HUB_ROW) return want.set(PUBLIC_READER.toHexString(), PUBLIC_READER);
   const p = db.project.id.find(projectId);
   if (!p) return want;
   if (!isPrivate(db, projectId)) {
@@ -254,6 +262,7 @@ export interface AccessChange {
 // missing ones are added, the rest are left alone (so a subscriber sees no
 // churn). A project that no longer exists loses all its rows.
 export function refreshAccess(db: Db, projectId: bigint): AccessChange {
+  if (projectId !== HUB_ROW) ensureHubRow(db);
   const want = wantedReaders(db, projectId);
   const change = { added: 0, removed: 0 };
   for (const row of [...db.projectAccess.projectId.filter(projectId)]) {
@@ -271,6 +280,13 @@ export function refreshAccess(db: Db, projectId: bigint): AccessChange {
   return change;
 }
 
+// The hub row, if it is missing (a new hub, or one from before it): cheap
+// enough (one index lookup) to ask whenever who may read changes.
+export function ensureHubRow(db: Db) {
+  for (const _ of db.projectAccess.projectId.filter(HUB_ROW)) return;
+  db.projectAccess.insert({ id: 0n, identity: PUBLIC_READER, projectId: HUB_ROW });
+}
+
 // Every project of a space, and of the agents it owns (whose owners are its
 // owners): after a change of who is in the space.
 export function refreshSpaceAccess(db: Db, space: string) {
@@ -281,6 +297,8 @@ export function refreshSpaceAccess(db: Db, space: string) {
 // One identity's rows: after it was made, deleted, or its agents' owners
 // changed. Only private projects can hold its rows.
 export function refreshIdentityAccess(db: Db, identity: Identity) {
+  ensureHubRow(db);
+  if (identity.isEqual(PUBLIC_READER)) return;
   const have = new Set<bigint>();
   for (const row of [...db.projectAccess.identity.filter(identity)]) {
     if (isPrivate(db, row.projectId) && canRead(db, identity, row.projectId)) have.add(row.projectId);
@@ -305,17 +323,21 @@ export interface AccessReport {
 
 export function checkAccessTable(db: Db, repair: boolean): AccessReport {
   const report: AccessReport = { projects: 0, rows: 0, missing: [], extra: [] };
-  const seen = new Set<bigint>();
+  const seen = new Set<bigint>([HUB_ROW]);
+  const compare = (projectId: bigint) => {
+    const want = wantedReaders(db, projectId);
+    for (const row of db.projectAccess.projectId.filter(projectId)) {
+      const hex = row.identity.toHexString();
+      if (want.has(hex)) want.delete(hex);
+      else report.extra.push(`${projectId} ${hex}`);
+    }
+    for (const hex of want.keys()) report.missing.push(`${projectId} ${hex}`);
+  };
+  compare(HUB_ROW);
   for (const p of [...db.project.iter()]) {
     report.projects++;
     seen.add(p.id);
-    const want = wantedReaders(db, p.id);
-    for (const row of db.projectAccess.projectId.filter(p.id)) {
-      const hex = row.identity.toHexString();
-      if (want.has(hex)) want.delete(hex);
-      else report.extra.push(`${p.id} ${hex}`);
-    }
-    for (const hex of want.keys()) report.missing.push(`${p.id} ${hex}`);
+    compare(p.id);
   }
   for (const row of db.projectAccess.iter()) {
     if (!seen.has(row.projectId)) report.extra.push(`${row.projectId} ${row.identity.toHexString()}`);
@@ -329,7 +351,8 @@ export function checkAccessTable(db: Db, repair: boolean): AccessReport {
 // that can reach anywhere (a builder renamed, merged, deleted or suspended; an
 // org's owners changed, which changes who owns its agents).
 export function refreshAllAccess(db: Db) {
-  const seen = new Set<bigint>();
+  refreshAccess(db, HUB_ROW);
+  const seen = new Set<bigint>([HUB_ROW]);
   for (const p of [...db.project.iter()]) {
     seen.add(p.id);
     refreshAccess(db, p.id);
