@@ -38,6 +38,14 @@ export const AgentSecret = __t.object("AgentSecret", {
 });
 export type AgentSecret = __Infer<typeof AgentSecret>;
 
+export const BuilderSuspension = __t.object("BuilderSuspension", {
+  identity: __t.string(),
+  username: __t.string(),
+  suspendedBy: __t.string(),
+  suspendedAt: __t.timestamp(),
+});
+export type BuilderSuspension = __Infer<typeof BuilderSuspension>;
+
 export const ChatLinkIn = __t.object("ChatLinkIn", {
   label: __t.string(),
   path: __t.string(),
@@ -179,6 +187,24 @@ export const ProjectSize = __t.object("ProjectSize", {
 });
 export type ProjectSize = __Infer<typeof ProjectSize>;
 
+export const Question = __t.object("Question", {
+  key: __t.string(),
+  id: __t.string(),
+  projectId: __t.u64(),
+  project: __t.string(),
+  space: __t.string(),
+  conversation: __t.string(),
+  kind: __t.string(),
+  asker: __t.string(),
+  content: __t.string(),
+  status: __t.string(),
+  agent: __t.string(),
+  askedAt: __t.timestamp(),
+  claimedAt: __t.timestamp(),
+  answeredAt: __t.timestamp(),
+});
+export type Question = __Infer<typeof Question>;
+
 export const RefSync = __t.object("RefSync", {
   key: __t.string(),
   projectId: __t.u64(),
@@ -247,24 +273,6 @@ export const SpaceLink = __t.object("SpaceLink", {
   projects: __t.u32(),
 });
 export type SpaceLink = __Infer<typeof SpaceLink>;
-
-export const Question = __t.object("Question", {
-  key: __t.string(),
-  id: __t.string(),
-  projectId: __t.u64(),
-  project: __t.string(),
-  space: __t.string(),
-  conversation: __t.string(),
-  kind: __t.string(),
-  asker: __t.string(),
-  content: __t.string(),
-  status: __t.string(),
-  agent: __t.string(),
-  askedAt: __t.timestamp(),
-  claimedAt: __t.timestamp(),
-  answeredAt: __t.timestamp(),
-});
-export type Question = __Infer<typeof Question>;
 
 export const SpaceRole = __t.object("SpaceRole", {
   id: __t.u64(),

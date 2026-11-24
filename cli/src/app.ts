@@ -48,9 +48,12 @@ export interface AppDeps {
   db: string;
   /** Run `fn` on a connection made with `token`, closed afterwards. */
   withConn: <T>(token: string, fn: (conn: Conn, identity: Parameters<typeof findUser>[1]) => Promise<T>) => Promise<T>;
+  /** The signed-in builder, verified against the database (web.ts, viewer.ts); the only way this file learns who is asking. */
   sessionOf: (req: http.IncomingMessage) => Promise<{ token: string; username: string } | null>;
   /** Whether the request comes from a hub operator (SPACEHUB_RECOVERY_OPERATORS), who alone sees Sub-hubs and backups. */
   operator?: (req: http.IncomingMessage) => Promise<boolean>;
+  /** The hub owner's builder name, or null (hubowner.ts); the owner alone sees Settings → Hub. */
+  owner?: () => Promise<string | null>;
 }
 
 /** Where the built app lives: SPACEHUB_APP_DIR, else app/dist beside this checkout. */
@@ -171,15 +174,16 @@ export async function handleApp(deps: AppDeps, req: http.IncomingMessage, res: h
 
   if (req.method === 'GET' && route === '/-/api/me') {
     const session = await deps.sessionOf(req);
-    json(res, 200, { name: session?.username ?? null, operator: session && deps.operator ? await deps.operator(req) : false });
+    const owner = session && deps.owner ? (await deps.owner().catch(() => null)) === session.username : false;
+    json(res, 200, { name: session?.username ?? null, operator: session && deps.operator ? await deps.operator(req) : false, ...(owner ? { owner: true } : {}) });
     return true;
   }
 
   if (route === '/-/api/chat') {
     if (req.method !== 'POST') return json(res, 405, { error: 'Send chat messages with POST.' }), true;
     if (req.headers['content-type']?.split(';')[0] !== 'application/json') return json(res, 415, { error: 'Send JSON.' }), true;
-    const token = /(?:^|;\s*)spacehub_session=([^;]*)/.exec(req.headers.cookie ?? '')?.[1];
-    if (!token) return json(res, 401, { error: 'Sign in to save chats.' }), true;
+    const session = await deps.sessionOf(req);
+    if (!session) return json(res, 401, { error: 'Sign in to save chats.' }), true;
     let input: ReturnType<typeof parseChat>;
     try {
       input = parseChat(await readJson(req));
@@ -188,12 +192,7 @@ export async function handleApp(deps: AppDeps, req: http.IncomingMessage, res: h
     }
     if (!input) return json(res, 400, { error: 'Send a space, project, conversation and its new messages.' }), true;
     try {
-      const saved = await deps.withConn(decodeURIComponent(token), async (conn, identity) => {
-        if (!(await findUser(conn, identity))) return false;
-        await conn.reducers.appendChat(input);
-        return true;
-      });
-      if (!saved) return json(res, 401, { error: 'Sign in to save chats.' }), true;
+      await deps.withConn(session.token, conn => conn.reducers.appendChat(input));
       return json(res, 200, { ok: true }), true;
     } catch (error) {
       const message = (error instanceof Error ? error.message : String(error)).replace(/^Error: /, '');
@@ -205,8 +204,8 @@ export async function handleApp(deps: AppDeps, req: http.IncomingMessage, res: h
   if (action) {
     if (req.method !== 'POST') return json(res, 405, { error: `Send it with POST to ${action.what}.` }), true;
     if (req.headers['content-type']?.split(';')[0] !== 'application/json') return json(res, 415, { error: 'Send JSON.' }), true;
-    const token = /(?:^|;\s*)spacehub_session=([^;]*)/.exec(req.headers.cookie ?? '')?.[1];
-    if (!token) return json(res, 401, { error: `Sign in to ${action.what}.` }), true;
+    const session = await deps.sessionOf(req);
+    if (!session) return json(res, 401, { error: `Sign in to ${action.what}.` }), true;
     let input: unknown;
     try {
       input = await readJson(req);
@@ -216,12 +215,7 @@ export async function handleApp(deps: AppDeps, req: http.IncomingMessage, res: h
     const call = object(input) ? action.call(input) : null;
     if (!call) return json(res, 400, { error: action.usage }), true;
     try {
-      const done = await deps.withConn(decodeURIComponent(token), async (conn, identity) => {
-        if (!(await findUser(conn, identity))) return false;
-        await call(conn);
-        return true;
-      });
-      if (!done) return json(res, 401, { error: `Sign in to ${action.what}.` }), true;
+      await deps.withConn(session.token, conn => call(conn));
       action.after?.(input as Record<string, unknown>);
       return json(res, 200, { ok: true }), true;
     } catch (error) {

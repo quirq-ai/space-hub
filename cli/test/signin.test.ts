@@ -77,6 +77,8 @@ function fakeDb(taken: string[] = []) {
   const accounts: { value: string | null } = { value: null };
   const builders = new Map<number, { username: string; token: string }>();
   const seen: string[] = [];
+  const suspended: string[] = [];
+  const signedIn: unknown[] = [];
   let identities = 0;
   const server = http.createServer(async (req, res) => {
     let body = '';
@@ -88,8 +90,16 @@ function fakeDb(taken: string[] = []) {
     if (req.url === '/v1/identity') return res.end(JSON.stringify({ identity: `${++identities}`.padStart(64, '0'), token: `hub-${identities}` }));
     if (req.url === '/v1/database/spacehub/sql') {
       if (body.includes('FROM hub_state')) return table(['value'], accounts.value ? [[accounts.value]] : []);
+      if (body.includes('FROM builder_suspension')) {
+        const name = /username = '([^']*)'/.exec(body)?.[1];
+        return table(['username'], suspended.filter(s => !name || s === name).map(s => [s]));
+      }
       const b = builders.get(Number(/github_id = (\d+)$/.exec(body)![1]));
       return table(['username', 'token'], b ? [[b.username, b.token]] : []);
+    }
+    if (req.url === '/v1/database/spacehub/call/github_signed_in') {
+      signedIn.push(JSON.parse(body));
+      return res.end();
     }
     if (req.url === '/v1/database/spacehub/call/github_link_builder') {
       const [id, login, , token] = JSON.parse(body);
@@ -100,7 +110,7 @@ function fakeDb(taken: string[] = []) {
     }
     res.writeHead(404).end();
   });
-  return { server, accounts, builders, seen, identities: () => identities };
+  return { server, accounts, builders, seen, suspended, signedIn, identities: () => identities };
 }
 
 async function setup(opts: { taken?: string[]; cfg?: boolean; app?: SignInConfig['app'] } = {}) {
@@ -143,6 +153,23 @@ test('the first sign-in makes the builder; later ones get the same token back', 
     assert.equal(db.identities(), 1);
     // The GitHub token never reaches the database.
     assert.ok(db.seen.every(line => !line.includes('gh-octo')));
+  } finally {
+    close();
+  }
+});
+
+test('a returning sign-in is noted (it may be the hub owner\'s); a suspended builder is refused', async () => {
+  const { db, signIn, close } = await setup();
+  try {
+    await signIn('gh-octo');
+    assert.deepEqual(db.signedIn, [], 'a new builder is noted by github_link_builder itself');
+    assert.equal((await signIn('gh-octo')).status, 200);
+    assert.deepEqual(db.signedIn, [[583231, 'Octocat']]);
+    db.suspended.push('octocat');
+    const refused = await signIn('gh-octo');
+    assert.equal(refused.status, 403);
+    assert.match(String(refused.body.error), /octocat is suspended/);
+    assert.equal(refused.body.token, undefined);
   } finally {
     close();
   }

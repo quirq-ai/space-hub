@@ -36,8 +36,11 @@ import {
 // Import all reducer arg schemas
 import AddProjectMemberReducer from "./add_project_member_reducer";
 import AddSpaceMemberReducer from "./add_space_member_reducer";
+import AnswerQuestionReducer from "./answer_question_reducer";
 import AppendChatReducer from "./append_chat_reducer";
+import AskQuestionReducer from "./ask_question_reducer";
 import ClaimAdminReducer from "./claim_admin_reducer";
+import ClaimQuestionReducer from "./claim_question_reducer";
 import ConnectAgentReducer from "./connect_agent_reducer";
 import CreateAgentReducer from "./create_agent_reducer";
 import CreateOrgReducer from "./create_org_reducer";
@@ -52,7 +55,9 @@ import EditProjectReducer from "./edit_project_reducer";
 import EditSpaceReducer from "./edit_space_reducer";
 import FinishObjectReducer from "./finish_object_reducer";
 import GithubLinkBuilderReducer from "./github_link_builder_reducer";
+import GithubSignedInReducer from "./github_signed_in_reducer";
 import LinkSpaceReducer from "./link_space_reducer";
+import OpenRepoRoomReducer from "./open_repo_room_reducer";
 import PutChunkReducer from "./put_chunk_reducer";
 import PutObjectsReducer from "./put_objects_reducer";
 import RecordRefSyncReducer from "./record_ref_sync_reducer";
@@ -60,19 +65,18 @@ import RegisterUserReducer from "./register_user_reducer";
 import RemoveProjectMemberReducer from "./remove_project_member_reducer";
 import RemoveSpaceMemberReducer from "./remove_space_member_reducer";
 import RequestSyncReducer from "./request_sync_reducer";
+import RestoreBuilderReducer from "./restore_builder_reducer";
 import RunnerAddReducer from "./runner_add_reducer";
 import RunnerDeleteReducer from "./runner_delete_reducer";
 import RunnerUpdateReducer from "./runner_update_reducer";
 import SetAccountsReducer from "./set_accounts_reducer";
 import SetLinkStatusReducer from "./set_link_status_reducer";
+import SetOwnerLoginReducer from "./set_owner_login_reducer";
 import SetProjectBuilderReducer from "./set_project_builder_reducer";
 import SetSpaceGithubReducer from "./set_space_github_reducer";
 import StartChatReducer from "./start_chat_reducer";
-import OpenRepoRoomReducer from "./open_repo_room_reducer";
-import AskQuestionReducer from "./ask_question_reducer";
-import ClaimQuestionReducer from "./claim_question_reducer";
-import AnswerQuestionReducer from "./answer_question_reducer";
 import StartImportReducer from "./start_import_reducer";
+import SuspendBuilderReducer from "./suspend_builder_reducer";
 import UnlinkSpaceReducer from "./unlink_space_reducer";
 import UnwatchReducer from "./unwatch_reducer";
 import UpdateImportReducer from "./update_import_reducer";
@@ -418,8 +422,8 @@ const reducersSchema = __reducers(
   __reducerSchema("add_project_member", AddProjectMemberReducer),
   __reducerSchema("add_space_member", AddSpaceMemberReducer),
   __reducerSchema("answer_question", AnswerQuestionReducer),
-  __reducerSchema("ask_question", AskQuestionReducer),
   __reducerSchema("append_chat", AppendChatReducer),
+  __reducerSchema("ask_question", AskQuestionReducer),
   __reducerSchema("claim_admin", ClaimAdminReducer),
   __reducerSchema("claim_question", ClaimQuestionReducer),
   __reducerSchema("connect_agent", ConnectAgentReducer),
@@ -436,6 +440,7 @@ const reducersSchema = __reducers(
   __reducerSchema("edit_space", EditSpaceReducer),
   __reducerSchema("finish_object", FinishObjectReducer),
   __reducerSchema("github_link_builder", GithubLinkBuilderReducer),
+  __reducerSchema("github_signed_in", GithubSignedInReducer),
   __reducerSchema("link_space", LinkSpaceReducer),
   __reducerSchema("open_repo_room", OpenRepoRoomReducer),
   __reducerSchema("put_chunk", PutChunkReducer),
@@ -445,15 +450,18 @@ const reducersSchema = __reducers(
   __reducerSchema("remove_project_member", RemoveProjectMemberReducer),
   __reducerSchema("remove_space_member", RemoveSpaceMemberReducer),
   __reducerSchema("request_sync", RequestSyncReducer),
+  __reducerSchema("restore_builder", RestoreBuilderReducer),
   __reducerSchema("runner_add", RunnerAddReducer),
   __reducerSchema("runner_delete", RunnerDeleteReducer),
   __reducerSchema("runner_update", RunnerUpdateReducer),
   __reducerSchema("set_accounts", SetAccountsReducer),
   __reducerSchema("set_link_status", SetLinkStatusReducer),
+  __reducerSchema("set_owner_login", SetOwnerLoginReducer),
   __reducerSchema("set_project_builder", SetProjectBuilderReducer),
   __reducerSchema("set_space_github", SetSpaceGithubReducer),
   __reducerSchema("start_chat", StartChatReducer),
   __reducerSchema("start_import", StartImportReducer),
+  __reducerSchema("suspend_builder", SuspendBuilderReducer),
   __reducerSchema("unlink_space", UnlinkSpaceReducer),
   __reducerSchema("unwatch", UnwatchReducer),
   __reducerSchema("update_import", UpdateImportReducer),

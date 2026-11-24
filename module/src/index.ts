@@ -361,6 +361,22 @@ const githubAccount = table(
   }
 );
 
+// Builders the hub's owner (or the admin) has suspended: by identity (as hex,
+// like hub_state's admin), which stays when the builder is renamed. A
+// suspended builder's writes are refused and the web service treats its
+// sessions as signed out; its spaces and projects stay. A new table rather
+// than a column on `user`, so no client has to change. Private: the web
+// service reads it as the admin.
+const builderSuspension = table(
+  { name: 'builder_suspension' },
+  {
+    identity: t.string().primaryKey(),
+    username: t.string().unique(), // kept current when the builder is renamed
+    suspendedBy: t.string(),
+    suspendedAt: t.timestamp(),
+  }
+);
+
 // A second name of a builder's personal space: the xo username of a builder
 // whose GitHub login is another name, or the name a builder had before xo
 // moved it to its GitHub account. /<name>/... shows the same pages as the
@@ -477,6 +493,7 @@ const spacetimedb = schema({
   xoRecord,
   xoAgent,
   githubAccount,
+  builderSuspension,
   spaceAlias,
   xoLink,
   runner,
@@ -518,18 +535,32 @@ function isSyncer(ctx: Ctx, space: string) {
   return isAdmin(ctx) && !!ctx.db.spaceLink.space.find(space);
 }
 
+function isSuspended(ctx: Ctx, identity: Identity) {
+  return !!ctx.db.builderSuspension.identity.find(identity.toHexString());
+}
+
+function suspendedError(name: string) {
+  return new SenderError(`the builder "${name}" is suspended on this hub; ask the hub's owner`);
+}
+
 function requireUser(ctx: Ctx) {
   const me = ctx.db.user.identity.find(ctx.sender);
   if (!me) throw new SenderError('no builder name yet: run spacehub auth login --builder <name>');
+  if (isSuspended(ctx, ctx.sender)) throw suspendedError(me.username);
   return me;
 }
 
-// Who is calling: a builder's name, an agent's name, or null.
+// Who is calling: a builder's name, an agent's name, or null. A suspended
+// builder is nobody, so every permission check refuses it.
 function actorName(ctx: Ctx): string | null {
-  return ctx.db.user.identity.find(ctx.sender)?.username ?? ctx.db.agent.identity.find(ctx.sender)?.name ?? null;
+  const me = ctx.db.user.identity.find(ctx.sender);
+  if (me) return isSuspended(ctx, ctx.sender) ? null : me.username;
+  return ctx.db.agent.identity.find(ctx.sender)?.name ?? null;
 }
 
 function requireActor(ctx: Ctx): string {
+  const user = ctx.db.user.identity.find(ctx.sender);
+  if (user && isSuspended(ctx, ctx.sender)) throw suspendedError(user.username);
   const me = actorName(ctx);
   if (!me) throw new SenderError('no builder or agent name for this identity: run spacehub auth login --builder <name>');
   return me;
@@ -791,6 +822,98 @@ export const setAccounts = spacetimedb.reducer({ source: t.string() }, (ctx, { s
   else ctx.db.hubState.insert({ key: 'accounts', value: source });
 });
 
+// ---------------------------------------------------------------- hub owner
+
+// The hub's owner is a GitHub account, by its id, never a builder name: a
+// name can be registered on an open hub, or taken by a rename, before the real
+// owner arrives. The entrypoint names the owner's GitHub login on every start
+// (hub_state "owner_login", setOwnerLogin); the first sign-in through GitHub
+// whose checked login matches records that account's id (hub_state "owner").
+// From then on the owner is whichever builder holds that GitHub account. With
+// no owner_login, nothing here applies and the hub works as before.
+
+function setHubState(ctx: Ctx, key: string, value: string | null) {
+  const row = ctx.db.hubState.key.find(key);
+  if (value === null) {
+    if (row) ctx.db.hubState.key.delete(key);
+  } else if (!row) ctx.db.hubState.insert({ key, value });
+  else if (row.value !== value) ctx.db.hubState.key.update({ ...row, value });
+}
+
+// The builder that holds the owner's GitHub account, or null.
+function hubOwner(ctx: Ctx) {
+  const id = ctx.db.hubState.key.find('owner')?.value;
+  if (!id || !/^[1-9][0-9]*$/.test(id)) return null;
+  const account = ctx.db.githubAccount.githubId.find(BigInt(id));
+  return account ? ctx.db.user.username.find(account.username) ?? null : null;
+}
+
+function isHubOwner(ctx: Ctx) {
+  return hubOwner(ctx)?.identity.isEqual(ctx.sender) ?? false;
+}
+
+// A GitHub account the web service has just checked with GitHub signs in:
+// it becomes the owner when none is recorded yet and its login is the one
+// the hub was started with.
+function noteOwner(ctx: Ctx, githubId: bigint, login: string) {
+  const wanted = ctx.db.hubState.key.find('owner_login')?.value;
+  if (!wanted || ctx.db.hubState.key.find('owner')) return;
+  if (login.toLowerCase() === wanted.toLowerCase()) ctx.db.hubState.insert({ key: 'owner', value: githubId.toString() });
+}
+
+// The entrypoint, on every start: the owner's GitHub login (SPACEHUB_OWNER),
+// or "" for none. The same login again changes nothing; a different one
+// forgets the recorded owner, so that account's next sign-in claims the hub
+// (how an operator recovers ownership). "" removes both: today's behaviour.
+export const setOwnerLogin = spacetimedb.reducer({ login: t.string() }, (ctx, { login }) => {
+  requireAdmin(ctx);
+  const next = login.trim();
+  if (next && !GITHUB_LOGIN.test(next)) throw new SenderError(`invalid GitHub login "${next}"`);
+  const current = ctx.db.hubState.key.find('owner_login')?.value ?? '';
+  if (current.toLowerCase() === next.toLowerCase()) return;
+  setHubState(ctx, 'owner_login', next || null);
+  setHubState(ctx, 'owner', null);
+});
+
+// A returning sign-in with GitHub (the web service checked the account): it
+// may be the owner's first since the owner was named.
+export const githubSignedIn = spacetimedb.reducer({ githubId: t.u64(), login: t.string() }, (ctx, { githubId, login }) => {
+  requireAdmin(ctx);
+  if (!ctx.db.githubAccount.githubId.find(githubId)) throw new SenderError('no builder for that GitHub account');
+  if (!GITHUB_LOGIN.test(login)) throw new SenderError(`invalid GitHub login "${login}"`);
+  noteOwner(ctx, githubId, login);
+});
+
+// Owner actions: the hub's owner, or the admin (by CLI) on a hub with none.
+function requireHubOwner(ctx: Ctx): string {
+  if (isAdmin(ctx)) return '-admin';
+  const owner = hubOwner(ctx);
+  if (!owner || !owner.identity.isEqual(ctx.sender)) throw new SenderError("permission denied: only the hub's owner can do this");
+  if (isSuspended(ctx, ctx.sender)) throw suspendedError(owner.username);
+  return owner.username;
+}
+
+// The owner suspends a builder: its writes are refused and the web service
+// signs it out; nothing it made is removed. Suspending again changes nothing.
+export const suspendBuilder = spacetimedb.reducer({ username: t.string() }, (ctx, { username }) => {
+  const by = requireHubOwner(ctx);
+  const builder = ctx.db.user.username.find(username);
+  if (!builder) throw new SenderError(`no builder named "${username}"`);
+  if (hubOwner(ctx)?.identity.isEqual(builder.identity)) throw new SenderError("the hub's owner cannot be suspended");
+  const key = builder.identity.toHexString();
+  if (ctx.db.builderSuspension.identity.find(key)) return;
+  ctx.db.builderSuspension.insert({ identity: key, username, suspendedBy: by, suspendedAt: ctx.timestamp });
+});
+
+// The owner lets a suspended builder back in. Restoring one who is not
+// suspended changes nothing.
+export const restoreBuilder = spacetimedb.reducer({ username: t.string() }, (ctx, { username }) => {
+  requireHubOwner(ctx);
+  const builder = ctx.db.user.username.find(username);
+  if (!builder) throw new SenderError(`no builder named "${username}"`);
+  ctx.db.builderSuspension.identity.delete(builder.identity.toHexString());
+});
+
 // Clerk user ids, as Clerk writes them (user_2abc...).
 const XO_SUBJECT = /^[A-Za-z0-9_]{1,64}$/;
 const MAX_XO_DOC = 256 * 1024;
@@ -857,6 +980,7 @@ export const githubLinkBuilder = spacetimedb.reducer(
     const username = login.toLowerCase();
     addBuilder(ctx, identity, username);
     ctx.db.githubAccount.insert({ githubId, login, username, identity, token, createdAt: ctx.timestamp });
+    noteOwner(ctx, githubId, login);
   }
 );
 
@@ -925,6 +1049,8 @@ function renameBuilder(ctx: Ctx, from: string, to: string) {
   const space = ctx.db.space.name.find(from);
   if (!me || !space) throw new SenderError(`no builder named "${from}"`);
   ctx.db.user.identity.update({ ...me, username: to });
+  const suspension = ctx.db.builderSuspension.identity.find(me.identity.toHexString());
+  if (suspension) ctx.db.builderSuspension.identity.update({ ...suspension, username: to });
   ctx.db.space.insert({ ...space, name: to, displayName: space.displayName === from ? to : space.displayName, createdBy: to });
   moveBuilder(ctx, from, to);
   ctx.db.space.name.delete(from);
@@ -939,6 +1065,7 @@ function mergeBuilder(ctx: Ctx, from: string, into: string) {
   if (ctx.db.githubAccount.username.find(from)) throw new SenderError(`"${from}" is a GitHub account's builder; it is not merged`);
   moveBuilder(ctx, from, into);
   ctx.db.space.name.delete(from);
+  ctx.db.builderSuspension.identity.delete(me.identity.toHexString());
   ctx.db.user.identity.delete(me.identity);
 }
 
@@ -1636,7 +1763,8 @@ export const disconnectAgent = spacetimedb.reducer({ agent: t.string(), space: t
 export const agentToken = spacetimedb.procedure({ agent: t.string() }, t.string(), (ctx, { agent: name }) =>
   ctx.withTx(tx => {
     const db = tx.db as Ctx['db'];
-    const me = db.user.identity.find(ctx.sender)?.username ?? null;
+    const suspended = !!db.builderSuspension.identity.find(ctx.sender.toHexString());
+    const me = suspended ? null : (db.user.identity.find(ctx.sender)?.username ?? null);
     if (db.space.name.find(name)?.kind !== 'agent') throw new SenderError(`no agent named "${name}"`);
     if (!ownsSpace(db, name, me)) throw new SenderError(`permission denied: only the owners of "${name}" read its token`);
     return db.agentSecret.name.find(name)?.token ?? '';

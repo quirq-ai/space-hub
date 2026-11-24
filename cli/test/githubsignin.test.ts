@@ -58,9 +58,11 @@ function fakeDb() {
     if (req.url === '/v1/identity') return res.end(JSON.stringify({ identity: `${++identities}`.padStart(64, '0'), token: `hub-${identities}` }));
     if (req.url === '/v1/database/spacehub/sql') {
       if (body.includes('FROM hub_state')) return table(['value'], []);
+      if (body.includes('FROM builder_suspension')) return table(['username'], []);
       const b = builders.get(Number(/github_id = (\d+)$/.exec(body)![1]));
       return table(['username', 'token'], b ? [[b.username, b.token]] : []);
     }
+    if (req.url === '/v1/database/spacehub/call/github_signed_in') return res.end();
     if (req.url === '/v1/database/spacehub/call/github_link_builder') {
       const [id, login, , token] = JSON.parse(body);
       builders.set(id, { username: login.toLowerCase(), token });

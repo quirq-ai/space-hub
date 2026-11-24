@@ -39,6 +39,7 @@ import { randomBytes } from 'node:crypto';
 import http from 'node:http';
 import { type AdminHttp, call, json, newIdentity, readJson, Reply, select } from './admin.ts';
 import { deviceCode, githubWeb, pollToken } from './device.ts';
+import { isSuspended } from './hubowner.ts';
 import type { GithubApi } from './github';
 
 export const SIGNIN_ROUTE = '/-/api/auth/github';
@@ -155,7 +156,16 @@ export async function signIn(cfg: SignInConfig, githubToken: string) {
 // website's sign-in, githubsignin.ts).
 export async function signInUser(cfg: SignInConfig, user: { id: number; login: string }) {
   const known = await builderOf(cfg, user.id);
-  if (known) return { ...known, created: false };
+  if (known) {
+    if (await isSuspended(cfg, known.builder)) throw new Reply(403, `the builder ${known.builder} is suspended on this hub; ask the hub's owner`);
+    // The account's login is checked just now: it may be the hub's owner,
+    // named after it signed up. A no-op otherwise; a failure only waits for
+    // the next sign-in.
+    await call(cfg, 'github_signed_in', [user.id, user.login]).catch(err => {
+      process.stderr.write(`spacehub-web: noting a GitHub sign-in: ${err instanceof Error ? err.message : String(err)}\n`);
+    });
+    return { ...known, created: false };
+  }
   if ((await accountsSetting(cfg)) === 'xo') throw new Reply(403, 'builders on this hub are made by xo: run xo login');
   const made = await newIdentity(cfg);
   try {

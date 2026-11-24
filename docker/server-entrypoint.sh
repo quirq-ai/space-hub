@@ -172,6 +172,15 @@ if [ -n "${SPACEHUB_XO_KEY:-}" ] && [ -z "$SPACEHUB_ADMIN_TOKEN" ]; then
   exit 1
 fi
 spacetime --root-dir "$ROOT" call --server "http://$INTERNAL" "$DB" set_accounts "\"$ACCOUNTS\"" >/dev/null
+# The hub's owner, from SPACEHUB_OWNER: a GitHub login. Applied on every start
+# (the same login again changes nothing); the first sign-in with GitHub as that
+# login records the account's id as the owner. Unset: no owner, as before.
+OWNER="${SPACEHUB_OWNER:-}"
+if ! printf '%s' "$OWNER" | grep -Eq '^([A-Za-z0-9-]{1,39})?$'; then
+  echo "spacehub: SPACEHUB_OWNER must be a GitHub login" >&2
+  exit 1
+fi
+spacetime --root-dir "$ROOT" call --server "http://$INTERNAL" "$DB" set_owner_login "\"$OWNER\"" >/dev/null
 
 # Ready: hand the public port to the allowlist proxy.
 kill -TERM "$proxy" 2>/dev/null || true

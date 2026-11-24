@@ -56,6 +56,9 @@ import { InstanceConnections } from './instanceconnections';
 import { hubBackupConfig, startHubBackups } from './hubbackup';
 import { activityJournalDir, startActivityJournal } from './activityjournal';
 import { SubhubRelay } from './subhubrelay';
+import { bearerToken, cookieValue, viewerOf, type CheckToken, type Viewer } from './viewer';
+import { hubOwnerName, hubPeople, isSuspended } from './hubowner';
+import { handleHubSettings } from './hubsettings';
 
 quietSdkLogs();
 
@@ -146,20 +149,6 @@ function page(title: string, viewer: string | null, body: string, wide = false) 
   return shell(title, wide ? `<div class="wide-page">${body}</div>` : `<div class="narrow">${body}</div>`, '', { viewer });
 }
 
-function cookieValue(req: http.IncomingMessage, name: string): string | null {
-  for (const part of (req.headers.cookie ?? '').split(';')) {
-    const eq = part.indexOf('=');
-    if (eq > 0 && part.slice(0, eq).trim() === name) {
-      try {
-        return decodeURIComponent(part.slice(eq + 1).trim());
-      } catch {
-        return null;
-      }
-    }
-  }
-  return null;
-}
-
 function sessionCookies(req: http.IncomingMessage, token: string, username: string, maxAge = YEAR) {
   const secure = req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : '';
   const attrs = `; Path=/; SameSite=Lax; Max-Age=${maxAge}${secure}`;
@@ -214,16 +203,33 @@ async function withConn<T>(token: string | undefined, fn: (conn: Conn, identity:
   }
 }
 
-// The signed-in user for this request, checked against the database.
+// The admin over SQL, for the private rows the web service reads (the hub's
+// owner, suspended builders); null without the admin's token.
+const ADMIN_SQL = ADMIN_TOKEN ? { adminToken: ADMIN_TOKEN, http: INTERNAL_HTTP, db: DB } : null;
+
+// A token's identity and builder name, and whether the hub's owner suspended
+// that builder; throws when the server rejects the token. Also used on the
+// token a sign-in has just produced, before it becomes a session.
+const checkToken: CheckToken = async token => {
+  const { identity, name } = await withConn(token, async (conn, identity) => ({ identity, name: (await findUser(conn, identity))?.username ?? null }));
+  return { identity, name, suspended: name !== null && !!ADMIN_SQL && (await isSuspended(ADMIN_SQL, name)) };
+};
+
+// The hub owner's builder name (hubowner.ts), or null: no owner, or no admin to ask.
+function ownerName(): Promise<string | null> {
+  return ADMIN_SQL ? hubOwnerName(ADMIN_SQL) : Promise.resolve(null);
+}
+
+// Who this request is, checked against the database (viewer.ts). The one
+// lookup every route uses; opts.bearer also accepts an Authorization header.
+function viewer(req: http.IncomingMessage, opts: { bearer?: boolean } = {}): Promise<Viewer | null> {
+  return viewerOf(req, checkToken, opts);
+}
+
+// The signed-in builder for this request (the session cookie only), or null.
 async function sessionOf(req: http.IncomingMessage): Promise<{ token: string; username: string } | null> {
-  const token = cookieValue(req, 'spacehub_session');
-  if (!token) return null;
-  try {
-    const user = await withConn(token, (conn, identity) => findUser(conn, identity));
-    return user ? { token, username: user.username } : null;
-  } catch {
-    return null;
-  }
+  const v = await viewer(req);
+  return v && v.name !== null ? { token: v.token, username: v.name } : null;
 }
 
 // Save chat turns as the builder; the module's push rules decide who may.
@@ -271,21 +277,22 @@ async function placesOf(session: { token: string; username: string }): Promise<{
 }
 
 async function recoveryOperator(req: http.IncomingMessage): Promise<boolean> {
-  const bearer = /^Bearer (\S+)$/.exec(req.headers.authorization ?? '')?.[1];
+  // The CLI sends its token as a bearer header; a browser sends the session
+  // cookie, so a cookie-only write must also come from this site.
+  const bearer = bearerToken(req);
   if (req.headers.origin && !sameOrigin(req)) return false;
   if (!bearer && req.method !== 'GET' && req.method !== 'HEAD' && !sameOrigin(req)) return false;
-  const token = bearer ?? cookieValue(req, 'spacehub_session');
-  if (!token) return false;
+  const v = await viewer(req, { bearer: true });
+  if (!v) return false;
+  if (v.name !== null && RECOVERY_OPERATORS.has(v.name)) return true;
+  // The hub's owner is always an operator (shown to it in Settings → Hub).
+  if (v.name !== null && v.name === (await ownerName().catch(() => null))) return true;
+  // Once operators are named, only they qualify; the module's global
+  // administrator is the fallback for a hub that names none.
+  if (RECOVERY_OPERATORS.size || !ADMIN_TOKEN) return false;
   try {
-    return await withConn(token, async (conn, identity) => {
-      const user = await findUser(conn, identity);
-      if (user && RECOVERY_OPERATORS.has(user.username)) return true;
-      // Once operators are named, only they qualify; the module's global
-      // administrator is the fallback for a hub that names none.
-      if (RECOVERY_OPERATORS.size || !ADMIN_TOKEN) return false;
-      const rows = await select({ adminToken: ADMIN_TOKEN, http: INTERNAL_HTTP, db: DB }, "SELECT value FROM hub_state WHERE key = 'admin'");
-      return rows[0]?.value === identity.toHexString();
-    });
+    const rows = await select({ adminToken: ADMIN_TOKEN, http: INTERNAL_HTTP, db: DB }, "SELECT value FROM hub_state WHERE key = 'admin'");
+    return rows[0]?.value === v.identity.toHexString();
   } catch { return false; }
 }
 
@@ -556,7 +563,19 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   }, req, res)) return;
   if (await handleWorkers(WORKERS, { sessionOf, placesOf, appendChat, sameOrigin, callbackUrl: r => callbackOf(r, CONNECT_CALLBACK) }, req, res, url)) return;
   if (await handleRooms(ROOMS, req, res, url)) return;
-  if (await handleApp({ dir: APP_DIR, internalHttp: INTERNAL_HTTP, db: DB, withConn, sessionOf, operator: recoveryOperator }, req, res, url)) return;
+  if (await handleHubSettings({
+    sessionOf,
+    ownerName,
+    operators: [...RECOVERY_OPERATORS],
+    adminFallback: RECOVERY_OPERATORS.size === 0 && !!ADMIN_TOKEN,
+    people: async () => {
+      const names = await withConn(ADMIN_TOKEN, conn => snapshot(conn, tables.user, () => [...conn.db.user.iter()].map(u => u.username)));
+      return hubPeople(ADMIN_SQL!, names);
+    },
+    suspend: (token, username) => withConn(token, conn => conn.reducers.suspendBuilder({ username })),
+    restore: (token, username) => withConn(token, conn => conn.reducers.restoreBuilder({ username })),
+  }, req, res, url)) return;
+  if (await handleApp({ dir: APP_DIR, internalHttp: INTERNAL_HTTP, db: DB, withConn, sessionOf, operator: recoveryOperator, owner: ownerName }, req, res, url)) return;
 
   if (route === '/-/login') {
     const session = await sessionOf(req);
@@ -566,11 +585,13 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     const next = localPath(form.get('next'));
     if (!token) return send(res, 400, loginPage(null, await hubOf(req), 'Paste your identity token.', next));
     let username: string | null = null;
+    let suspended = false;
     try {
-      username = (await withConn(token, (conn, identity) => findUser(conn, identity)))?.username ?? null;
+      ({ name: username, suspended = false } = await checkToken(token));
     } catch {
       return send(res, 400, loginPage(null, await hubOf(req), 'That token is not valid on this server.', next));
     }
+    if (username && suspended) return send(res, 403, loginPage(null, await hubOf(req), `The builder ${username} is suspended on this hub. Ask the hub's owner.`, next));
     if (!username) return send(res, 400, loginPage(null, await hubOf(req), 'That identity has no builder yet. Log in from the terminal first, as above.', next));
     return redirect(res, next, sessionCookies(req, token, username));
   }
@@ -606,7 +627,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
       if (!SIGNIN) throw new Reply(404, 'Sign-in with GitHub is not set up on this hub.');
       const q = url.searchParams;
       const out = await githubWeb.finishSignIn(SIGNIN, { state: q.get('state'), cookie: cookieValue(req, githubWeb.STATE_COOKIE), code: q.get('code'), error: q.get('error') });
-      const username = (await withConn(out.token, (conn, identity) => findUser(conn, identity)))?.username;
+      const { name: username, suspended } = await checkToken(out.token);
+      if (suspended) throw new Reply(403, `The builder ${username} is suspended on this hub. Ask the hub's owner.`);
       if (username !== out.username) throw new Reply(502, `The builder ${out.username} cannot sign in on this hub.`);
       return redirect(res, out.next, [...sessionCookies(req, out.token, username), spent], quiet);
     } catch (err) {
@@ -624,7 +646,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
       if (!XO_SIGNIN) throw new Reply(404, 'Sign-in with xo is not on for this hub.');
       const q = url.searchParams;
       const out = await finishSignIn(XO_SIGNIN, { state: q.get('state'), cookie: cookieValue(req, STATE_COOKIE), code: q.get('code'), error: q.get('error') });
-      const username = (await withConn(out.token, (conn, identity) => findUser(conn, identity)))?.username;
+      const { name: username, suspended } = await checkToken(out.token);
+      if (suspended) throw new Reply(403, `The builder ${username} is suspended on this hub. Ask the hub's owner.`);
       if (username !== out.username) throw new Reply(502, `The builder ${out.username} cannot sign in on this hub.`);
       return redirect(res, out.next, [...sessionCookies(req, out.token, username), spent], quiet);
     } catch (err) {
