@@ -310,6 +310,63 @@ export const User = __t.object("User", {
 });
 export type User = __Infer<typeof User>;
 
+export const VisibleActivity = __t.object("VisibleActivity", {});
+export type VisibleActivity = __Infer<typeof VisibleActivity>;
+
+export const VisibleAgent = __t.object("VisibleAgent", {});
+export type VisibleAgent = __Infer<typeof VisibleAgent>;
+
+export const VisibleGitObject = __t.object("VisibleGitObject", {});
+export type VisibleGitObject = __Infer<typeof VisibleGitObject>;
+
+export const VisibleGitRef = __t.object("VisibleGitRef", {});
+export type VisibleGitRef = __Infer<typeof VisibleGitRef>;
+
+export const VisibleObjectChunk = __t.object("VisibleObjectChunk", {});
+export type VisibleObjectChunk = __Infer<typeof VisibleObjectChunk>;
+
+export const VisiblePresence = __t.object("VisiblePresence", {});
+export type VisiblePresence = __Infer<typeof VisiblePresence>;
+
+export const VisibleProject = __t.object("VisibleProject", {});
+export type VisibleProject = __Infer<typeof VisibleProject>;
+
+export const VisibleProjectBuilder = __t.object("VisibleProjectBuilder", {});
+export type VisibleProjectBuilder = __Infer<typeof VisibleProjectBuilder>;
+
+export const VisibleProjectImport = __t.object("VisibleProjectImport", {});
+export type VisibleProjectImport = __Infer<typeof VisibleProjectImport>;
+
+export const VisibleProjectMember = __t.object("VisibleProjectMember", {});
+export type VisibleProjectMember = __Infer<typeof VisibleProjectMember>;
+
+export const VisibleProjectSize = __t.object("VisibleProjectSize", {});
+export type VisibleProjectSize = __Infer<typeof VisibleProjectSize>;
+
+export const VisibleQuestion = __t.object("VisibleQuestion", {});
+export type VisibleQuestion = __Infer<typeof VisibleQuestion>;
+
+export const VisibleRefSync = __t.object("VisibleRefSync", {});
+export type VisibleRefSync = __Infer<typeof VisibleRefSync>;
+
+export const VisibleSpace = __t.object("VisibleSpace", {});
+export type VisibleSpace = __Infer<typeof VisibleSpace>;
+
+export const VisibleSpaceAlias = __t.object("VisibleSpaceAlias", {});
+export type VisibleSpaceAlias = __Infer<typeof VisibleSpaceAlias>;
+
+export const VisibleSpaceGithub = __t.object("VisibleSpaceGithub", {});
+export type VisibleSpaceGithub = __Infer<typeof VisibleSpaceGithub>;
+
+export const VisibleSpaceLink = __t.object("VisibleSpaceLink", {});
+export type VisibleSpaceLink = __Infer<typeof VisibleSpaceLink>;
+
+export const VisibleSpaceRole = __t.object("VisibleSpaceRole", {});
+export type VisibleSpaceRole = __Infer<typeof VisibleSpaceRole>;
+
+export const VisibleUser = __t.object("VisibleUser", {});
+export type VisibleUser = __Infer<typeof VisibleUser>;
+
 export const Worker = __t.object("Worker", {
   taskId: __t.string(),
   runnerId: __t.string(),

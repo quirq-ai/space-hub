@@ -24,6 +24,12 @@ export async function hubOwnerLogin(cfg: AdminHttp): Promise<string | null> {
   return row ? String(row.value) : null;
 }
 
+/** Whether the hub is members-only (hub_state "membersOnly"; no row is off). */
+export async function hubMembersOnly(cfg: AdminHttp): Promise<boolean> {
+  const [row] = await select(cfg, "SELECT value FROM hub_state WHERE key = 'membersOnly'");
+  return !!row && String(row.value) === 'true';
+}
+
 /** Whether the builder `name` is suspended on this hub. */
 export async function isSuspended(cfg: AdminHttp, name: string): Promise<boolean> {
   if (!NAME.test(name)) return false;

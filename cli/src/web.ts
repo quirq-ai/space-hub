@@ -57,7 +57,7 @@ import { hubBackupConfig, startHubBackups } from './hubbackup';
 import { activityJournalDir, startActivityJournal } from './activityjournal';
 import { SubhubRelay } from './subhubrelay';
 import { bearerToken, cookieValue, viewerOf, type CheckToken, type Viewer } from './viewer';
-import { hubOwnerName, hubPeople, isSuspended, joinPolicy, joinSettings, type JoinPolicy } from './hubowner';
+import { hubMembersOnly, hubOwnerName, hubPeople, isSuspended, joinPolicy, joinSettings, type JoinPolicy } from './hubowner';
 import { handleHubSettings } from './hubsettings';
 
 quietSdkLogs();
@@ -247,8 +247,8 @@ async function appendChat(session: { token: string }, input: { project: string; 
 // the spaces it belongs to.
 async function spacesOf(session: { token: string; username: string }): Promise<string[]> {
   const others = await withConn(session.token, conn =>
-    snapshot(conn, tables.spaceRole.where(r => r.member.eq(session.username)), () =>
-      [...conn.db.spaceRole.iter()].filter(r => r.member === session.username).map(r => r.space)
+    snapshot(conn, tables.visibleSpaceRole.where(r => r.member.eq(session.username)), () =>
+      [...conn.db.visibleSpaceRole.iter()].filter(r => r.member === session.username).map(r => r.space)
     )
   ).catch(() => [] as string[]);
   return [session.username, ...others.sort()];
@@ -259,22 +259,22 @@ async function spacesOf(session: { token: string; username: string }): Promise<s
 async function placesOf(session: { token: string; username: string }): Promise<{ spaces: string[]; projects: string[] }> {
   const base = await spacesOf(session);
   const agents = await withConn(session.token, async conn => {
-    const roles = await snapshot(conn, tables.spaceRole.where(r => r.member.eq(session.username)), () =>
-      [...conn.db.spaceRole.iter()].filter(r => r.member === session.username).map(r => ({ space: r.space, role: r.role }))
+    const roles = await snapshot(conn, tables.visibleSpaceRole.where(r => r.member.eq(session.username)), () =>
+      [...conn.db.visibleSpaceRole.iter()].filter(r => r.member === session.username).map(r => ({ space: r.space, role: r.role }))
     );
-    const all = await snapshot(conn, tables.space.where(s => s.kind.eq('agent')), () =>
-      [...conn.db.space.iter()].filter(s => s.kind === 'agent').map(s => ({ name: s.name, parent: s.parent }))
+    const all = await snapshot(conn, tables.visibleSpace.where(s => s.kind.eq('agent')), () =>
+      [...conn.db.visibleSpace.iter()].filter(s => s.kind === 'agent').map(s => ({ name: s.name, parent: s.parent }))
     );
     return agentSpacesOwnedBy(session.username, roles, all);
   }).catch(() => [] as string[]);
   const spaces = [...new Set([...base, ...agents])];
   const projects = await withConn(session.token, async conn => {
-    const ids = await snapshot(conn, tables.projectMember.where(r => r.agent.eq(session.username)), () =>
-      [...conn.db.projectMember.iter()].filter(r => r.agent === session.username).map(r => r.projectId)
+    const ids = await snapshot(conn, tables.visibleProjectMember.where(r => r.agent.eq(session.username)), () =>
+      [...conn.db.visibleProjectMember.iter()].filter(r => r.agent === session.username).map(r => r.projectId)
     );
     const names: string[] = [];
     for (const id of ids) {
-      const row = await snapshot(conn, tables.project.where(p => p.id.eq(id)), () => [...conn.db.project.iter()].find(p => p.id === id));
+      const row = await snapshot(conn, tables.visibleProject.where(p => p.id.eq(id)), () => [...conn.db.visibleProject.iter()].find(p => p.id === id));
       if (row) names.push(row.fullName);
     }
     return names.sort();
@@ -604,7 +604,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     operators: [...RECOVERY_OPERATORS],
     adminFallback: RECOVERY_OPERATORS.size === 0 && !!ADMIN_TOKEN,
     people: async () => {
-      const names = await withConn(ADMIN_TOKEN, conn => snapshot(conn, tables.user, () => [...conn.db.user.iter()].map(u => u.username)));
+      const names = await withConn(ADMIN_TOKEN, conn => snapshot(conn, tables.visibleUser, () => [...conn.db.visibleUser.iter()].map(u => u.username)));
       return hubPeople(ADMIN_SQL!, names);
     },
     suspend: (token, username) => withConn(token, conn => conn.reducers.suspendBuilder({ username })),
@@ -616,6 +616,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     createInvite: (token, code, hours) => withConn(token, conn => conn.reducers.createInvite({ code, hours })),
     revokeInvite: (token, id) => withConn(token, conn => conn.reducers.revokeInvite({ id })),
     signupUrl: r => callbackOf(r, '/-/signup'),
+    membersOnly: () => hubMembersOnly(ADMIN_SQL!),
+    setMembersOnly: (token, on) => withConn(token, conn => conn.reducers.setMembersOnly({ on })),
   }, req, res, url)) return;
   if (await handleApp({ dir: APP_DIR, internalHttp: INTERNAL_HTTP, db: DB, withConn, sessionOf, operator: recoveryOperator, owner: ownerName }, req, res, url)) return;
 
@@ -792,14 +794,14 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
       const source = await withConn(session.token, async conn => {
         const sp = await findProject(conn, project);
         if (!sp) throw new Fail(`No project ${project}.`);
-        const row = await snapshot(conn, tables.projectImport.where(r => r.projectId.eq(sp.id)), () =>
-          [...conn.db.projectImport.iter()].find(r => r.projectId === sp.id)
+        const row = await snapshot(conn, tables.visibleProjectImport.where(r => r.projectId.eq(sp.id)), () =>
+          [...conn.db.visibleProjectImport.iter()].find(r => r.projectId === sp.id)
         );
         if (!row) throw new Fail(`${project} was not imported from GitHub.`);
         await conn.reducers.startImport({ project, source: row.source });
         // Projects imported before builders existed get theirs on first sync.
-        const credited = await snapshot(conn, tables.projectBuilder.where(r => r.projectId.eq(sp.id)), () =>
-          [...conn.db.projectBuilder.iter()].some(r => r.projectId === sp.id)
+        const credited = await snapshot(conn, tables.visibleProjectBuilder.where(r => r.projectId.eq(sp.id)), () =>
+          [...conn.db.visibleProjectBuilder.iter()].some(r => r.projectId === sp.id)
         );
         const owner = /^https:\/\/github\.com\/([^/]+)\//.exec(row.source)?.[1];
         if (!credited && owner) {
@@ -866,7 +868,7 @@ if (ACTIVITY_DIR) {
           .subscriptionBuilder()
           .onApplied(onApplied)
           .onError(ctx => onError(`subscription failed: ${(ctx as { event?: unknown }).event}`))
-          .subscribe(tables.activity.where(r => r.id.gt(after)));
+          .subscribe(tables.visibleActivity.where(r => r.id.gt(after)));
       },
     });
   });

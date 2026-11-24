@@ -10,7 +10,7 @@ export interface HubBuilder { name: string; suspended: boolean }
 export type JoinPolicy = "anyone" | "allowlist" | "invite";
 export interface HubInvite { id: string; createdBy: string; createdAt: number; expiresAt: number; usedBy: string }
 export interface JoinSettings { policy: JoinPolicy; allowlist: string[]; invites: HubInvite[] }
-export interface HubSettings { owner: string; operators: string[]; adminFallback: boolean; builders: HubBuilder[]; join: JoinSettings }
+export interface HubSettings { owner: string; operators: string[]; adminFallback: boolean; membersOnly: boolean; builders: HubBuilder[]; join: JoinSettings }
 
 export const JOIN_POLICIES: { value: JoinPolicy; label: string; help: string }[] = [
   { value: "anyone", label: "Anyone", help: "Anyone who can sign up on this hub joins." },
@@ -42,7 +42,7 @@ export function parseHubSettings(body: unknown): HubSettings | null {
   const builders = Array.isArray(body.builders)
     ? body.builders.filter(isObj).filter(b => typeof b.name === "string").map(b => ({ name: b.name as string, suspended: b.suspended === true }))
     : [];
-  return { owner: body.owner, operators: strings(body.operators), adminFallback: body.adminFallback === true, builders, join: parseJoin(body.join) };
+  return { owner: body.owner, operators: strings(body.operators), adminFallback: body.adminFallback === true, membersOnly: body.membersOnly === true, builders, join: parseJoin(body.join) };
 }
 
 /** Where an invite stands: used (by whom), expired, or open until when. */
@@ -71,4 +71,11 @@ export function operatorsLine(s: HubSettings): string {
 export function builderAction(s: HubSettings, b: HubBuilder): "suspend" | "restore" | null {
   if (b.name === s.owner) return null;
   return b.suspended ? "restore" : "suspend";
+}
+
+/** Who can read the hub, in a sentence, for the members-only switch. */
+export function readersLine(s: HubSettings): string {
+  return s.membersOnly
+    ? "Members only: just this hub's builders and their agents can see its spaces and projects, even with a raw database client."
+    : "Anyone who reaches this hub can see its spaces and projects.";
 }

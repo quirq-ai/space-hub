@@ -203,7 +203,7 @@ function formatBytes(n: bigint) {
 // Bytes each project stores (git objects, uncompressed); a project the hub is
 // still measuring has no entry.
 function projectSizes(conn: Conn) {
-  return snapshot(conn, tables.projectSize, () => new Map([...conn.db.projectSize.iter()].map(r => [r.projectId, r.bytes])));
+  return snapshot(conn, tables.visibleProjectSize, () => new Map([...conn.db.visibleProjectSize.iter()].map(r => [r.projectId, r.bytes])));
 }
 
 function sizeText(sizes: Map<bigint, bigint>, id: bigint) {
@@ -348,13 +348,13 @@ async function spaceOrProject(arg: string | undefined): Promise<{ space: string 
 async function followRefs(fullName: string, onChange: (refName: string, oid: string, sign: string) => void) {
   const { conn } = await open();
   const sp = await requireProject(fullName);
-  conn.db.gitRef.onInsert((ctx, r) => {
+  conn.db.visibleGitRef.onInsert((ctx, r) => {
     if (r.projectId === sp.id && ctx.event.tag !== 'SubscribeApplied') onChange(r.name, r.oid, '+');
   });
-  conn.db.gitRef.onUpdate((_ctx, _old, r) => {
+  conn.db.visibleGitRef.onUpdate((_ctx, _old, r) => {
     if (r.projectId === sp.id) onChange(r.name, r.oid, '~');
   });
-  conn.db.gitRef.onDelete((ctx, r) => {
+  conn.db.visibleGitRef.onDelete((ctx, r) => {
     if (r.projectId === sp.id && ctx.event.tag !== 'UnsubscribeApplied') onChange(r.name, '', '-');
   });
   await new Promise<void>((resolve, reject) =>
@@ -362,7 +362,7 @@ async function followRefs(fullName: string, onChange: (refName: string, oid: str
       .subscriptionBuilder()
       .onApplied(() => resolve())
       .onError(ctx => reject(new Error(`subscription failed: ${(ctx as { event?: unknown }).event}`)))
-      .subscribe(tables.gitRef.where(r => r.projectId.eq(sp.id)))
+      .subscribe(tables.visibleGitRef.where(r => r.projectId.eq(sp.id)))
   );
   return { conn, sp };
 }
@@ -603,12 +603,12 @@ async function authDelete(args: string[]) {
   const { conn, server } = await open();
   const owned = async () => ({
     projects: await projectsIn(conn, name),
-    agents: await snapshot(conn, tables.space.where(s => s.kind.eq('agent')), () =>
-      [...conn.db.space.iter()].filter(s => s.kind === 'agent' && s.parent === name).map(s => s.name)
+    agents: await snapshot(conn, tables.visibleSpace.where(s => s.kind.eq('agent')), () =>
+      [...conn.db.visibleSpace.iter()].filter(s => s.kind === 'agent' && s.parent === name).map(s => s.name)
     ),
   });
   const refuseLastOwner = async () => {
-    const roles = await snapshot(conn, tables.spaceRole, () => [...conn.db.spaceRole.iter()]);
+    const roles = await snapshot(conn, tables.visibleSpaceRole, () => [...conn.db.visibleSpaceRole.iter()]);
     for (const r of roles.filter(r => r.member === name && r.role === 'owner')) {
       if (roles.filter(o => o.space === r.space && o.role === 'owner').length === 1) {
         die(`${name} is the last owner of ${r.space}; first add another owner: spacehub space member add ${r.space} <builder> --owner`);
@@ -686,8 +686,8 @@ async function projectCreate(args: string[]) {
 async function projectList(args: string[]) {
   const { conn } = await open();
   const owner = args[0] ? await spaceOf(conn, args[0].toLowerCase()) : undefined;
-  const query = owner ? tables.project.where(s => s.owner.eq(owner)) : tables.project;
-  const spaces = await snapshot(conn, query, () => [...conn.db.project.iter()].filter(s => !owner || s.owner === owner));
+  const query = owner ? tables.visibleProject.where(s => s.owner.eq(owner)) : tables.visibleProject;
+  const spaces = await snapshot(conn, query, () => [...conn.db.visibleProject.iter()].filter(s => !owner || s.owner === owner));
   if (spaces.length === 0) {
     out(owner ? `no projects in ${owner}` : 'no projects yet');
     return;
@@ -706,12 +706,12 @@ function findUserByIdentity(conn: Conn, identity: Parameters<typeof findUser>[1]
 }
 
 async function builderLine(conn: Conn, sp: { id: bigint; owner: string; ownerIdentity: Parameters<typeof findUser>[1] }) {
-  const row = await snapshot(conn, tables.projectBuilder.where(r => r.projectId.eq(sp.id)), () =>
-    [...conn.db.projectBuilder.iter()].find(r => r.projectId === sp.id)
+  const row = await snapshot(conn, tables.visibleProjectBuilder.where(r => r.projectId.eq(sp.id)), () =>
+    [...conn.db.visibleProjectBuilder.iter()].find(r => r.projectId === sp.id)
   );
   if (row?.url.startsWith('https://github.com/')) return `${row.name} (${row.url.replace('https://', '')})`;
-  const imp = await snapshot(conn, tables.projectImport.where(r => r.projectId.eq(sp.id)), () =>
-    [...conn.db.projectImport.iter()].find(r => r.projectId === sp.id)
+  const imp = await snapshot(conn, tables.visibleProjectImport.where(r => r.projectId.eq(sp.id)), () =>
+    [...conn.db.visibleProjectImport.iter()].find(r => r.projectId === sp.id)
   );
   const gh = imp ? /^https:\/\/github\.com\/([^/]+)\//.exec(imp.source) : null;
   if (gh) return `${gh[1]} (github.com/${gh[1]})`;
@@ -739,8 +739,8 @@ async function projectView(args: string[]) {
   out(`pushed    ${when(sp.pushedAt)}`);
   out();
   if (refs.length === 0) out('(empty: push something to it)');
-  const diverged = await snapshot(conn, tables.refSync.where(r => r.projectId.eq(sp.id)), () =>
-    new Set([...conn.db.refSync.iter()].filter(r => r.projectId === sp.id && r.status === 'diverged').map(r => r.ref))
+  const diverged = await snapshot(conn, tables.visibleRefSync.where(r => r.projectId.eq(sp.id)), () =>
+    new Set([...conn.db.visibleRefSync.iter()].filter(r => r.projectId === sp.id && r.status === 'diverged').map(r => r.ref))
   );
   for (const r of refs) out(`${r.oid.slice(0, 12)}  ${r.name.replace(/^refs\/(heads|tags)\//, '$1/')}  ${when(r.updatedAt)}${diverged.has(r.name) ? '  (diverged from GitHub)' : ''}`);
 }
@@ -840,7 +840,7 @@ async function autosync(found: { remote: string; project: string }, branch: stri
   const { conn, sp } = await followRefs(found.project, refName => {
     if (refName === ref) wake();
   });
-  const remoteOid = () => [...conn.db.gitRef.iter()].find(r => r.projectId === sp.id && r.name === ref)?.oid ?? '';
+  const remoteOid = () => [...conn.db.visibleGitRef.iter()].find(r => r.projectId === sp.id && r.name === ref)?.oid ?? '';
   await announce(found.project, 'autosync', branch);
   note(`Autosync ${found.project} ${branch}: committing every ${seconds}s, rebasing onto every push (ctrl-c to stop)`);
 
@@ -864,13 +864,13 @@ async function projectWatch(args: string[]) {
   });
   await announce(fullName, 'watch');
   out(`Watching ${fullName} (ctrl-c to stop)`);
-  for (const r of conn.db.gitRef.iter()) if (r.projectId === sp.id) out(`          ${r.name} ${r.oid.slice(0, 12)}`);
+  for (const r of conn.db.visibleGitRef.iter()) if (r.projectId === sp.id) out(`          ${r.name} ${r.oid.slice(0, 12)}`);
   await new Promise(() => {});
 }
 
 function memberRows(conn: Conn, projectId: bigint) {
-  return snapshot(conn, tables.projectMember.where(r => r.projectId.eq(projectId)), () =>
-    [...conn.db.projectMember.iter()].filter(r => r.projectId === projectId).sort((a, b) => a.agent.localeCompare(b.agent))
+  return snapshot(conn, tables.visibleProjectMember.where(r => r.projectId.eq(projectId)), () =>
+    [...conn.db.visibleProjectMember.iter()].filter(r => r.projectId === projectId).sort((a, b) => a.agent.localeCompare(b.agent))
   );
 }
 
@@ -910,8 +910,8 @@ async function projectWho(args: string[]) {
   const sp = await requireProject(await resolveProject(args[0]));
   const { conn } = await open();
   const now = Date.now() * 1000;
-  const rows = await snapshot(conn, tables.presence, () =>
-    [...conn.db.presence.iter()].filter(
+  const rows = await snapshot(conn, tables.visiblePresence, () =>
+    [...conn.db.visiblePresence.iter()].filter(
       r => (r.projectId === sp.id || (r.projectId === 0n && r.space === sp.owner)) && now - Number(r.seenAt.microsSinceUnixEpoch) <= 180_000_000
     )
   );
@@ -957,15 +957,15 @@ async function spaceCreate(args: string[]) {
 async function spaceList(args: string[]) {
   const who = args[0]?.toLowerCase();
   const { conn } = await open();
-  const spaces = await snapshot(conn, tables.space, () => [...conn.db.space.iter()]);
-  const counts = await snapshot(conn, tables.project, () => {
+  const spaces = await snapshot(conn, tables.visibleSpace, () => [...conn.db.visibleSpace.iter()]);
+  const counts = await snapshot(conn, tables.visibleProject, () => {
     const n = new Map<string, number>();
-    for (const p of conn.db.project.iter()) n.set(p.owner, (n.get(p.owner) ?? 0) + 1);
+    for (const p of conn.db.visibleProject.iter()) n.set(p.owner, (n.get(p.owner) ?? 0) + 1);
     return n;
   });
   let shown = spaces;
   if (who) {
-    const mine = await snapshot(conn, tables.spaceRole.where(r => r.member.eq(who)), () => new Set([...conn.db.spaceRole.iter()].filter(r => r.member === who).map(r => r.space)));
+    const mine = await snapshot(conn, tables.visibleSpaceRole.where(r => r.member.eq(who)), () => new Set([...conn.db.visibleSpaceRole.iter()].filter(r => r.member === who).map(r => r.space)));
     shown = spaces.filter(s => s.name === who || mine.has(s.name) || (s.kind === 'agent' && (s.parent === who || mine.has(s.parent))));
   }
   if (shown.length === 0) {
@@ -995,7 +995,7 @@ async function spaceView(args: string[]) {
   const owners = sp.kind === 'personal' ? [sp.name] : roles.filter(r => r.role === 'owner').map(r => r.member);
   out(`owners    ${owners.join(', ') || (sp.kind === 'agent' ? `the owners of ${sp.parent}` : 'none')}`);
   out(`members   ${roles.filter(r => r.role === 'member').map(r => r.member).join(', ') || 'none'}`);
-  const link = await snapshot(conn, tables.spaceLink.where(r => r.space.eq(sp.name)), () => [...conn.db.spaceLink.iter()].find(r => r.space === sp.name));
+  const link = await snapshot(conn, tables.visibleSpaceLink.where(r => r.space.eq(sp.name)), () => [...conn.db.visibleSpaceLink.iter()].find(r => r.space === sp.name));
   if (link) {
     const synced = link.syncedAt.microsSinceUnixEpoch > 0n ? `synced ${when(link.syncedAt)}` : 'not synced yet';
     out(`github    ${link.source.replace('https://', '')} (${link.status === 'done' ? synced : link.status}: ${link.message})`);
@@ -1156,8 +1156,8 @@ async function spaceWho(args: string[]) {
   const projects = new Map((await projectsIn(conn, target.space)).map(p => [p.id, p.name]));
   projects.set(0n, '(all projects)');
   const now = Date.now() * 1000;
-  const rows = await snapshot(conn, tables.presence, () =>
-    [...conn.db.presence.iter()].filter(
+  const rows = await snapshot(conn, tables.visiblePresence, () =>
+    [...conn.db.visiblePresence.iter()].filter(
       r => (r.projectId === 0n ? r.space === target.space : projects.has(r.projectId)) && now - Number(r.seenAt.microsSinceUnixEpoch) <= 180_000_000
     )
   );
@@ -1223,10 +1223,10 @@ async function agentCreate(args: string[]) {
 }
 
 async function agentRows(conn: Conn) {
-  const agents = await snapshot(conn, tables.space.where(s => s.kind.eq('agent')), () => [...conn.db.space.iter()].filter(s => s.kind === 'agent'));
-  const roles = await snapshot(conn, tables.spaceRole, () => [...conn.db.spaceRole.iter()]);
+  const agents = await snapshot(conn, tables.visibleSpace.where(s => s.kind.eq('agent')), () => [...conn.db.visibleSpace.iter()].filter(s => s.kind === 'agent'));
+  const roles = await snapshot(conn, tables.visibleSpaceRole, () => [...conn.db.visibleSpaceRole.iter()]);
   const now = Date.now() * 1000;
-  const here = await snapshot(conn, tables.presence, () => [...conn.db.presence.iter()].filter(p => p.mode === 'agent' && now - Number(p.seenAt.microsSinceUnixEpoch) <= 180_000_000));
+  const here = await snapshot(conn, tables.visiblePresence, () => [...conn.db.visiblePresence.iter()].filter(p => p.mode === 'agent' && now - Number(p.seenAt.microsSinceUnixEpoch) <= 180_000_000));
   return agents
     .sort((a, b) => a.name.localeCompare(b.name))
     .map(a => ({
@@ -1306,7 +1306,7 @@ async function agentRun(args: string[]) {
   const { conn, identity, server, database } = await open();
   await requireAgent(name);
   // Logged in as the agent itself (XO Swarm), or as one of its owners.
-  const self = await snapshot(conn, tables.agent.where(a => a.name.eq(name)), () => [...conn.db.agent.iter()].find(a => a.name === name));
+  const self = await snapshot(conn, tables.visibleAgent.where(a => a.name.eq(name)), () => [...conn.db.visibleAgent.iter()].find(a => a.name === name));
   const token = self?.identity.isEqual(identity) ? loadConfig().token! : await fetchAgentToken(name);
   if (!token) die(`no token for ${name}`);
   note(`Running ${name} in ${dir} on ${host} (ctrl-c to stop)`);
@@ -1361,8 +1361,8 @@ async function doctor() {
       account = { builder: user?.username ?? null, owner: [], member: [] };
       if (user) {
         const name = user.username;
-        const roles = await snapshot(conn, tables.spaceRole.where(r => r.member.eq(name)), () =>
-          [...conn.db.spaceRole.iter()].filter(r => r.member === name).sort((a, b) => a.space.localeCompare(b.space))
+        const roles = await snapshot(conn, tables.visibleSpaceRole.where(r => r.member.eq(name)), () =>
+          [...conn.db.visibleSpaceRole.iter()].filter(r => r.member === name).sort((a, b) => a.space.localeCompare(b.space))
         );
         account.owner = [name, ...roles.filter(r => r.role === 'owner').map(r => r.space)];
         account.member = roles.filter(r => r.role !== 'owner').map(r => r.space);
@@ -1409,7 +1409,7 @@ async function questionList(args: string[]) {
   const asJson = bool(args, '--json');
   const space = (args[0] ?? 'explain').toLowerCase();
   const { conn } = await open();
-  const rows = (await snapshot(conn, tables.question.where(q => q.space.eq(space)), () => [...conn.db.question.iter()].filter(q => q.space === space)))
+  const rows = (await snapshot(conn, tables.visibleQuestion.where(q => q.space.eq(space)), () => [...conn.db.visibleQuestion.iter()].filter(q => q.space === space)))
     .sort((a, b) => Number(a.askedAt.microsSinceUnixEpoch - b.askedAt.microsSinceUnixEpoch))
     .map(questionJson)
     .filter(q => !onlyOpen || q.state === 'waiting');
@@ -1432,13 +1432,13 @@ async function questionWatch(args: string[]) {
       spawn(exec, { shell: true, stdio: 'inherit', env: { ...process.env, QUESTION_PROJECT: line.project, QUESTION_ID: line.id, QUESTION_TEXT: line.question, QUESTION_REPO: line.repo, QUESTION_ASKER: line.asker } });
     }
   };
-  conn.db.question.onInsert((_ctx, q) => { if (q.space === space) handle(q); });
+  conn.db.visibleQuestion.onInsert((_ctx, q) => { if (q.space === space) handle(q); });
   await new Promise<void>((resolve, reject) =>
     conn
       .subscriptionBuilder()
       .onApplied(() => resolve())
       .onError(ctx => reject(new Error(`subscription failed: ${(ctx as { event?: unknown }).event}`)))
-      .subscribe(tables.question.where(q => q.space.eq(space)))
+      .subscribe(tables.visibleQuestion.where(q => q.space.eq(space)))
   );
   note(`watching questions in ${space}; Ctrl-C to stop`);
   await new Promise(() => {});

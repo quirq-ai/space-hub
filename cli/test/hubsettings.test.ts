@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { handleHubSettings, INVITE_HOURS, operatorsOf, type HubSettingsDeps } from '../src/hubsettings.ts';
-import { hubOwnerName, hubPeople, isSuspended, joinPolicy, joinSettings, type JoinSettings } from '../src/hubowner.ts';
+import { hubMembersOnly, hubOwnerName, hubPeople, isSuspended, joinPolicy, joinSettings, type JoinSettings } from '../src/hubowner.ts';
 
 const JOIN: JoinSettings = {
   policy: 'invite',
@@ -106,6 +106,8 @@ async function site(over: Partial<HubSettingsDeps> = {}) {
     createInvite: async (token, code, hours) => void calls.push(`invite ${code} ${hours}h as ${token}`),
     revokeInvite: async (token, id) => void calls.push(`revoke ${id} as ${token}`),
     signupUrl: () => 'https://hub.example/-/signup',
+    membersOnly: async () => false,
+    setMembersOnly: async (token, on) => void calls.push(`members-only ${on} as ${token}`),
     ...over,
   };
   const server = http.createServer(async (req, res) => {
@@ -132,6 +134,7 @@ test('the owner sees the hub: its operators and its builders', async () => {
       owner: 'alice',
       operators: ['alice', 'ops'],
       adminFallback: false,
+      membersOnly: false,
       builders: [{ name: 'alice', suspended: false }, { name: 'bob', suspended: false }],
       join: JOIN,
     });
@@ -248,5 +251,37 @@ test('the owner suspends and restores builders as itself; the module has the las
     assert.equal((await s.ask('/-/api/hub/suspend', 'tok-alice')).status, 405);
   } finally {
     s.close();
+  }
+});
+
+test('the owner switches members-only on and off as itself; nobody else can', async () => {
+  const s = await site({ membersOnly: async () => true });
+  try {
+    assert.equal((await s.ask('/-/api/hub', 'tok-alice')).body?.membersOnly, true);
+    assert.deepEqual(await s.ask('/-/api/hub/members-only', 'tok-alice', { on: true }), { status: 200, body: { ok: true } });
+    assert.deepEqual(await s.ask('/-/api/hub/members-only', 'tok-alice', { on: false }), { status: 200, body: { ok: true } });
+    assert.equal((await s.ask('/-/api/hub/members-only', 'tok-alice', { on: 'yes' })).status, 400);
+    assert.equal((await s.ask('/-/api/hub/members-only', 'tok-alice', { name: 'bob' })).status, 400);
+    assert.equal((await s.ask('/-/api/hub/members-only', 'tok-bob', { on: false })).status, 403);
+    assert.equal((await s.ask('/-/api/hub/members-only', null, { on: false })).status, 401);
+    assert.equal((await s.ask('/-/api/hub/members-only', 'tok-alice')).status, 405);
+    assert.deepEqual(s.calls, ['members-only true as tok-alice', 'members-only false as tok-alice']);
+  } finally {
+    s.close();
+  }
+});
+
+test('members-only is read from hub_state; no row is off', async () => {
+  const on = await fakeSql({ membersOnly: 'true' }, {}, []);
+  try {
+    assert.equal(await hubMembersOnly(on.cfg), true);
+  } finally {
+    on.close();
+  }
+  const unset = await fakeSql({}, {}, []);
+  try {
+    assert.equal(await hubMembersOnly(unset.cfg), false);
+  } finally {
+    unset.close();
   }
 });

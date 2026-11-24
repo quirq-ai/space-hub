@@ -102,9 +102,9 @@ async function chunkedBody(c: Conn, projectId: bigint, oid: string, size: number
     const hi = Math.min(chunks, lo + step);
     await snapshot(
       c,
-      tables.objectChunk.where(r => r.projectId.eq(projectId).and(r.oid.eq(oid)).and(r.idx.gte(lo)).and(r.idx.lt(hi))),
+      tables.visibleObjectChunk.where(r => r.projectId.eq(projectId).and(r.oid.eq(oid)).and(r.idx.gte(lo)).and(r.idx.lt(hi))),
       () => {
-        for (const ch of c.db.objectChunk.iter()) {
+        for (const ch of c.db.visibleObjectChunk.iter()) {
           if (ch.projectId === projectId && ch.oid === oid && ch.idx >= lo && ch.idx < hi) {
             body.set(ch.data, ch.idx * CHUNK_SIZE);
           }
@@ -122,8 +122,8 @@ async function download(c: Conn, projectId: bigint, from: bigint, to: bigint): P
     const hi = lo + BigInt(FETCH_WINDOW);
     const rows = await snapshot(
       c,
-      tables.gitObject.where(r => r.projectId.eq(projectId).and(r.pos.gt(lo)).and(r.pos.lte(hi))),
-      () => [...c.db.gitObject.iter()].filter(r => r.projectId === projectId && r.pos > lo && r.pos <= hi)
+      tables.visibleGitObject.where(r => r.projectId.eq(projectId).and(r.pos.gt(lo)).and(r.pos.lte(hi))),
+      () => [...c.db.visibleGitObject.iter()].filter(r => r.projectId === projectId && r.pos > lo && r.pos <= hi)
     );
     const have = await presentObjects(rows.map(r => r.oid));
     for (const row of rows) {

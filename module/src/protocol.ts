@@ -8,10 +8,11 @@
 // table gains a column. Adding a table, reducer or procedure breaks no one.
 // OLDEST_PROTOCOL is the oldest client protocol this hub still serves; raise
 // it with PROTOCOL unless the hub keeps the old names working.
-export const PROTOCOL = 1;
-export const OLDEST_PROTOCOL = 1;
+// 2: every table went private; clients read the visible_<table> views.
+export const PROTOCOL = 2;
+export const OLDEST_PROTOCOL = 2;
 
 // The generated client bindings this protocol was decided for. The CLI tests
 // fail when the bindings change (npm run generate) and this does not, so each
 // schema change decides on a bump: then set this to the hash the test prints.
-export const BINDINGS_HASH = 'cd438d4593aa8dbb';
+export const BINDINGS_HASH = '8213ecba7e14832f';

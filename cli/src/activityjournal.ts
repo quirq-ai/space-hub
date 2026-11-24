@@ -197,7 +197,7 @@ export class ActivityJournal {
 /** The surface of the SDK connection the journal uses (conn.ts). */
 export interface JournalConn {
   db: {
-    activity: {
+    visibleActivity: {
       onInsert(cb: (ctx: { event: { tag: string } }, row: ActivityRowIn) => void): void;
       onUpdate(cb: (ctx: { event: { tag: string } }, old: ActivityRowIn, row: ActivityRowIn) => void): void;
       onDelete(cb: (ctx: { event: { tag: string } }, row: ActivityRowIn) => void): void;
@@ -229,13 +229,13 @@ export function attachJournal(journal: ActivityJournal, conn: JournalConn, repor
     pending = [];
     guard(() => journal.insert(rows));
   };
-  conn.db.activity.onInsert((_ctx, row) => {
+  conn.db.visibleActivity.onInsert((_ctx, row) => {
     if (!pending.length) setImmediate(flush);
     pending.push(row);
   });
   // A change to a row comes after the row: write what is waiting first.
-  conn.db.activity.onUpdate((ctx, _old, row) => { if (live(ctx)) { flush(); guard(() => journal.update(row)); } });
-  conn.db.activity.onDelete((ctx, row) => { if (live(ctx)) { flush(); guard(() => journal.delete(row)); } });
+  conn.db.visibleActivity.onUpdate((ctx, _old, row) => { if (live(ctx)) { flush(); guard(() => journal.update(row)); } });
+  conn.db.visibleActivity.onDelete((ctx, row) => { if (live(ctx)) { flush(); guard(() => journal.delete(row)); } });
 }
 
 /**

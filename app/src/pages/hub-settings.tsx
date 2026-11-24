@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { ShieldCheck, Users } from "lucide-react";
+import { Lock, ShieldCheck, Users } from "lucide-react";
 import { useLive } from "@/hooks/use-live";
 import { send } from "@/lib/workers";
-import { builderAction, HUB_API, inviteState, JOIN_POLICIES, loginOf, operatorsLine, parseHubSettings, type HubSettings } from "@/lib/hub-settings";
+import { builderAction, HUB_API, inviteState, JOIN_POLICIES, loginOf, operatorsLine, parseHubSettings, readersLine, type HubSettings } from "@/lib/hub-settings";
 import { ErrorNote, SkeletonRows } from "@/ui/primitives";
 
 /**
@@ -10,7 +10,8 @@ import { ErrorNote, SkeletonRows } from "@/ui/primitives";
  * nobody holds that power unseen), the hub's builders, each of whom the owner can suspend or restore, and who may
  * join: the policy, the GitHub logins allowed in and one-time invite codes. A suspended builder is signed out and
  * cannot write; nothing it made is removed. The web service and the module check that this is the owner
- * (cli/src/hubsettings.ts); this page only shows it.
+ * (cli/src/hubsettings.ts); this page only shows it. The owner also switches the hub to members-only: the database
+ * then gives non-members nothing (module/src/index.ts, the visible_* views).
  */
 export function HubSettingsSection() {
   const hub = useLive<unknown>(HUB_API, 0);
@@ -26,11 +27,24 @@ export function HubSettingsSection() {
     if (what === "suspend" && !confirm(`Suspend ${name}? They are signed out and can't change anything on this hub until you restore them. Nothing they made is removed.`)) return;
     await run(name, `/hub/${what}`, { name });
   };
+  const setMembersOnly = async (on: boolean) => {
+    if (on && !confirm("Make this hub members-only? Anyone who is not one of its builders (or their agents) will see nothing, including people who are not signed in.")) return;
+    await run("-members-only", "/hub/members-only", { on });
+  };
   return <section className="subhubs" aria-label="Hub">
     <header className="subhub-heading"><div><h2><Users size={20} />Hub</h2><p className="quiet">You own this hub.</p></div></header>
     {hub.error && <ErrorNote message={hub.error} retry={hub.refresh} />}
     {hub.loading && !settings ? <SkeletonRows rows={2} /> : settings && <>
       <p className="instance-permission"><ShieldCheck size={16} />Full backups and recovery: {operatorsLine(settings)}</p>
+      <div className="subhub-section-heading"><h3>Who can read</h3></div>
+      <div className="runner-row">
+        <div><Lock size={16} /> {readersLine(settings)}</div>
+        <div className="subhub-actions">
+          <button type="button" className={`button small${settings.membersOnly ? "" : " danger"}`} disabled={!!busy} onClick={() => void setMembersOnly(!settings.membersOnly)}>
+            {busy === "-members-only" ? "Saving…" : settings.membersOnly ? "Open to anyone" : "Make members-only"}
+          </button>
+        </div>
+      </div>
       <JoinSection settings={settings} busy={busy} run={run} />
       <div className="subhub-section-heading"><h3>Builders</h3></div>
       <ul className="runner-list">{settings.builders.map(b => {

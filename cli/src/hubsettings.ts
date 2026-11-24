@@ -9,6 +9,7 @@
 //   POST /-/api/hub/disallow    {"login": "<GitHub login>"}  take it off the list (disallow_join)
 //   POST /-/api/hub/invite      {"hours": n}  a one-time invite code: {code, link}, shown this once (create_invite)
 //   POST /-/api/hub/revoke      {"id": "<invite id>"}  revoke an unused invite (revoke_invite)
+//   POST /-/api/hub/members-only {"on": true|false}  only members read the hub, or anyone again (set_members_only)
 //
 // The web service checks the session and that it is the owner's; the module
 // checks again (the reducers run with the owner's own token) and decides.
@@ -42,6 +43,10 @@ export interface HubSettingsDeps {
   revokeInvite: (token: string, id: bigint) => Promise<void>;
   /** Where an invite code is used: this hub's sign-up page, as the browser reached it. */
   signupUrl: (req: http.IncomingMessage) => string;
+  /** Whether the hub is members-only (hub_state "membersOnly"). */
+  membersOnly: () => Promise<boolean>;
+  /** Switch members-only on or off as the owner (the session's token); rejects with the module's reason. */
+  setMembersOnly: (token: string, on: boolean) => Promise<void>;
 }
 
 /** The recovery operators: the owner always, then the ones named in SPACEHUB_RECOVERY_OPERATORS. */
@@ -91,6 +96,11 @@ const ACTIONS: Record<string, Action> = {
     await d.revokeInvite(s.token, BigInt(id));
     return { ok: true };
   },
+  'members-only': async (d, s, b) => {
+    if (typeof b.on !== 'boolean') throw new BadRequest('Send "on": true or false.');
+    await d.setMembersOnly(s.token, b.on);
+    return { ok: true };
+  },
 };
 
 /** Handle Settings → Hub's routes; false when the request is not one of them. */
@@ -112,8 +122,8 @@ export async function handleHubSettings(deps: HubSettingsDeps, req: http.Incomin
 
   if (!action) {
     try {
-      const [{ builders }, join] = await Promise.all([deps.people(), deps.join()]);
-      json(res, 200, { owner, operators: operatorsOf(owner, deps.operators), adminFallback: deps.adminFallback, builders, join });
+      const [{ builders }, join, membersOnly] = await Promise.all([deps.people(), deps.join(), deps.membersOnly()]);
+      json(res, 200, { owner, operators: operatorsOf(owner, deps.operators), adminFallback: deps.adminFallback, membersOnly, builders, join });
     } catch {
       json(res, 502, { error: 'The hub database did not answer.' });
     }

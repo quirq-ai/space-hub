@@ -26,6 +26,10 @@
 // server moves such a database aside and starts a new one (see
 // docker/server-entrypoint.sh).
 //
+// Every table is private: clients read through per-caller views
+// (visible_<table>, below the schema), which hide everything from
+// non-members on a members-only hub.
+//
 // Reducers are the only write path, so every push is checked here: the
 // caller must own or belong to the project's space (or collaborate on the
 // project), every object must hash to its id, and a ref only moves if the
@@ -34,7 +38,7 @@
 import { schema, table, t, Router, SenderError, SyncResponse, type InferSchema, type ReducerCtx } from 'spacetimedb/server';
 import { Identity, Timestamp } from 'spacetimedb';
 import { Sha1, objectHeader } from './sha1';
-import { CHUNK_SIZE, PRESENCE_STALE_SECONDS, commitParents, inSpace, memberKey, objectKey, ownsSpace, projectFor, readObject, refKey, roleKey, spaceFor } from './store';
+import { CHUNK_SIZE, PRESENCE_STALE_SECONDS, commitParents, inSpace, isMember as isHubMember, mayReadHub, memberKey, objectKey, ownsSpace, projectFor, readObject, refKey, roleKey, spaceFor, type Db } from './store';
 import { renderUi } from './ui';
 import { ApiError, parseQuery, renderApi, templateFiles } from './workspace';
 import { addFiles, appendTurns, type NewObject } from './chat';
@@ -49,7 +53,7 @@ const MAX_OBJECT_SIZE = 100 * 1024 * 1024;
 const ROW_OVERHEAD = 64;
 
 const user = table(
-  { name: 'user', public: true },
+  { name: 'user' },
   {
     identity: t.identity().primaryKey(),
     username: t.string().unique(),
@@ -58,7 +62,7 @@ const user = table(
 );
 
 const project = table(
-  { name: 'project', public: true },
+  { name: 'project' },
   {
     id: t.u64().primaryKey().autoInc(),
     fullName: t.string().unique(),
@@ -75,7 +79,7 @@ const project = table(
 );
 
 const gitRef = table(
-  { name: 'git_ref', public: true },
+  { name: 'git_ref' },
   {
     id: t.u64().primaryKey().autoInc(),
     key: t.string().unique(),
@@ -90,7 +94,6 @@ const gitRef = table(
 const gitObject = table(
   {
     name: 'git_object',
-    public: true,
     indexes: [{ accessor: 'byProjectPos', algorithm: 'btree', columns: ['projectId', 'pos'] }],
   },
   {
@@ -109,7 +112,6 @@ const gitObject = table(
 const objectChunk = table(
   {
     name: 'object_chunk',
-    public: true,
     indexes: [{ accessor: 'byProjectOid', algorithm: 'btree', columns: ['projectId', 'oid'] }],
   },
   {
@@ -125,7 +127,7 @@ const objectChunk = table(
 // Where a project was imported from (GitHub) and how the last import went.
 // Written by the web service on behalf of the project's space owner.
 const projectImport = table(
-  { name: 'project_import', public: true },
+  { name: 'project_import' },
   {
     projectId: t.u64().primaryKey(),
     source: t.string(),
@@ -140,7 +142,7 @@ const projectImport = table(
 // GitHub imports, or by hand. Projects without a row are credited to their
 // import source's GitHub owner, else to the builder who made them here.
 const projectBuilder = table(
-  { name: 'project_builder', public: true },
+  { name: 'project_builder' },
   {
     projectId: t.u64().primaryKey(),
     handle: t.string().index('btree'), // GitHub login, lowercase
@@ -153,7 +155,7 @@ const projectBuilder = table(
 // Append-only: no reducer deletes a row (a rename only rewrites names in
 // them), and the web service journals every row to disk (activityjournal.ts).
 const activity = table(
-  { name: 'activity', public: true },
+  { name: 'activity' },
   {
     id: t.u64().primaryKey().autoInc(),
     at: t.timestamp().index('btree'),
@@ -172,7 +174,7 @@ const activity = table(
 // (GitHub's repository collaborators). Its space's owners add and remove
 // them; a collaborator can also leave.
 const projectMember = table(
-  { name: 'project_member', public: true },
+  { name: 'project_member' },
   {
     id: t.u64().primaryKey().autoInc(),
     key: t.string().unique(), // "<projectId>:<builder>"
@@ -188,7 +190,7 @@ const projectMember = table(
 // org collects projects for several builders, and an agent is a space too.
 // Agents, builders and orgs share these names.
 const space = table(
-  { name: 'space', public: true },
+  { name: 'space' },
   {
     name: t.string().primaryKey(), // lowercase, a valid GitHub login
     kind: t.string().index('btree'), // personal | org | agent
@@ -205,7 +207,7 @@ const space = table(
 // is its builder, and an agent's owners are its parent space's owners, with
 // no row for either.
 const spaceRole = table(
-  { name: 'space_role', public: true },
+  { name: 'space_role' },
   {
     id: t.u64().primaryKey().autoInc(),
     key: t.string().unique(), // "<space>:<member>"
@@ -224,7 +226,7 @@ const spaceRole = table(
 // heartbeat stopped belongs to a connection the server never saw close, and
 // is swept when the next client connects.
 const presence = table(
-  { name: 'presence', public: true },
+  { name: 'presence' },
   {
     connectionId: t.connectionId().primaryKey(),
     projectId: t.u64().index('btree'), // the project; 0 when following a whole space
@@ -242,7 +244,7 @@ const presence = table(
 // (uncompressed), kept as objects arrive. Every project has a row from the
 // start.
 const projectSize = table(
-  { name: 'project_size', public: true },
+  { name: 'project_size' },
   {
     projectId: t.u64().primaryKey(),
     bytes: t.u64(),
@@ -254,7 +256,7 @@ const projectSize = table(
 // to (as a member there). Its owners are its parent space's owners. XO Swarm
 // launches it with `spacehub agent run`, which needs its token.
 const agent = table(
-  { name: 'agent', public: true },
+  { name: 'agent' },
   {
     name: t.string().primaryKey(),
     identity: t.identity().unique(),
@@ -270,7 +272,7 @@ const agentSecret = table({ name: 'agent_secret' }, { name: t.string().primaryKe
 // repositories become projects with the same names, kept in step by the
 // web service, which syncs as the hub admin. GitHub to hub only.
 const spaceLink = table(
-  { name: 'space_link', public: true },
+  { name: 'space_link' },
   {
     space: t.string().primaryKey(),
     source: t.string(), // https://github.com/<login>
@@ -286,7 +288,7 @@ const spaceLink = table(
 // The GitHub organization whose picture an org shows, chosen by its owners.
 // Only the picture and a link to it: nothing is mirrored, unlike space_link.
 const spaceGithub = table(
-  { name: 'space_github', public: true },
+  { name: 'space_github' },
   {
     space: t.string().primaryKey(),
     login: t.string(), // as written
@@ -300,7 +302,7 @@ const spaceGithub = table(
 // force pushes included; a ref that moved here only moves forward, and is
 // left alone and marked diverged when GitHub went another way.
 const refSync = table(
-  { name: 'ref_sync', public: true },
+  { name: 'ref_sync' },
   {
     key: t.string().primaryKey(), // "<projectId>:<ref>"
     projectId: t.u64().index('btree'),
@@ -413,7 +415,7 @@ const joinInvite = table(
 // moved it to its GitHub account. /<name>/... shows the same pages as the
 // space's own name, every reducer takes either, and nobody else can take it.
 const spaceAlias = table(
-  { name: 'space_alias', public: true },
+  { name: 'space_alias' },
   {
     name: t.string().primaryKey(),
     space: t.string().index('btree'),
@@ -479,10 +481,10 @@ const worker = table(
 
 // A question asked in a repo room (explain.ts): who asked, which agent
 // claimed it, and where it stands ("open", "claimed", "answered"). The turns
-// themselves are in the room's chat log. Public, so connected agents follow
-// new questions live.
+// themselves are in the room's chat log. Connected agents follow new
+// questions live (visible_question).
 const question = table(
-  { name: 'question', public: true },
+  { name: 'question' },
   {
     key: t.string().primaryKey(), // "<project id>:<id>"
     id: t.string(),
@@ -537,6 +539,78 @@ export default spacetimedb;
 
 type Ctx = ReducerCtx<InferSchema<typeof spacetimedb>>;
 
+// ---------------------------------------------------------------- what clients read
+//
+// Every table above is private: clients (the CLI, agents, the web service)
+// read them through these views, one per table, named visible_<table>. Each
+// is computed for the caller. On a hub that is not members-only (no
+// "membersOnly" in hub_state, the default) a view is its whole table, as the
+// public tables were. On a members-only hub (setMembersOnly) only members
+// (store.ts isMember) and the admin get rows; anyone else gets an empty query,
+// even with a raw SpacetimeDB client. Members see everything; per-project
+// privacy will narrow these same views, so clients won't change again.
+
+const viewDb = (ctx: { db: unknown }) => ctx.db as Db;
+const NOTHING = () => false;
+
+export const visibleUser = spacetimedb.view({ name: 'visible_user', public: true }, t.array(user.rowType), ctx =>
+  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.user : ctx.from.user.where(NOTHING)
+);
+export const visibleProject = spacetimedb.view({ name: 'visible_project', public: true }, t.array(project.rowType), ctx =>
+  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.project : ctx.from.project.where(NOTHING)
+);
+export const visibleGitRef = spacetimedb.view({ name: 'visible_git_ref', public: true }, t.array(gitRef.rowType), ctx =>
+  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.gitRef : ctx.from.gitRef.where(NOTHING)
+);
+export const visibleGitObject = spacetimedb.view({ name: 'visible_git_object', public: true }, t.array(gitObject.rowType), ctx =>
+  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.gitObject : ctx.from.gitObject.where(NOTHING)
+);
+export const visibleObjectChunk = spacetimedb.view({ name: 'visible_object_chunk', public: true }, t.array(objectChunk.rowType), ctx =>
+  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.objectChunk : ctx.from.objectChunk.where(NOTHING)
+);
+export const visibleProjectImport = spacetimedb.view({ name: 'visible_project_import', public: true }, t.array(projectImport.rowType), ctx =>
+  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.projectImport : ctx.from.projectImport.where(NOTHING)
+);
+export const visibleProjectBuilder = spacetimedb.view({ name: 'visible_project_builder', public: true }, t.array(projectBuilder.rowType), ctx =>
+  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.projectBuilder : ctx.from.projectBuilder.where(NOTHING)
+);
+export const visibleActivity = spacetimedb.view({ name: 'visible_activity', public: true }, t.array(activity.rowType), ctx =>
+  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.activity : ctx.from.activity.where(NOTHING)
+);
+export const visibleProjectMember = spacetimedb.view({ name: 'visible_project_member', public: true }, t.array(projectMember.rowType), ctx =>
+  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.projectMember : ctx.from.projectMember.where(NOTHING)
+);
+export const visiblePresence = spacetimedb.view({ name: 'visible_presence', public: true }, t.array(presence.rowType), ctx =>
+  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.presence : ctx.from.presence.where(NOTHING)
+);
+export const visibleSpace = spacetimedb.view({ name: 'visible_space', public: true }, t.array(space.rowType), ctx =>
+  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.space : ctx.from.space.where(NOTHING)
+);
+export const visibleSpaceRole = spacetimedb.view({ name: 'visible_space_role', public: true }, t.array(spaceRole.rowType), ctx =>
+  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.spaceRole : ctx.from.spaceRole.where(NOTHING)
+);
+export const visibleSpaceLink = spacetimedb.view({ name: 'visible_space_link', public: true }, t.array(spaceLink.rowType), ctx =>
+  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.spaceLink : ctx.from.spaceLink.where(NOTHING)
+);
+export const visibleSpaceGithub = spacetimedb.view({ name: 'visible_space_github', public: true }, t.array(spaceGithub.rowType), ctx =>
+  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.spaceGithub : ctx.from.spaceGithub.where(NOTHING)
+);
+export const visibleRefSync = spacetimedb.view({ name: 'visible_ref_sync', public: true }, t.array(refSync.rowType), ctx =>
+  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.refSync : ctx.from.refSync.where(NOTHING)
+);
+export const visibleProjectSize = spacetimedb.view({ name: 'visible_project_size', public: true }, t.array(projectSize.rowType), ctx =>
+  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.projectSize : ctx.from.projectSize.where(NOTHING)
+);
+export const visibleAgent = spacetimedb.view({ name: 'visible_agent', public: true }, t.array(agent.rowType), ctx =>
+  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.agent : ctx.from.agent.where(NOTHING)
+);
+export const visibleSpaceAlias = spacetimedb.view({ name: 'visible_space_alias', public: true }, t.array(spaceAlias.rowType), ctx =>
+  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.spaceAlias : ctx.from.spaceAlias.where(NOTHING)
+);
+export const visibleQuestion = spacetimedb.view({ name: 'visible_question', public: true }, t.array(question.rowType), ctx =>
+  mayReadHub(viewDb(ctx), ctx.sender) ? ctx.from.question : ctx.from.question.where(NOTHING)
+);
+
 const ObjectIn = t.object('ObjectIn', {
   oid: t.string(),
   kind: t.string(),
@@ -588,12 +662,22 @@ function requireUser(ctx: Ctx) {
 function actorName(ctx: Ctx): string | null {
   const me = ctx.db.user.identity.find(ctx.sender);
   if (me) return isSuspended(ctx, ctx.sender) ? null : me.username;
-  return ctx.db.agent.identity.find(ctx.sender)?.name ?? null;
+  return actingAgent(ctx);
+}
+
+// The calling agent's name, or null: also null for an agent none of whose
+// owners is a member any more (its builder was suspended), so it is refused
+// wherever its builder would be.
+function actingAgent(ctx: Ctx): string | null {
+  const agent = ctx.db.agent.identity.find(ctx.sender);
+  return agent && isHubMember(ctx.db, ctx.sender) ? agent.name : null;
 }
 
 function requireActor(ctx: Ctx): string {
   const user = ctx.db.user.identity.find(ctx.sender);
   if (user && isSuspended(ctx, ctx.sender)) throw suspendedError(user.username);
+  const agent = user ? null : ctx.db.agent.identity.find(ctx.sender);
+  if (agent && !actingAgent(ctx)) throw new SenderError(`the agent "${agent.name}" has no owner left on this hub (its builder is suspended); ask the hub's owner`);
   const me = actorName(ctx);
   if (!me) throw new SenderError('no builder or agent name for this identity: run spacehub auth login --builder <name>');
   return me;
@@ -1064,6 +1148,14 @@ export const revokeInvite = spacetimedb.reducer({ id: t.u64() }, (ctx, { id }) =
   if (!row) return;
   if (row.usedBy) throw new SenderError(`that invite was already used by ${row.usedBy}`);
   ctx.db.joinInvite.id.delete(id);
+});
+
+// The owner makes the hub members-only (on) or readable by anyone again
+// (off). Off removes the setting, so the hub is exactly as one that never had
+// it. Asking for what is already set changes nothing.
+export const setMembersOnly = spacetimedb.reducer({ on: t.bool() }, (ctx, { on }) => {
+  requireHubOwner(ctx);
+  setHubState(ctx, 'membersOnly', on ? 'true' : null);
 });
 
 // Clerk user ids, as Clerk writes them (user_2abc...).
@@ -1735,7 +1827,7 @@ export const askQuestion = spacetimedb.reducer(
 export const claimQuestion = spacetimedb.reducer(
   { project: t.string(), id: t.string() },
   (ctx, { project: fullName, id }) => {
-    const me = ctx.db.agent.identity.find(ctx.sender)?.name;
+    const me = actingAgent(ctx);
     if (!me) throw new SenderError('permission denied: agents claim questions');
     const sp = requireRoom(ctx, fullName);
     if (!ctx.db.spaceRole.key.find(roleKey(sp.owner, me))) throw new SenderError(`permission denied: ${me} is not connected to "${sp.owner}"`);
@@ -1753,7 +1845,7 @@ export const claimQuestion = spacetimedb.reducer(
 export const answerQuestion = spacetimedb.reducer(
   { project: t.string(), id: t.string(), content: t.string(), links: t.array(ChatLinkIn) },
   (ctx, { project: fullName, id, content, links }) => {
-    const me = ctx.db.agent.identity.find(ctx.sender)?.name;
+    const me = actingAgent(ctx);
     if (!me) throw new SenderError('permission denied: agents answer questions');
     const sp = requireRoom(ctx, fullName);
     const q = ctx.db.question.key.find(`${sp.id}:${id}`);

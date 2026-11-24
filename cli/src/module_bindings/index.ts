@@ -78,6 +78,7 @@ import RunnerUpdateReducer from "./runner_update_reducer";
 import SetAccountsReducer from "./set_accounts_reducer";
 import SetJoinPolicyReducer from "./set_join_policy_reducer";
 import SetLinkStatusReducer from "./set_link_status_reducer";
+import SetMembersOnlyReducer from "./set_members_only_reducer";
 import SetOwnerLoginReducer from "./set_owner_login_reducer";
 import SetProjectBuilderReducer from "./set_project_builder_reducer";
 import SetSpaceGithubReducer from "./set_space_github_reducer";
@@ -101,327 +102,163 @@ import * as AgentTokenProcedure from "./agent_token_procedure";
 import * as ClientProtocolProcedure from "./client_protocol_procedure";
 
 // Import all table schema definitions
-import ActivityRow from "./activity_table";
-import AgentRow from "./agent_table";
-import GitObjectRow from "./git_object_table";
-import GitRefRow from "./git_ref_table";
-import ObjectChunkRow from "./object_chunk_table";
-import PresenceRow from "./presence_table";
-import ProjectRow from "./project_table";
-import ProjectBuilderRow from "./project_builder_table";
-import ProjectImportRow from "./project_import_table";
-import ProjectMemberRow from "./project_member_table";
-import ProjectSizeRow from "./project_size_table";
-import QuestionRow from "./question_table";
-import RefSyncRow from "./ref_sync_table";
-import SpaceRow from "./space_table";
-import SpaceAliasRow from "./space_alias_table";
-import SpaceGithubRow from "./space_github_table";
-import SpaceLinkRow from "./space_link_table";
-import SpaceRoleRow from "./space_role_table";
-import UserRow from "./user_table";
+import VisibleActivityRow from "./visible_activity_table";
+import VisibleAgentRow from "./visible_agent_table";
+import VisibleGitObjectRow from "./visible_git_object_table";
+import VisibleGitRefRow from "./visible_git_ref_table";
+import VisibleObjectChunkRow from "./visible_object_chunk_table";
+import VisiblePresenceRow from "./visible_presence_table";
+import VisibleProjectRow from "./visible_project_table";
+import VisibleProjectBuilderRow from "./visible_project_builder_table";
+import VisibleProjectImportRow from "./visible_project_import_table";
+import VisibleProjectMemberRow from "./visible_project_member_table";
+import VisibleProjectSizeRow from "./visible_project_size_table";
+import VisibleQuestionRow from "./visible_question_table";
+import VisibleRefSyncRow from "./visible_ref_sync_table";
+import VisibleSpaceRow from "./visible_space_table";
+import VisibleSpaceAliasRow from "./visible_space_alias_table";
+import VisibleSpaceGithubRow from "./visible_space_github_table";
+import VisibleSpaceLinkRow from "./visible_space_link_table";
+import VisibleSpaceRoleRow from "./visible_space_role_table";
+import VisibleUserRow from "./visible_user_table";
 
 /** Type-only namespace exports for generated type groups. */
 
 /** The schema information for all tables in this module. This is defined the same was as the tables would have been defined in the server. */
 const tablesSchema = __schema({
-  activity: __table({
-    name: 'activity',
+  visibleActivity: __table({
+    name: 'visible_activity',
     indexes: [
-      { accessor: 'at', name: 'activity_at_idx_btree', algorithm: 'btree', columns: [
-        'at',
-      ] },
-      { accessor: 'id', name: 'activity_id_idx_btree', algorithm: 'btree', columns: [
-        'id',
-      ] },
-      { accessor: 'projectId', name: 'activity_project_id_idx_btree', algorithm: 'btree', columns: [
-        'projectId',
-      ] },
     ],
     constraints: [
-      { name: 'activity_id_key', constraint: 'unique', columns: ['id'] },
     ],
-  }, ActivityRow),
-  agent: __table({
-    name: 'agent',
+  }, VisibleActivityRow),
+  visibleAgent: __table({
+    name: 'visible_agent',
     indexes: [
-      { accessor: 'identity', name: 'agent_identity_idx_btree', algorithm: 'btree', columns: [
-        'identity',
-      ] },
-      { accessor: 'name', name: 'agent_name_idx_btree', algorithm: 'btree', columns: [
-        'name',
-      ] },
     ],
     constraints: [
-      { name: 'agent_identity_key', constraint: 'unique', columns: ['identity'] },
-      { name: 'agent_name_key', constraint: 'unique', columns: ['name'] },
     ],
-  }, AgentRow),
-  gitObject: __table({
-    name: 'git_object',
+  }, VisibleAgentRow),
+  visibleGitObject: __table({
+    name: 'visible_git_object',
     indexes: [
-      { accessor: 'id', name: 'git_object_id_idx_btree', algorithm: 'btree', columns: [
-        'id',
-      ] },
-      { accessor: 'key', name: 'git_object_key_idx_btree', algorithm: 'btree', columns: [
-        'key',
-      ] },
-      { accessor: 'byProjectPos', name: 'git_object_project_id_pos_idx_btree', algorithm: 'btree', columns: [
-        'projectId',
-        'pos',
-      ] },
     ],
     constraints: [
-      { name: 'git_object_id_key', constraint: 'unique', columns: ['id'] },
-      { name: 'git_object_key_key', constraint: 'unique', columns: ['key'] },
     ],
-  }, GitObjectRow),
-  gitRef: __table({
-    name: 'git_ref',
+  }, VisibleGitObjectRow),
+  visibleGitRef: __table({
+    name: 'visible_git_ref',
     indexes: [
-      { accessor: 'id', name: 'git_ref_id_idx_btree', algorithm: 'btree', columns: [
-        'id',
-      ] },
-      { accessor: 'key', name: 'git_ref_key_idx_btree', algorithm: 'btree', columns: [
-        'key',
-      ] },
-      { accessor: 'projectId', name: 'git_ref_project_id_idx_btree', algorithm: 'btree', columns: [
-        'projectId',
-      ] },
     ],
     constraints: [
-      { name: 'git_ref_id_key', constraint: 'unique', columns: ['id'] },
-      { name: 'git_ref_key_key', constraint: 'unique', columns: ['key'] },
     ],
-  }, GitRefRow),
-  objectChunk: __table({
-    name: 'object_chunk',
+  }, VisibleGitRefRow),
+  visibleObjectChunk: __table({
+    name: 'visible_object_chunk',
     indexes: [
-      { accessor: 'id', name: 'object_chunk_id_idx_btree', algorithm: 'btree', columns: [
-        'id',
-      ] },
-      { accessor: 'key', name: 'object_chunk_key_idx_btree', algorithm: 'btree', columns: [
-        'key',
-      ] },
-      { accessor: 'byProjectOid', name: 'object_chunk_project_id_oid_idx_btree', algorithm: 'btree', columns: [
-        'projectId',
-        'oid',
-      ] },
     ],
     constraints: [
-      { name: 'object_chunk_id_key', constraint: 'unique', columns: ['id'] },
-      { name: 'object_chunk_key_key', constraint: 'unique', columns: ['key'] },
     ],
-  }, ObjectChunkRow),
-  presence: __table({
-    name: 'presence',
+  }, VisibleObjectChunkRow),
+  visiblePresence: __table({
+    name: 'visible_presence',
     indexes: [
-      { accessor: 'connectionId', name: 'presence_connection_id_idx_btree', algorithm: 'btree', columns: [
-        'connectionId',
-      ] },
-      { accessor: 'projectId', name: 'presence_project_id_idx_btree', algorithm: 'btree', columns: [
-        'projectId',
-      ] },
     ],
     constraints: [
-      { name: 'presence_connection_id_key', constraint: 'unique', columns: ['connectionId'] },
     ],
-  }, PresenceRow),
-  project: __table({
-    name: 'project',
+  }, VisiblePresenceRow),
+  visibleProject: __table({
+    name: 'visible_project',
     indexes: [
-      { accessor: 'fullName', name: 'project_full_name_idx_btree', algorithm: 'btree', columns: [
-        'fullName',
-      ] },
-      { accessor: 'id', name: 'project_id_idx_btree', algorithm: 'btree', columns: [
-        'id',
-      ] },
-      { accessor: 'owner', name: 'project_owner_idx_btree', algorithm: 'btree', columns: [
-        'owner',
-      ] },
     ],
     constraints: [
-      { name: 'project_full_name_key', constraint: 'unique', columns: ['fullName'] },
-      { name: 'project_id_key', constraint: 'unique', columns: ['id'] },
     ],
-  }, ProjectRow),
-  projectBuilder: __table({
-    name: 'project_builder',
+  }, VisibleProjectRow),
+  visibleProjectBuilder: __table({
+    name: 'visible_project_builder',
     indexes: [
-      { accessor: 'handle', name: 'project_builder_handle_idx_btree', algorithm: 'btree', columns: [
-        'handle',
-      ] },
-      { accessor: 'projectId', name: 'project_builder_project_id_idx_btree', algorithm: 'btree', columns: [
-        'projectId',
-      ] },
     ],
     constraints: [
-      { name: 'project_builder_project_id_key', constraint: 'unique', columns: ['projectId'] },
     ],
-  }, ProjectBuilderRow),
-  projectImport: __table({
-    name: 'project_import',
+  }, VisibleProjectBuilderRow),
+  visibleProjectImport: __table({
+    name: 'visible_project_import',
     indexes: [
-      { accessor: 'projectId', name: 'project_import_project_id_idx_btree', algorithm: 'btree', columns: [
-        'projectId',
-      ] },
     ],
     constraints: [
-      { name: 'project_import_project_id_key', constraint: 'unique', columns: ['projectId'] },
     ],
-  }, ProjectImportRow),
-  projectMember: __table({
-    name: 'project_member',
+  }, VisibleProjectImportRow),
+  visibleProjectMember: __table({
+    name: 'visible_project_member',
     indexes: [
-      { accessor: 'agent', name: 'project_member_agent_idx_btree', algorithm: 'btree', columns: [
-        'agent',
-      ] },
-      { accessor: 'id', name: 'project_member_id_idx_btree', algorithm: 'btree', columns: [
-        'id',
-      ] },
-      { accessor: 'key', name: 'project_member_key_idx_btree', algorithm: 'btree', columns: [
-        'key',
-      ] },
-      { accessor: 'projectId', name: 'project_member_project_id_idx_btree', algorithm: 'btree', columns: [
-        'projectId',
-      ] },
     ],
     constraints: [
-      { name: 'project_member_id_key', constraint: 'unique', columns: ['id'] },
-      { name: 'project_member_key_key', constraint: 'unique', columns: ['key'] },
     ],
-  }, ProjectMemberRow),
-  projectSize: __table({
-    name: 'project_size',
+  }, VisibleProjectMemberRow),
+  visibleProjectSize: __table({
+    name: 'visible_project_size',
     indexes: [
-      { accessor: 'projectId', name: 'project_size_project_id_idx_btree', algorithm: 'btree', columns: [
-        'projectId',
-      ] },
     ],
     constraints: [
-      { name: 'project_size_project_id_key', constraint: 'unique', columns: ['projectId'] },
     ],
-  }, ProjectSizeRow),
-  question: __table({
-    name: 'question',
+  }, VisibleProjectSizeRow),
+  visibleQuestion: __table({
+    name: 'visible_question',
     indexes: [
-      { accessor: 'asker', name: 'question_asker_idx_btree', algorithm: 'btree', columns: [
-        'asker',
-      ] },
-      { accessor: 'key', name: 'question_key_idx_btree', algorithm: 'btree', columns: [
-        'key',
-      ] },
-      { accessor: 'projectId', name: 'question_project_id_idx_btree', algorithm: 'btree', columns: [
-        'projectId',
-      ] },
-      { accessor: 'space', name: 'question_space_idx_btree', algorithm: 'btree', columns: [
-        'space',
-      ] },
     ],
     constraints: [
-      { name: 'question_key_key', constraint: 'unique', columns: ['key'] },
     ],
-  }, QuestionRow),
-  refSync: __table({
-    name: 'ref_sync',
+  }, VisibleQuestionRow),
+  visibleRefSync: __table({
+    name: 'visible_ref_sync',
     indexes: [
-      { accessor: 'key', name: 'ref_sync_key_idx_btree', algorithm: 'btree', columns: [
-        'key',
-      ] },
-      { accessor: 'projectId', name: 'ref_sync_project_id_idx_btree', algorithm: 'btree', columns: [
-        'projectId',
-      ] },
     ],
     constraints: [
-      { name: 'ref_sync_key_key', constraint: 'unique', columns: ['key'] },
     ],
-  }, RefSyncRow),
-  space: __table({
-    name: 'space',
+  }, VisibleRefSyncRow),
+  visibleSpace: __table({
+    name: 'visible_space',
     indexes: [
-      { accessor: 'kind', name: 'space_kind_idx_btree', algorithm: 'btree', columns: [
-        'kind',
-      ] },
-      { accessor: 'name', name: 'space_name_idx_btree', algorithm: 'btree', columns: [
-        'name',
-      ] },
     ],
     constraints: [
-      { name: 'space_name_key', constraint: 'unique', columns: ['name'] },
     ],
-  }, SpaceRow),
-  spaceAlias: __table({
-    name: 'space_alias',
+  }, VisibleSpaceRow),
+  visibleSpaceAlias: __table({
+    name: 'visible_space_alias',
     indexes: [
-      { accessor: 'name', name: 'space_alias_name_idx_btree', algorithm: 'btree', columns: [
-        'name',
-      ] },
-      { accessor: 'space', name: 'space_alias_space_idx_btree', algorithm: 'btree', columns: [
-        'space',
-      ] },
     ],
     constraints: [
-      { name: 'space_alias_name_key', constraint: 'unique', columns: ['name'] },
     ],
-  }, SpaceAliasRow),
-  spaceGithub: __table({
-    name: 'space_github',
+  }, VisibleSpaceAliasRow),
+  visibleSpaceGithub: __table({
+    name: 'visible_space_github',
     indexes: [
-      { accessor: 'space', name: 'space_github_space_idx_btree', algorithm: 'btree', columns: [
-        'space',
-      ] },
     ],
     constraints: [
-      { name: 'space_github_space_key', constraint: 'unique', columns: ['space'] },
     ],
-  }, SpaceGithubRow),
-  spaceLink: __table({
-    name: 'space_link',
+  }, VisibleSpaceGithubRow),
+  visibleSpaceLink: __table({
+    name: 'visible_space_link',
     indexes: [
-      { accessor: 'space', name: 'space_link_space_idx_btree', algorithm: 'btree', columns: [
-        'space',
-      ] },
     ],
     constraints: [
-      { name: 'space_link_space_key', constraint: 'unique', columns: ['space'] },
     ],
-  }, SpaceLinkRow),
-  spaceRole: __table({
-    name: 'space_role',
+  }, VisibleSpaceLinkRow),
+  visibleSpaceRole: __table({
+    name: 'visible_space_role',
     indexes: [
-      { accessor: 'id', name: 'space_role_id_idx_btree', algorithm: 'btree', columns: [
-        'id',
-      ] },
-      { accessor: 'key', name: 'space_role_key_idx_btree', algorithm: 'btree', columns: [
-        'key',
-      ] },
-      { accessor: 'member', name: 'space_role_member_idx_btree', algorithm: 'btree', columns: [
-        'member',
-      ] },
-      { accessor: 'space', name: 'space_role_space_idx_btree', algorithm: 'btree', columns: [
-        'space',
-      ] },
     ],
     constraints: [
-      { name: 'space_role_id_key', constraint: 'unique', columns: ['id'] },
-      { name: 'space_role_key_key', constraint: 'unique', columns: ['key'] },
     ],
-  }, SpaceRoleRow),
-  user: __table({
-    name: 'user',
+  }, VisibleSpaceRoleRow),
+  visibleUser: __table({
+    name: 'visible_user',
     indexes: [
-      { accessor: 'identity', name: 'user_identity_idx_btree', algorithm: 'btree', columns: [
-        'identity',
-      ] },
-      { accessor: 'username', name: 'user_username_idx_btree', algorithm: 'btree', columns: [
-        'username',
-      ] },
     ],
     constraints: [
-      { name: 'user_identity_key', constraint: 'unique', columns: ['identity'] },
-      { name: 'user_username_key', constraint: 'unique', columns: ['username'] },
     ],
-  }, UserRow),
+  }, VisibleUserRow),
 });
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
@@ -470,6 +307,7 @@ const reducersSchema = __reducers(
   __reducerSchema("set_accounts", SetAccountsReducer),
   __reducerSchema("set_join_policy", SetJoinPolicyReducer),
   __reducerSchema("set_link_status", SetLinkStatusReducer),
+  __reducerSchema("set_members_only", SetMembersOnlyReducer),
   __reducerSchema("set_owner_login", SetOwnerLoginReducer),
   __reducerSchema("set_project_builder", SetProjectBuilderReducer),
   __reducerSchema("set_space_github", SetSpaceGithubReducer),

@@ -70,36 +70,36 @@ export class LiveHub {
     };
     const remember = (r: { id: bigint; fullName: string; owner: string }) => this.projectsById.set(r.id, { fullName: r.fullName, owner: r.owner });
 
-    db.project.onInsert((ctx, r) => {
+    db.visibleProject.onInsert((ctx, r) => {
       remember(r);
       if (live(ctx)) forProject(r.id);
     });
     // A push's object uploads only move counters; wait for the ref.
-    db.project.onUpdate((_ctx, old, r) => {
+    db.visibleProject.onUpdate((_ctx, old, r) => {
       remember(r);
       if (old.description !== r.description || old.defaultBranch !== r.defaultBranch || old.pushedAt.microsSinceUnixEpoch !== r.pushedAt.microsSinceUnixEpoch) forProject(r.id);
     });
     // The name stays known for rows of the same project that go with it.
-    db.project.onDelete((ctx, r) => {
+    db.visibleProject.onDelete((ctx, r) => {
       if (live(ctx)) forProject(r.id);
     });
     const row = (ctx: { event: { tag: string } }, r: { projectId: bigint }) => {
       if (live(ctx)) forProject(r.projectId);
     };
-    db.gitRef.onInsert(row);
-    db.gitRef.onUpdate((ctx, _old, r) => row(ctx, r));
-    db.gitRef.onDelete(row);
-    db.projectImport.onInsert(row);
-    db.projectImport.onUpdate((ctx, _old, r) => row(ctx, r));
-    db.projectImport.onDelete(row);
-    db.projectBuilder.onInsert(row);
-    db.projectBuilder.onUpdate((ctx, _old, r) => row(ctx, r));
-    db.projectBuilder.onDelete(row);
+    db.visibleGitRef.onInsert(row);
+    db.visibleGitRef.onUpdate((ctx, _old, r) => row(ctx, r));
+    db.visibleGitRef.onDelete(row);
+    db.visibleProjectImport.onInsert(row);
+    db.visibleProjectImport.onUpdate((ctx, _old, r) => row(ctx, r));
+    db.visibleProjectImport.onDelete(row);
+    db.visibleProjectBuilder.onInsert(row);
+    db.visibleProjectBuilder.onUpdate((ctx, _old, r) => row(ctx, r));
+    db.visibleProjectBuilder.onDelete(row);
     const member = (ctx: { event: { tag: string } }, r: { projectId: bigint; agent: string }) => {
       if (live(ctx)) forProject(r.projectId, `space:${r.agent}`);
     };
-    db.projectMember.onInsert(member);
-    db.projectMember.onDelete(member);
+    db.visibleProjectMember.onInsert(member);
+    db.visibleProjectMember.onDelete(member);
     // Heartbeats only move seenAt; who is here changes on join, leave or
     // mode. Someone following a whole space shows on all of its projects.
     const here = (r: { projectId: bigint; space: string }) => {
@@ -107,9 +107,9 @@ export class LiveHub {
       const projects = [...this.projectsById.entries()].filter(([, p]) => p.owner === r.space).map(([, p]) => `project:${p.fullName}`);
       this.touch(['hub', `space:${r.space}`, ...projects]);
     };
-    db.presence.onInsert((ctx, r) => live(ctx) && here(r));
-    db.presence.onDelete((ctx, r) => live(ctx) && here(r));
-    db.presence.onUpdate((_ctx, old, r) => {
+    db.visiblePresence.onInsert((ctx, r) => live(ctx) && here(r));
+    db.visiblePresence.onDelete((ctx, r) => live(ctx) && here(r));
+    db.visiblePresence.onUpdate((_ctx, old, r) => {
       if (old.projectId !== r.projectId || old.space !== r.space || old.mode !== r.mode || old.branch !== r.branch) {
         here(old);
         here(r);
@@ -118,39 +118,39 @@ export class LiveHub {
     const builder = (ctx: { event: { tag: string } }, r: { username: string }) => {
       if (live(ctx)) this.touch(['hub', `space:${r.username}`]);
     };
-    db.user.onInsert(builder);
-    db.user.onDelete(builder);
+    db.visibleUser.onInsert(builder);
+    db.visibleUser.onDelete(builder);
     const space = (ctx: { event: { tag: string } }, r: { name: string; parent: string }) => {
       if (live(ctx)) this.touch(['hub', `space:${r.name}`, ...(r.parent ? [`space:${r.parent}`] : [])]);
     };
-    db.space.onInsert(space);
-    db.space.onUpdate((ctx, _old, r) => space(ctx, r));
-    db.space.onDelete(space);
+    db.visibleSpace.onInsert(space);
+    db.visibleSpace.onUpdate((ctx, _old, r) => space(ctx, r));
+    db.visibleSpace.onDelete(space);
     const role = (ctx: { event: { tag: string } }, r: { space: string; member: string }) => {
       if (live(ctx)) this.touch(['hub', `space:${r.space}`, `space:${r.member}`]);
     };
     const link = (ctx: { event: { tag: string } }, r: { space: string }) => {
       if (live(ctx)) this.touch(['hub', `space:${r.space}`]);
     };
-    db.spaceLink.onInsert(link);
-    db.spaceLink.onUpdate((ctx, _old, r) => link(ctx, r));
-    db.spaceLink.onDelete(link);
+    db.visibleSpaceLink.onInsert(link);
+    db.visibleSpaceLink.onUpdate((ctx, _old, r) => link(ctx, r));
+    db.visibleSpaceLink.onDelete(link);
     // A project measured for the first time (or gone). Sizes that grow with a
     // push show up with the push's own ref update.
     const measured = (ctx: { event: { tag: string } }, r: { projectId: bigint }) => {
       if (live(ctx)) forProject(r.projectId);
     };
-    db.projectSize.onInsert(measured);
-    db.projectSize.onDelete(measured);
+    db.visibleProjectSize.onInsert(measured);
+    db.visibleProjectSize.onDelete(measured);
     const synced = (ctx: { event: { tag: string } }, r: { projectId: bigint }) => {
       if (live(ctx)) forProject(r.projectId);
     };
-    db.refSync.onInsert(synced);
-    db.refSync.onUpdate((ctx, _old, r) => synced(ctx, r));
-    db.refSync.onDelete(synced);
-    db.spaceRole.onInsert(role);
-    db.spaceRole.onUpdate((ctx, _old, r) => role(ctx, r));
-    db.spaceRole.onDelete(role);
+    db.visibleRefSync.onInsert(synced);
+    db.visibleRefSync.onUpdate((ctx, _old, r) => synced(ctx, r));
+    db.visibleRefSync.onDelete(synced);
+    db.visibleSpaceRole.onInsert(role);
+    db.visibleSpaceRole.onUpdate((ctx, _old, r) => role(ctx, r));
+    db.visibleSpaceRole.onDelete(role);
 
     await new Promise<void>((resolve, reject) => {
       let first = true;
@@ -163,7 +163,7 @@ export class LiveHub {
           resolve();
         })
         .onError(ctx => reject(new Error(`subscription failed: ${(ctx as { event?: unknown }).event}`)))
-        .subscribe([tables.user, tables.space, tables.spaceRole, tables.spaceLink, tables.refSync, tables.projectSize, tables.project, tables.gitRef, tables.projectMember, tables.presence, tables.projectImport, tables.projectBuilder]);
+        .subscribe([tables.visibleUser, tables.visibleSpace, tables.visibleSpaceRole, tables.visibleSpaceLink, tables.visibleRefSync, tables.visibleProjectSize, tables.visibleProject, tables.visibleGitRef, tables.visibleProjectMember, tables.visiblePresence, tables.visibleProjectImport, tables.visibleProjectBuilder]);
     });
   }
 

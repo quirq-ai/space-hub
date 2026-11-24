@@ -1,6 +1,7 @@
 // Reading git data back out of the tables; shared by the push rules and the
 // web UI.
 import type { InferSchema, ReducerCtx } from 'spacetimedb/server';
+import type { Identity } from 'spacetimedb';
 import type spacetimedb from './index';
 
 export type Db = ReducerCtx<InferSchema<typeof spacetimedb>>['db'];
@@ -54,6 +55,58 @@ export function inSpace(db: Db, space: string, actor: string | null): boolean {
   if (!actor) return false;
   if (actor === space && db.space.name.find(space)?.kind === 'agent') return true;
   return ownsSpace(db, space, actor) || !!db.spaceRole.key.find(roleKey(space, actor));
+}
+
+// ---------------------------------------------------------------- who belongs to the hub
+//
+// The one rule for "is this identity one of the hub's own" (members-only
+// hubs, suspended builders). Reducers and the views below both ask it, so it
+// lives here and nowhere else.
+
+// A builder the hub's owner has not suspended (builder_suspension).
+export function activeBuilder(db: Db, identity: Identity): boolean {
+  return !!db.user.identity.find(identity) && !db.builderSuspension.identity.find(identity.toHexString());
+}
+
+// Whether an owner name (a builder, or an agent owning through an org role)
+// belongs to the hub.
+function activeName(db: Db, name: string, depth: number): boolean {
+  const user = db.user.username.find(name);
+  if (user) return !db.builderSuspension.identity.find(user.identity.toHexString());
+  return db.space.name.find(name)?.kind === 'agent' && agentHasMember(db, name, depth + 1);
+}
+
+// Whether an agent's owners (ownsSpace: its parent's owners, up the chain)
+// include a member. An agent of a suspended builder does not.
+function agentHasMember(db: Db, agent: string, depth = 0): boolean {
+  if (depth > 4) return false;
+  const row = db.space.name.find(agent);
+  if (row?.kind !== 'agent') return false;
+  const parent = db.space.name.find(row.parent);
+  if (!parent || parent.kind === 'personal') return activeName(db, row.parent, depth);
+  if (parent.kind === 'agent') return agentHasMember(db, parent.name, depth + 1);
+  return [...db.spaceRole.space.filter(parent.name)].some(r => r.role === 'owner' && activeName(db, r.member, depth));
+}
+
+// A member of the hub: a builder who is not suspended, or an agent whose
+// owners include one.
+export function isMember(db: Db, identity: Identity): boolean {
+  if (db.user.identity.find(identity)) return activeBuilder(db, identity);
+  const agent = db.agent.identity.find(identity);
+  return !!agent && agentHasMember(db, agent.name);
+}
+
+// hub_state "membersOnly": "true" keeps everything from whoever is not a
+// member. No row (the default) is a hub anyone may read, as before.
+export function membersOnly(db: Db): boolean {
+  return db.hubState.key.find('membersOnly')?.value === 'true';
+}
+
+// Whether `identity` may read the hub's spaces and projects (the views in
+// index.ts). The admin (the server's own web service) always may.
+export function mayReadHub(db: Db, identity: Identity): boolean {
+  if (!membersOnly(db)) return true;
+  return isMember(db, identity) || db.hubState.key.find('admin')?.value === identity.toHexString();
 }
 
 // Clients repeat watchProject and watchSpace about once a minute; a presence
