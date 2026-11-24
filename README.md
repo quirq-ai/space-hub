@@ -460,6 +460,32 @@ platform volumes usually mount root-owned. It then runs everything as uid
 Admin tasks run inside the container. For example, to follow the logs:
 `docker exec spacehub spacetime --root-dir /data logs --server http://127.0.0.1:3001 spacehub -f`.
 
+**Rehearse a deploy before it reaches a hub with real data.** Before
+deploying a new image to a hub people use, run it once on a copy of that
+hub's data. `scripts/rehearse.sh` (Linux or WSL, with Docker) copies a backup
+of the hub's `/data` (it never writes to the backup), opens the copy as it
+is and records every table's row count and a checksum of its rows, and, per
+project, its refs, git objects and chunks. It then starts the new image on
+the copy (its own start: publish, `claim_admin`, `set_accounts`), records
+again and compares. Tables the image adds are listed and allowed; anything
+else that changed is printed and the script exits 1 (2 if it could not run,
+or if the image would not start on the data).
+
+```sh
+scripts/rehearse.sh --backup <backup> --image <new image> -e SPACEHUB_ACCOUNTS=github
+```
+
+`<backup>` is one of the hub's backups (a vault's `snapshots/<id>`, from a
+Sub-hub or `SPACEHUB_BACKUP_DIR`), a folder `spacehub subhub restore` made, or
+a copy of `/data`. Give the hub's own settings with `-e`, at least
+`SPACEHUB_ACCOUNTS`, which every start sets: a different value shows up as a
+changed `hub_state` row. The test hub runs with no network, so the real
+hub's tokens in the copy reach nothing. Without Docker, `--module <module
+folder or bundle.js> --accounts <mode>` publishes a module with the local
+`spacetime` CLI instead (on port 3293, `--port` changes it). `--keep` keeps
+the copy and the two records (`before.txt`, `after.txt`). Only an identical
+result goes to the hub.
+
 **With HTTPS (compose).** `SPACEHUB_DOMAIN=hub.example.com docker compose up -d --build`
 adds a Caddy front that gets a certificate and forwards to the server. Add
 `SPACEHUB_XO_KEY=...` to the same command to turn on xo's API (see xo below).
