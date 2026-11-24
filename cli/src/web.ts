@@ -27,6 +27,10 @@
 //   GET      /gh/<owner>/<repo>  a public GitHub repository's room: its explainer and group
 //   POST     /-/api/ask          chat, opened on the first visit; asking there (rooms.ts)
 //   POST     /-/api/explain      open a room from a GitHub URL, for the explain org's chat (rooms.ts)
+//   GET      /-/auth/check       members-only: Caddy's forward_auth asks before every request (frontdoor.ts)
+//
+// On a members-only hub every route here but the open ones in frontdoor.ts
+// ROUTES (sign-in and sign-up) answers members only.
 //
 // Pages are read by the module (ui.ts); this service only acts. A session is
 // the user's identity token in an HttpOnly cookie, so every action runs as
@@ -59,6 +63,7 @@ import { SubhubRelay } from './subhubrelay';
 import { bearerToken, cookieValue, viewerOf, type CheckToken, type Viewer } from './viewer';
 import { hubMembersOnly, hubOwnerName, hubPeople, isSuspended, joinPolicy, joinSettings, type JoinPolicy } from './hubowner';
 import { handleHubSettings } from './hubsettings';
+import { FrontDoor } from './frontdoor';
 
 quietSdkLogs();
 
@@ -301,6 +306,20 @@ async function recoveryOperator(req: http.IncomingMessage): Promise<boolean> {
     return rows[0]?.value === v.identity.toHexString();
   } catch { return false; }
 }
+
+// Members-only at the front door (frontdoor.ts). Without the admin to read
+// the flag it stays off here; the database's views still close the hub.
+const DOOR = new FrontDoor({
+  membersOnly: () => (ADMIN_SQL ? hubMembersOnly(ADMIN_SQL) : Promise.resolve(false)),
+  viewer: req => viewer(req),
+  turnedOn: () => LIVE.closeAll(),
+});
+// Live pages stay open between requests, so while any is open the flag is
+// read on the same interval, and turning it on ends them (the cache makes
+// this one admin read per interval at most).
+setInterval(() => {
+  if (LIVE.open) void DOOR.membersOnly();
+}, 5_000).unref();
 
 // ---------------------------------------------------------------- GitHub
 
@@ -572,6 +591,10 @@ const ROOMS: Parameters<typeof handleRooms>[0] = {
 async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   const url = new URL(req.url ?? '/', 'http://local');
   const route = url.pathname;
+  // Members-only (frontdoor.ts): Caddy's question first, then the same check
+  // on this request itself, before any route reads the hub as the admin.
+  if (await DOOR.check(req, res, url)) return;
+  if (await DOOR.guard(req, res)) return;
   // Called by xo.quirq.dev with its key, not from the site's forms.
   if (await handleXo(XO, req, res)) return;
   // Called by the CLI with a GitHub token, not from the site's forms.
@@ -617,7 +640,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     revokeInvite: (token, id) => withConn(token, conn => conn.reducers.revokeInvite({ id })),
     signupUrl: r => callbackOf(r, '/-/signup'),
     membersOnly: () => hubMembersOnly(ADMIN_SQL!),
-    setMembersOnly: (token, on) => withConn(token, conn => conn.reducers.setMembersOnly({ on })),
+    setMembersOnly: (token, on) => withConn(token, conn => conn.reducers.setMembersOnly({ on })).finally(() => DOOR.forget()),
   }, req, res, url)) return;
   if (await handleApp({ dir: APP_DIR, internalHttp: INTERNAL_HTTP, db: DB, withConn, sessionOf, operator: recoveryOperator, owner: ownerName }, req, res, url)) return;
 

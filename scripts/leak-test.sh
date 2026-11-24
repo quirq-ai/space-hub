@@ -6,15 +6,22 @@
 # subscription and by SQL.
 #   members-only off: the stranger sees exactly what the admin sees (today)
 #   members-only on:  the stranger sees nothing; a builder still sees everything
-#   scripts/leak-test.sh                  (needs: spacetime, git, node 22+, python3)
+# Then the same over every web route, through the server image's Caddyfile
+# and the web service (scripts/routeprobe.ts, routes listed in scripts/routes.ts):
+# an anonymous browser and a signed-in stranger get only sign-in, a member
+# sees no change, and off is today.
+#   scripts/leak-test.sh                  (needs: spacetime, git, node 22+, python3,
+#                                          caddy, or docker to copy it from caddy:$CADDY_VERSION)
 #   OLD_CLI=<old spacehub> scripts/leak-test.sh   also checks an old CLI gets the update message
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PORT="${PORT:-3198}"
+WEB_PORT="${WEB_PORT:-3196}"
+FRONT_PORT="${FRONT_PORT:-3197}"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/spacehub-leak.XXXXXX")"
-SERVER_PID=""
-trap 'set +e; [[ -n "$SERVER_PID" ]] && kill "$SERVER_PID" 2>/dev/null && wait "$SERVER_PID" 2>/dev/null; rm -rf "$WORK"' EXIT
+PIDS=()
+trap 'set +e; for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null; wait "$p" 2>/dev/null; done; rm -rf "$WORK"' EXIT
 
 ok() { printf '  ok  %s\n' "$1"; }
 fail() { printf '  FAIL %s\n' "$1" >&2; exit 1; }
@@ -29,7 +36,7 @@ HTTP="http://127.0.0.1:$PORT"
 
 if curl -sf "$HTTP/v1/ping" >/dev/null 2>&1; then fail "port $PORT is in use; set PORT"; fi
 spacetime start --in-memory --data-dir "$WORK/stdb" --listen-addr "127.0.0.1:$PORT" --non-interactive >"$WORK/server.log" 2>&1 &
-SERVER_PID=$!
+PIDS+=($!)
 for _ in $(seq 1 50); do curl -sf "$HTTP/v1/ping" >/dev/null 2>&1 && break; sleep 0.2; done
 spacetime publish --server "$HTTP" "$SPACEHUB_DB" --module-path "$ROOT/module" --yes >"$WORK/publish.log" 2>&1 || { cat "$WORK/publish.log" >&2; fail "publish"; }
 spacetime call --server "$HTTP" "$SPACEHUB_DB" claim_admin >/dev/null 2>&1 || fail "claim admin"
@@ -38,10 +45,10 @@ members_only() { spacetime call --server "$HTTP" "$SPACEHUB_DB" set_members_only
 
 echo "a hub with some data"
 as alice spacehub auth login --builder alice >/dev/null
-as alice spacehub project create notes -d "leak test" >/dev/null
+as alice spacehub project create leakproj -d "leakdesc of a leak test" >/dev/null
 git init -q -b main "$WORK/a"
-(cd "$WORK/a" && echo hello >a.txt && git add . && git -c user.name=t -c user.email=t@e commit -qm first \
-  && SPACEHUB_HOME="$WORK/home-alice" git push -q "quirq://127.0.0.1:$PORT/alice/notes" main 2>/dev/null) || fail "push"
+(cd "$WORK/a" && echo leakcontent >a.txt && git add . && git -c user.name=t -c user.email=t@e commit -qm first \
+  && SPACEHUB_HOME="$WORK/home-alice" git push -q "quirq://127.0.0.1:$PORT/alice/leakproj" main 2>/dev/null) || fail "push"
 as alice spacehub space create acme >/dev/null 2>&1 || true
 ALICE_TOKEN="$(as alice spacehub auth token)"
 ok "builder, project, push"
@@ -95,6 +102,45 @@ views_are("off again: exactly today's data", again, lambda v: truth[view_table(v
 check("the data is not empty (the test means something)", sum(truth.get(t, 0) for t in ("project", "git_object", "git_ref", "user", "space")) >= 5)
 sys.exit(1 if bad else 0)
 PY
+
+echo "every web route, through the front door"
+CADDY="${CADDY:-$(command -v caddy || true)}"
+if [[ -z "$CADDY" ]]; then
+  # The server image's own Caddy (Dockerfile CADDY_VERSION).
+  version="$(sed -n 's/^ARG CADDY_VERSION=//p' "$ROOT/Dockerfile")"
+  docker run --rm --entrypoint cat "caddy:$version" /usr/bin/caddy >"$WORK/caddy" 2>"$WORK/caddy.err" || { cat "$WORK/caddy.err" >&2; fail "no caddy: install it, set CADDY, or have docker"; }
+  chmod +x "$WORK/caddy"
+  CADDY="$WORK/caddy"
+fi
+for p in "$WEB_PORT" "$FRONT_PORT"; do curl -s -o /dev/null "http://127.0.0.1:$p/" 2>/dev/null && fail "port $p is in use; set WEB_PORT / FRONT_PORT"; done
+APP_DIR="$ROOT/app/dist"
+[[ -f "$APP_DIR/index.html" ]] || (cd "$ROOT/app" && npm run build --silent >/dev/null 2>&1) || true
+SPACEHUB_HOME="$WORK/home-web" SPACEHUB_WEB_PORT="$WEB_PORT" SPACEHUB_INTERNAL_HTTP="$HTTP" SPACEHUB_ADMIN_TOKEN="$ADMIN_TOKEN" \
+  SPACEHUB_APP_DIR="$APP_DIR" SPACEHUB_GITHUB_API="http://127.0.0.1:9" SPACEHUB_ACTIVITY_DIR=off \
+  SPACEHUB_RECOVERY_STATE_DIR="$WORK/recovery" node "$ROOT/cli/dist/web.mjs" >"$WORK/web.log" 2>&1 &
+PIDS+=($!)
+# (SPACETIME_INTERNAL_PORT before PORT: an assignment here sees the ones before it.)
+XDG_DATA_HOME="$WORK/caddy-data" XDG_CONFIG_HOME="$WORK/caddy-config" SPACETIME_INTERNAL_PORT="$PORT" PORT="$FRONT_PORT" \
+  SPACEHUB_WEB_PORT="$WEB_PORT" "$CADDY" run --config "$ROOT/docker/server.Caddyfile" --adapter caddyfile >"$WORK/caddy.log" 2>&1 &
+PIDS+=($!)
+FRONT="http://127.0.0.1:$FRONT_PORT"
+for _ in $(seq 1 50); do curl -sf "$FRONT/-/login" >/dev/null 2>&1 && break; sleep 0.2; done
+curl -sf "$FRONT/healthz" >/dev/null || { tail -5 "$WORK/caddy.log" "$WORK/web.log" >&2; fail "the front door did not start"; }
+# A signed-in stranger: a valid identity with no builder.
+STRANGER_TOKEN="$(curl -sf -X POST "$HTTP/v1/identity" | grep -oE '"token":"[^"]+"' | cut -d'"' -f4)"
+[[ -n "$STRANGER_TOKEN" ]] || fail "a stranger's identity"
+export LEAK_MARKERS="leakproj,leakdesc,leakcontent,alice" LEAK_COMMIT="$(git -C "$WORK/a" rev-parse HEAD)" STRANGER_TOKEN MEMBER_TOKEN="$ALICE_TOKEN"
+routes() { node --experimental-strip-types --no-warnings "$ROOT/scripts/routeprobe.ts" "$FRONT" "$@" || { tail -5 "$WORK/web.log" >&2; exit 1; }; }
+# The front door reads the flag at most every 5 seconds.
+settle() { sleep 6; }
+routes off "$WORK/routes-off.json"
+members_only true; settle
+routes on "$WORK/routes-on.json" "$WORK/routes-off.json"
+# The front door passes a form's body on: a new builder signs up through it, members-only on.
+curl -s -X POST -H "origin: $FRONT" -H 'accept: text/html' --data 'username=carol' "$FRONT/-/signup" | grep -q 'Welcome, <b>carol</b>' \
+  && ok "on: sign-up through the front door (a form body passes)" || fail "on: sign-up through the front door"
+members_only false; settle
+routes off "$WORK/routes-off-again.json"
 
 if [[ -n "${OLD_CLI:-}" ]]; then
   out="$(SPACEHUB_HOME="$WORK/home-alice" "$OLD_CLI" project list alice 2>&1 || true)"

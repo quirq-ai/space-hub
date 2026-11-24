@@ -176,20 +176,33 @@ spacetime --root-dir "$ROOT" call --server "http://$INTERNAL" "$DB" set_accounts
 # (the same login again changes nothing); the first sign-in with GitHub as that
 # login records the account's id as the owner. Unset: no owner, as before.
 OWNER="${SPACEHUB_OWNER:-}"
-if ! printf '%s' "$OWNER" | grep -Eq '^([A-Za-z0-9-]{1,39})?$'; then
+# Empty is fine (no owner). grep sees no line at all for an empty value, so
+# check with case instead.
+case "$OWNER" in
+  *[!A-Za-z0-9-]*)
+    echo "spacehub: SPACEHUB_OWNER must be a GitHub login" >&2
+    exit 1 ;;
+esac
+if [ "${#OWNER}" -gt 39 ]; then
   echo "spacehub: SPACEHUB_OWNER must be a GitHub login" >&2
   exit 1
 fi
 spacetime --root-dir "$ROOT" call --server "http://$INTERNAL" "$DB" set_owner_login "\"$OWNER\"" >/dev/null
+
+# The web service first: the proxy asks it about every request (members-only,
+# cli/src/frontdoor.ts), so it should be answering before the port is handed over.
+SPACEHUB_SERVER="ws://$INTERNAL" SPACEHUB_INTERNAL_HTTP="http://$INTERNAL" SPACEHUB_DB="$DB" node /opt/spacehub/cli/dist/web.mjs &
+web=$!
+for _ in $(seq 1 50); do
+  curl -s -o /dev/null "http://127.0.0.1:${SPACEHUB_WEB_PORT:-3002}/-/auth/check" && break
+  sleep 0.2
+done
 
 # Ready: hand the public port to the allowlist proxy.
 kill -TERM "$proxy" 2>/dev/null || true
 wait "$proxy" 2>/dev/null || true
 caddy run --config /opt/spacehub/Caddyfile --adapter caddyfile &
 proxy=$!
-
-SPACEHUB_SERVER="ws://$INTERNAL" SPACEHUB_INTERNAL_HTTP="http://$INTERNAL" SPACEHUB_DB="$DB" node /opt/spacehub/cli/dist/web.mjs &
-web=$!
 echo "spacehub: serving database \"$DB\" on port $PORT"
 
 while kill -0 "$server" 2>/dev/null && kill -0 "$proxy" 2>/dev/null && kill -0 "$web" 2>/dev/null; do

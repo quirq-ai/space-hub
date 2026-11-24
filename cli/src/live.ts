@@ -241,6 +241,19 @@ export class LiveHub {
     });
   }
 
+  /** How many live pages are open. */
+  get open(): number {
+    return this.clients.size;
+  }
+
+  /**
+   * End every live page (a hub that just became members-only, frontdoor.ts).
+   * Each browser reconnects in a few seconds, and only members get back in.
+   */
+  closeAll() {
+    for (const c of [...this.clients]) c.res.end();
+  }
+
   // Serves /-/live.js and /-/live; false for any other path.
   handle(req: http.IncomingMessage, res: http.ServerResponse, url: URL): boolean {
     if (url.pathname === '/-/live.js') {
