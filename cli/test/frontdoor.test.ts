@@ -109,6 +109,57 @@ test('a membership is remembered per session for the interval', async () => {
   assert.equal(state.viewerReads, 2);
 });
 
+test('suspending a builder forgets its memberships at once, on every session, and no one else', async () => {
+  const viewers: Record<string, Viewer> = {
+    'tok-alice': { token: 'tok-alice', identity: id, name: 'alice' },
+    'tok-carol': { token: 'tok-carol', identity: id, name: 'carol' },
+    'tok-carol2': { token: 'tok-carol2', identity: id, name: 'carol' }, // carol on another browser
+  };
+  let reads = 0;
+  let carolSuspended = false;
+  const door = new FrontDoor({
+    membersOnly: async () => true,
+    viewer: async req => {
+      reads++;
+      const v = viewers[/spacehub_session=([^;]+)/.exec(String(req.headers.cookie ?? ''))?.[1] ?? ''] ?? null;
+      return v && v.name === 'carol' && carolSuspended ? null : v;
+    },
+    now: () => 0,
+  });
+  const [alice, carol, carol2] = ['tok-alice', 'tok-carol', 'tok-carol2'].map(t => request({ cookie: `spacehub_session=${t}` }));
+  for (const r of [alice, carol, carol2]) assert.equal(await door.allows(r, '/x'), true);
+  assert.equal(reads, 3);
+  carolSuspended = true;
+  assert.equal(await door.allows(carol, '/x'), true, 'untold, the cache still lets carol in');
+  door.forgetBuilder('carol');
+  assert.equal(await door.allows(carol, '/x'), false, 'carol is out on the next request');
+  assert.equal(await door.allows(carol2, '/x'), false, 'on every session');
+  assert.equal(await door.allows(alice, '/x'), true);
+  assert.equal(reads, 5, "alice's membership is still remembered");
+});
+
+test('a membership looked up while its builder is being suspended is not remembered', async () => {
+  let release!: () => void;
+  let reads = 0;
+  const door = new FrontDoor({
+    membersOnly: async () => true,
+    viewer: async () => {
+      reads++;
+      if (reads === 1) await new Promise<void>(r => (release = r));
+      return { token: 'tok-carol', identity: id, name: 'carol' };
+    },
+    now: () => 0,
+  });
+  const carol = request({ cookie: 'spacehub_session=tok-carol' });
+  const first = door.allows(carol, '/x');
+  await new Promise(r => setImmediate(r));
+  door.forgetBuilder('carol');
+  release();
+  assert.equal(await first, true, 'the answer already under way');
+  await door.allows(carol, '/x');
+  assert.equal(reads, 2, 'but it was not remembered');
+});
+
 test('a flag that cannot be read keeps its last answer, or is closed', async () => {
   const fresh = hub(false);
   fresh.state.fail = true;

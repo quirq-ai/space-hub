@@ -609,7 +609,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     relay: RECOVERY_RELAY,
     hubBackups: HUB_BACKUPS,
   }, req, res, url)) return;
-  if (LIVE.handle(req, res, url)) return;
+  // A live page remembers its verified builder, so a suspension can end it (LIVE.closeFor).
+  if (LIVE.handle(req, res, url, route === '/-/live' ? ((await sessionOf(req).catch(() => null))?.username ?? null) : null)) return;
   if (req.method === 'POST' && !sameOrigin(req)) return send(res, 403, page('Forbidden', null, '<h1>Forbidden</h1><p class="desc">This form must be sent from this site.</p>'));
   if (await handleAgentsHub(WORKERS.key ? AGENTS_HUB : null, {
     sessionOf,
@@ -631,6 +632,11 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
       return hubPeople(ADMIN_SQL!, names);
     },
     suspend: (token, username) => withConn(token, conn => conn.reducers.suspendBuilder({ username })),
+    // At once, not after the front door's 5 s cache: its sessions and live pages end now.
+    suspended: username => {
+      DOOR.forgetBuilder(username);
+      LIVE.closeFor(username);
+    },
     restore: (token, username) => withConn(token, conn => conn.reducers.restoreBuilder({ username })),
     join: () => joinSettings(ADMIN_SQL!),
     setJoinPolicy: (token, policy) => withConn(token, conn => conn.reducers.setJoinPolicy({ policy })),

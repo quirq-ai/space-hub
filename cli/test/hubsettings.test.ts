@@ -254,6 +254,20 @@ test('the owner suspends and restores builders as itself; the module has the las
   }
 });
 
+test('a suspension takes effect at once: the web service is told, only when the module agreed', async () => {
+  const told: string[] = [];
+  const s = await site({ suspended: name => void told.push(name) });
+  try {
+    await s.ask('/-/api/hub/suspend', 'tok-alice', { name: 'bob' });
+    await s.ask('/-/api/hub/suspend', 'tok-alice', { name: 'alice' }); // refused by the module
+    await s.ask('/-/api/hub/suspend', 'tok-bob', { name: 'carol' }); // not the owner
+    await s.ask('/-/api/hub/restore', 'tok-alice', { name: 'bob' });
+    assert.deepEqual(told, ['bob']);
+  } finally {
+    s.close();
+  }
+});
+
 test('the owner switches members-only on and off as itself; nobody else can', async () => {
   const s = await site({ membersOnly: async () => true });
   try {

@@ -68,3 +68,18 @@ export function pageParts(html: string): { title: string; main: string } | null 
   const title = /<title>([\s\S]*?)<\/title>/.exec(html)?.[1] ?? '';
   return { title: title.replace(/&(amp|lt|gt|quot|#39);/g, m => ENTITIES[m]), main: main[1] };
 }
+
+/**
+ * End the live pages opened by the builder `name` (the owner just suspended
+ * it): each browser reconnects in a few seconds as whoever it is now. The
+ * number ended. Used by live.ts closeFor.
+ */
+export function closeBuilder(clients: Iterable<{ builder: string | null; res: { end(): void } }>, name: string): number {
+  let ended = 0;
+  for (const c of [...clients]) {
+    if (c.builder !== name) continue;
+    c.res.end();
+    ended++;
+  }
+  return ended;
+}

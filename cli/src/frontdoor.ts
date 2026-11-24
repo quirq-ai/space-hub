@@ -79,7 +79,10 @@ export class FrontDoor {
   private now: () => number;
   private flag: { on: boolean; until: number } | null = null;
   private reading: Promise<boolean> | null = null;
-  private members = new Map<string, { member: boolean; until: number }>();
+  // Per session token: whether it is a member, and as which builder (to forget a suspended one).
+  private members = new Map<string, { member: boolean; name: string | null; until: number }>();
+  // Moves on every forgetBuilder, so a lookup that started before it is not remembered.
+  private epoch = 0;
 
   constructor(deps: FrontDoorDeps) {
     this.deps = deps;
@@ -126,11 +129,23 @@ export class FrontDoor {
     const now = this.now();
     const known = this.members.get(token);
     if (known && now < known.until) return known.member;
+    const epoch = this.epoch;
     const viewer = await this.deps.viewer(req);
     const member = !!viewer && viewer.name !== null;
+    if (epoch !== this.epoch) return member;
     if (this.members.size >= MAX_REMEMBERED) this.members.clear();
-    this.members.set(token, { member, until: now + this.ttl });
+    this.members.set(token, { member, name: viewer?.name ?? null, until: now + this.ttl });
     return member;
+  }
+
+  /**
+   * Forget every remembered membership of the builder `name` (the owner just
+   * suspended it here), so its next request is checked afresh, on every
+   * session it has open. Lookups already under way are not remembered either.
+   */
+  forgetBuilder(name: string) {
+    this.epoch++;
+    for (const [token, known] of this.members) if (known.name === name) this.members.delete(token);
   }
 
   /** Whether `req` may have `uri` (the path it asks for). */

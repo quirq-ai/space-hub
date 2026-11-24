@@ -11,7 +11,7 @@
 // browser only ever talks to this service, never to SpacetimeDB.
 import http from 'node:http';
 import { connectTo, errorMessage, tables, type Conn } from './conn';
-import { LIVE_JS, liveTopic, pageParts } from './livepage';
+import { closeBuilder, LIVE_JS, liveTopic, pageParts } from './livepage';
 
 const MAX_CLIENTS = 500;
 const DEBOUNCE_MS = 250;
@@ -22,6 +22,8 @@ interface Client {
   res: http.ServerResponse;
   path: string;
   topic: string;
+  /** The verified builder who opened it (null: anonymous), to end its pages when it is suspended. */
+  builder: string | null;
   headers: Record<string, string>;
   timer: NodeJS.Timeout | null;
   busy: boolean;
@@ -254,8 +256,18 @@ export class LiveHub {
     for (const c of [...this.clients]) c.res.end();
   }
 
-  // Serves /-/live.js and /-/live; false for any other path.
-  handle(req: http.IncomingMessage, res: http.ServerResponse, url: URL): boolean {
+  /**
+   * End the live pages the builder `username` opened (the owner just
+   * suspended it, hubsettings.ts). Its browsers reconnect signed out, and on
+   * a members-only hub are not let back in. The number ended.
+   */
+  closeFor(username: string): number {
+    return closeBuilder(this.clients, username);
+  }
+
+  // Serves /-/live.js and /-/live; false for any other path. `builder` is
+  // the verified builder asking (web.ts), remembered for closeFor.
+  handle(req: http.IncomingMessage, res: http.ServerResponse, url: URL, builder: string | null = null): boolean {
     if (url.pathname === '/-/live.js') {
       res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-cache', 'x-content-type-options': 'nosniff' });
       res.end(LIVE_JS);
@@ -287,6 +299,8 @@ export class LiveHub {
     const proto = req.headers['x-forwarded-proto'];
     if (typeof proto === 'string') headers['x-forwarded-proto'] = proto;
     if (user) headers.cookie = `spacehub_user=${user}`;
+    // Gone while its builder was looked up: its 'close' has already fired.
+    if (res.destroyed || req.socket?.destroyed) return true;
     res.writeHead(200, {
       'content-type': 'text/event-stream; charset=utf-8',
       'cache-control': 'no-store',
@@ -294,7 +308,7 @@ export class LiveHub {
       connection: 'keep-alive',
     });
     res.write('retry: 3000\n\n');
-    const c: Client = { res, path, topic, headers, timer: null, busy: false, again: false, closed: false, last: '' };
+    const c: Client = { res, path, topic, builder, headers, timer: null, busy: false, again: false, closed: false, last: '' };
     this.clients.add(c);
     const ping = setInterval(() => res.write(': ping\n\n'), PING_MS);
     res.on('close', () => {

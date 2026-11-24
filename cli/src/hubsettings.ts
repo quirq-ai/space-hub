@@ -35,6 +35,11 @@ export interface HubSettingsDeps {
   /** Suspend or restore `name` as the owner (the session's token); rejects with the module's reason. */
   suspend: (token: string, name: string) => Promise<void>;
   restore: (token: string, name: string) => Promise<void>;
+  /**
+   * Called once `name` is suspended, so it takes effect at once: the web
+   * service forgets its cached memberships and ends its live pages.
+   */
+  suspended?: (name: string) => void;
   /** The join gate's reducers, as the owner; each rejects with the module's reason. */
   setJoinPolicy: (token: string, policy: string) => Promise<void>;
   allow: (token: string, login: string) => Promise<void>;
@@ -78,7 +83,12 @@ const text = (body: Body, key: string, what: string) => {
 };
 
 const ACTIONS: Record<string, Action> = {
-  suspend: async (d, s, b) => (await d.suspend(s.token, text(b, 'name', "builder's name")), { ok: true }),
+  suspend: async (d, s, b) => {
+    const name = text(b, 'name', "builder's name");
+    await d.suspend(s.token, name);
+    d.suspended?.(name);
+    return { ok: true };
+  },
   restore: async (d, s, b) => (await d.restore(s.token, text(b, 'name', "builder's name")), { ok: true }),
   join: async (d, s, b) => (await d.setJoinPolicy(s.token, text(b, 'policy', 'join policy')), { ok: true }),
   allow: async (d, s, b) => (await d.allow(s.token, text(b, 'login', 'GitHub login')), { ok: true }),

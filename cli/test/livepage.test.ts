@@ -1,7 +1,7 @@
 // Which pages are live and what the live stream carries (npm test).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { LIVE_JS, liveTopic, pageParts } from '../src/livepage.ts';
+import { closeBuilder, LIVE_JS, liveTopic, pageParts } from '../src/livepage.ts';
 import { shell } from '../../module/src/style.ts';
 
 test('pages follow the hub, a space or a project', () => {
@@ -54,3 +54,16 @@ test('server pages draw the app frame: the shared stylesheet, the sidebar and th
   for (const page of ['Sign in', 'Guide', 'Settings', 'Builders']) assert.ok(guest.includes(`${page}</a>`), page);
 });
 
+test("a suspended builder's live pages end at once; everyone else's stay open", () => {
+  const ended: string[] = [];
+  const clients = new Set<{ builder: string | null; res: { end(): void } }>();
+  // Ending a page takes it out of the set, as live.ts does on 'close'.
+  for (const [id, builder] of [['carol-1', 'carol'], ['alice', 'alice'], ['carol-2', 'carol'], ['anon', null]] as const) {
+    const c = { builder, res: { end: () => (ended.push(id), void clients.delete(c)) } };
+    clients.add(c);
+  }
+  assert.equal(closeBuilder(clients, 'carol'), 2);
+  assert.deepEqual(ended, ['carol-1', 'carol-2']);
+  assert.deepEqual([...clients].map(c => c.builder), ['alice', null]);
+  assert.equal(closeBuilder(clients, 'nobody'), 0);
+});
