@@ -73,6 +73,24 @@ export function builderAction(s: HubSettings, b: HubBuilder): "suspend" | "resto
   return b.suspended ? "restore" : "suspend";
 }
 
+/** Under "GitHub accounts let in": the list is about joining, not about who is already here. */
+export const ALLOWLIST_HELP = "Listing lets an account join. People already in stay until you suspend them below.";
+
+/**
+ * The builder still here under `login` after the owner took it off the allowlist (GitHub logins and builder
+ * names compare without case), or null: nobody, the owner, or someone already suspended. Removing a login only
+ * stops new joins, so the page points to that builder's Suspend button.
+ */
+export function stillHere(s: HubSettings, login: string): string | null {
+  const b = s.builders.find(b => b.name.toLowerCase() === login.toLowerCase());
+  return b && !b.suspended && builderAction(s, b) === "suspend" ? b.name : null;
+}
+
+/** The note shown after removing a login whose builder is still here. */
+export function stillHereText(name: string): string {
+  return `${name} is still a builder here. Taking them off this list only stops new joins; to end their access, use Suspend next to ${name} in Builders below.`;
+}
+
 /** Who can read the hub, in a sentence, for the members-only switch. */
 export function readersLine(s: HubSettings): string {
   return s.membersOnly

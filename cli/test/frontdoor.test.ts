@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type http from 'node:http';
 import type { Identity } from 'spacetimedb';
-import { accessOf, DENIED_HEADER, FrontDoor, pathOf, ROUTES } from '../src/frontdoor.ts';
+import { accessOf, DENIED_HEADER, FrontDoor, pathOf, ROUTES, SUSPENDED, signInNotice, suspendedMessage } from '../src/frontdoor.ts';
 import type { Viewer } from '../src/viewer.ts';
 import { LIST, unlisted } from '../../scripts/routes.ts';
 
@@ -250,4 +250,16 @@ test("every route in the code is on the leak test's list (scripts/routes.ts)", (
       assert.equal(accessOf(pathOf(p.path)) !== 'members', !!p.open, `${key}: ${p.path}`);
     }
   }
+});
+
+test('the sign-in page says why the hub sent the viewer there', () => {
+  assert.deepEqual(signInNotice('suspended', false, false), { text: `${SUSPENDED} Ask the hub's owner if you think this is a mistake.`, error: true });
+  // The cookie still held is a suspended builder's: said whatever the reason (or none).
+  assert.equal(signInNotice('signed-out', false, true)?.error, true);
+  assert.equal(signInNotice(null, false, true)?.text.startsWith(SUSPENDED), true);
+  assert.deepEqual(signInNotice('signed-out', false, false), { text: 'Sign in to continue.', error: false });
+  assert.equal(signInNotice(null, false, false), null);
+  assert.equal(signInNotice('<script>', false, false), null, 'only known reasons');
+  assert.equal(signInNotice('suspended', true, false), null, 'signed in: nothing to explain');
+  assert.equal(suspendedMessage('carol'), "Your access to this hub was suspended by its owner. You signed in as carol; ask the hub's owner to restore it.");
 });

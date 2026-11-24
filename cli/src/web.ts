@@ -63,7 +63,7 @@ import { SubhubRelay } from './subhubrelay';
 import { bearerToken, cookieValue, viewerOf, type CheckToken, type Viewer } from './viewer';
 import { hubMembersOnly, hubOwnerName, hubPeople, isSuspended, joinPolicy, joinSettings, type JoinPolicy } from './hubowner';
 import { handleHubSettings } from './hubsettings';
-import { FrontDoor } from './frontdoor';
+import { FrontDoor, signInNotice, suspendedMessage } from './frontdoor';
 
 quietSdkLogs();
 
@@ -378,12 +378,13 @@ function pump() {
 
 // Sign in: the ways to get a token from the terminal (howto.ts), then the
 // form that takes it.
-function loginPage(viewer: string | null, hub: Hub, error = '', next = '/') {
+// `notice`: why the hub sent the viewer here (frontdoor.ts signInNotice); an error wins over it.
+function loginPage(viewer: string | null, hub: Hub, error = '', next = '/', notice: { text: string; error: boolean } | null = null) {
   return page(
     'Sign in · spacehub',
     viewer,
     `<div class="page-title"><h1>Sign in</h1><p>${hub.github || hub.xo ? `There are no passwords here: your account is your GitHub account. Sign in with ${hub.github && hub.xo ? 'GitHub or xo' : hub.github ? 'GitHub' : 'xo'}, or once from your terminal, then paste your token.` : 'There are no passwords here. Sign in once from your terminal, then paste your token to use this site.'}</p></div>
-${error ? `<div class="banner err">${esc(error)}</div>` : ''}
+${error ? `<div class="banner err" role="alert">${esc(error)}</div>` : notice ? `<div class="banner${notice.error ? ' err' : ''}" role="status">${esc(notice.text)}</div>` : ''}
 ${signInButtons(hub, 'Sign in', next)}
 ${signInWays(hub, true)}
 <h2 class="section-title">Paste your token</h2>
@@ -652,7 +653,16 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
 
   if (route === '/-/login') {
     const session = await sessionOf(req);
-    if (req.method === 'GET') return send(res, 200, loginPage(session?.username ?? null, await hubOf(req), '', localPath(url.searchParams.get('next'))));
+    if (req.method === 'GET') {
+      // A session cookie that no longer signs in: say so if its builder was
+      // suspended, and drop it then (a token that merely failed to check, say
+      // with the database away, is kept).
+      const held = session ? null : cookieValue(req, 'spacehub_session');
+      const suspended = held ? await checkToken(held).then(t => !!t.suspended, () => false) : false;
+      const notice = signInNotice(url.searchParams.get('reason'), !!session, suspended);
+      const page = loginPage(session?.username ?? null, await hubOf(req), '', localPath(url.searchParams.get('next')), notice);
+      return send(res, 200, page, suspended ? { 'set-cookie': sessionCookies(req, '', '', 0) } : {});
+    }
     const form = await readForm(req);
     const token = (form.get('token') ?? '').trim();
     const next = localPath(form.get('next'));
@@ -664,7 +674,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     } catch {
       return send(res, 400, loginPage(null, await hubOf(req), 'That token is not valid on this server.', next));
     }
-    if (username && suspended) return send(res, 403, loginPage(null, await hubOf(req), `The builder ${username} is suspended on this hub. Ask the hub's owner.`, next));
+    if (username && suspended) return send(res, 403, loginPage(null, await hubOf(req), suspendedMessage(username), next));
     if (!username) return send(res, 400, loginPage(null, await hubOf(req), 'That identity has no builder yet. Log in from the terminal first, as above.', next));
     return redirect(res, next, sessionCookies(req, token, username));
   }
@@ -702,7 +712,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
       const q = url.searchParams;
       const out = await githubWeb.finishSignIn(SIGNIN, { state: q.get('state'), cookie: cookieValue(req, githubWeb.STATE_COOKIE), code: q.get('code'), error: q.get('error') });
       const { name: username, suspended } = await checkToken(out.token);
-      if (suspended) throw new Reply(403, `The builder ${username} is suspended on this hub. Ask the hub's owner.`);
+      if (suspended) throw new Reply(403, suspendedMessage(username));
       if (username !== out.username) throw new Reply(502, `The builder ${out.username} cannot sign in on this hub.`);
       return redirect(res, out.next, [...sessionCookies(req, out.token, username), spent], quiet);
     } catch (err) {
@@ -721,7 +731,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
       const q = url.searchParams;
       const out = await finishSignIn(XO_SIGNIN, { state: q.get('state'), cookie: cookieValue(req, STATE_COOKIE), code: q.get('code'), error: q.get('error') });
       const { name: username, suspended } = await checkToken(out.token);
-      if (suspended) throw new Reply(403, `The builder ${username} is suspended on this hub. Ask the hub's owner.`);
+      if (suspended) throw new Reply(403, suspendedMessage(username));
       if (username !== out.username) throw new Reply(502, `The builder ${out.username} cannot sign in on this hub.`);
       return redirect(res, out.next, [...sessionCookies(req, out.token, username), spent], quiet);
     } catch (err) {

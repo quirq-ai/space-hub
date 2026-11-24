@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useLive } from "./use-live";
 import { viewUrl, type View, type SpaceMeta } from "@/api";
+import { setSignedIn } from "@/lib/signed-out";
 
 /** Who is signed in (checked by the web service), and the spaces they belong to. */
 export function useMe() {
@@ -8,6 +9,8 @@ export function useMe() {
   useEffect(() => {
     void fetch("/-/api/me", { cache: "no-store" }).then(response => (response.ok ? response.json() : { name: null })).then(setMe).catch(() => setMe({ name: null }));
   }, []);
+  // A 401 from here on means the session ended (lib/signed-out.ts).
+  useEffect(() => { setSignedIn(!!me?.name && !me.recoveryOnly); }, [me]);
   const profile = useLive<View<SpaceMeta>>(me?.name && !me.recoveryOnly ? viewUrl({ space: me.name, project: "" }) : undefined, 30_000);
   const spaces = me?.name ? [{ space: me.name, kind: "personal", role: "owner" }, ...(profile.data?.meta.memberOf ?? [])] : [];
   // Sub-hubs and backups are for hub operators (SPACEHUB_RECOVERY_OPERATORS) only; the standalone recovery UI is theirs by definition.

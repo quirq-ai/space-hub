@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Check, Globe, Lock, Mail, ShieldCheck, UserPlus, Users } from "lucide-react";
 import { useLive } from "@/hooks/use-live";
 import { send } from "@/lib/workers";
-import { builderAction, HUB_API, inviteState, JOIN_POLICIES, loginOf, operatorsLine, parseHubSettings, readersLine, type HubSettings } from "@/lib/hub-settings";
+import { ALLOWLIST_HELP, builderAction, HUB_API, inviteState, JOIN_POLICIES, loginOf, operatorsLine, parseHubSettings, readersLine, stillHere, stillHereText, type HubSettings } from "@/lib/hub-settings";
 import { Avatar, CopyButton, Empty, ErrorNote, SkeletonRows } from "@/ui/primitives";
 
 /**
@@ -64,7 +64,7 @@ export function HubSettingsSection() {
         <div className="subhub-section-heading"><h3>Builders</h3></div>
         {settings.builders.length === 0 ? <Empty icon={<Users size={20} />} title="No builders yet" /> : <ul className="runner-list">{settings.builders.map(b => {
           const action = builderAction(settings, b);
-          return <li key={b.name} className="runner-row">
+          return <li key={b.name} id={builderRowId(b.name)} className="runner-row">
             <div className="hub-row-main">
               <Avatar name={b.name} size={24} />
               <div><strong>{b.name}</strong>{b.name === settings.owner && <> <span className="label">owner</span></>}{b.suspended && <> <span className="label warn">suspended</span></>}</div>
@@ -84,18 +84,38 @@ export function HubSettingsSection() {
 
 type Run = (key: string, path: string, body: unknown) => Promise<unknown>;
 
+const builderRowId = (name: string) => `hub-builder-${name.toLowerCase()}`;
+
+/** Bring a builder's row (and its Suspend button) into view, marked for a moment. */
+function pointTo(name: string) {
+  const row = document.getElementById(builderRowId(name));
+  if (!row) return;
+  row.scrollIntoView({ behavior: "smooth", block: "center" });
+  row.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
+  row.classList.add("is-pointed");
+  setTimeout(() => row.classList.remove("is-pointed"), 2400);
+}
+
 /** Who may join: the policy, the GitHub logins let in, and invite codes (a new one is shown once, here). */
 function JoinSection({ settings, busy, run }: { settings: HubSettings; busy: string; run: Run }) {
   const { join } = settings;
   const [login, setLogin] = useState("");
   const [days, setDays] = useState("7");
   const [made, setMade] = useState<{ code: string; link: string } | null>(null);
+  // A login just taken off the list whose builder is still here: removing only stops new joins.
+  const [kept, setKept] = useState<string | null>(null);
   const wanted = loginOf(login);
   const now = Date.now();
   const allow = async () => {
     if (!wanted) return;
     if (await run("allow", "/hub/allow", { login: wanted })) setLogin("");
   };
+  const disallow = async (name: string) => {
+    setKept(null);
+    if (await run(`disallow-${name}`, "/hub/disallow", { login: name })) setKept(stillHere(settings, name));
+  };
+  // Gone once they are suspended (or leave), as the settings refresh.
+  const keptHere = kept ? stillHere(settings, kept) : null;
   const invite = async () => {
     const out = await run("invite", "/hub/invite", { hours: Math.round(Number(days) * 24) }) as { code?: unknown; link?: unknown } | null;
     if (out && typeof out.code === "string" && typeof out.link === "string") setMade({ code: out.code, link: out.link });
@@ -114,15 +134,20 @@ function JoinSection({ settings, busy, run }: { settings: HubSettings; busy: str
     </div>
 
     <div className="hub-settings-group">
-      <div className="subhub-section-heading"><h3>GitHub accounts let in</h3></div>
+      <div className="subhub-section-heading"><h3>GitHub accounts let in</h3><p className="quiet">{ALLOWLIST_HELP}</p></div>
       <form className="runner-form" onSubmit={event => { event.preventDefault(); void allow(); }}>
         <input value={login} onChange={event => setLogin(event.target.value)} placeholder="GitHub login, like octocat" aria-label="GitHub login" spellCheck={false} autoCapitalize="off" />
         <button type="submit" className="button primary small" disabled={!!busy || !wanted}>{busy === "allow" ? "Adding…" : "Add"}</button>
       </form>
       {join.allowlist.length === 0 ? <Empty icon={<UserPlus size={20} />} title="No accounts listed" /> : <ul className="runner-list">{join.allowlist.map(name => <li key={name} className="runner-row">
         <div className="hub-row-main"><Avatar name={name} size={24} /><strong>{name}</strong></div>
-        <div className="subhub-actions"><button type="button" className="button small" disabled={!!busy} onClick={() => void run(`disallow-${name}`, "/hub/disallow", { login: name })}>{busy === `disallow-${name}` ? "Removing…" : "Remove"}</button></div>
+        <div className="subhub-actions"><button type="button" className="button small" disabled={!!busy} onClick={() => void disallow(name)}>{busy === `disallow-${name}` ? "Removing…" : "Remove"}</button></div>
       </li>)}</ul>}
+      {keptHere && <div className="notice warning hub-kept" role="status">
+        <p>{stillHereText(keptHere)}</p>
+        <button type="button" onClick={() => pointTo(keptHere)}>Show {keptHere} in Builders</button>
+        <button type="button" onClick={() => setKept(null)}>Dismiss</button>
+      </div>}
     </div>
 
     <div className="hub-settings-group">

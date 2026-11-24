@@ -1,4 +1,10 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { leavingReason, onLeaving } from "@/lib/signed-out";
+
+/** Why the app is leaving for the sign-in page (lib/signed-out.ts), or null while it is not. */
+export function useLeaving() {
+  return useSyncExternalStore(onLeaving, leavingReason);
+}
 
 // Loads in flight that the reader is waiting for (not background re-checks):
 // the progress bar at the top of the window follows this count.
@@ -32,7 +38,8 @@ export function useLive<T>(url: string | undefined, every = 1500): Live<T> {
     setWaiting(1);
     const settleFirst = () => { if (first) { first = false; setWaiting(-1); } };
     const read = async () => {
-      if (controller.signal.aborted || pending) return;
+      // Signed out: the app is on its way to sign in, so stop asking (lib/signed-out.ts).
+      if (controller.signal.aborted || pending || leavingReason()) return;
       clearTimeout(timer);
       if (document.hidden && !first) { timer = setTimeout(read, every || 1500); return; }
       pending = true;

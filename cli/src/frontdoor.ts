@@ -67,6 +67,28 @@ export interface FrontDoorDeps {
 
 /** Shown to a stranger's API call (and in the 401's body). */
 export const MEMBERS_ONLY = 'This hub is for its members. Sign in to see it.';
+/** Said to a suspended builder: on the sign-in page, and when it tries to sign in again. */
+export const SUSPENDED = 'Your access to this hub was suspended by its owner.';
+
+/** A suspended builder's refused sign-in, naming the builder so a person with two accounts knows which. */
+export function suspendedMessage(name: string | null): string {
+  return name ? `${SUSPENDED} You signed in as ${name}; ask the hub's owner to restore it.` : `${SUSPENDED} Ask the hub's owner to restore it.`;
+}
+
+/**
+ * The note at the top of the sign-in page (GET /-/login): why the viewer was
+ * sent there. `reason` is the page's ?reason= (the app and live pages add it
+ * when the hub signs them out); `suspended` is whether the session cookie the
+ * browser still holds belongs to a suspended builder, which says so whatever
+ * the reason. Nothing for a viewer who is signed in, or with no reason.
+ */
+export function signInNotice(reason: string | null, signedIn: boolean, suspended: boolean): { text: string; error: boolean } | null {
+  if (signedIn) return null;
+  if (suspended || reason === 'suspended') return { text: `${SUSPENDED} Ask the hub's owner if you think this is a mistake.`, error: true };
+  if (reason === 'signed-out') return { text: 'Sign in to continue.', error: false };
+  return null;
+}
+
 /** Set on every answer the front door refuses, so tests and clients can tell it from a route's own. */
 export const DENIED_HEADER = 'x-spacehub-members-only';
 const MAX_REMEMBERED = 1000;

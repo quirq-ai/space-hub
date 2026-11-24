@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { builderAction, inviteState, loginOf, operatorsLine, parseHubSettings, readersLine } from "../src/lib/hub-settings.ts";
+import { ALLOWLIST_HELP, builderAction, inviteState, loginOf, operatorsLine, parseHubSettings, readersLine, stillHere, stillHereText } from "../src/lib/hub-settings.ts";
 
 const answer = {
   owner: "alice",
@@ -57,4 +57,15 @@ test("the members-only line says who can read the hub", () => {
   const s = parseHubSettings(answer)!;
   assert.match(readersLine(s), /^Anyone/);
   assert.match(readersLine({ ...s, membersOnly: true }), /^Members only/);
+});
+
+test("taking a login off the allowlist points to the builder still here, if there is one", () => {
+  const s = parseHubSettings(answer)!;
+  assert.equal(stillHere(s, "carol"), "carol", "carol joined: removing her login does not remove her");
+  assert.equal(stillHere(s, "Carol"), "carol", "GitHub logins compare without case");
+  assert.equal(stillHere(s, "bob"), null, "already suspended: nothing to point to");
+  assert.equal(stillHere(s, "alice"), null, "the owner");
+  assert.equal(stillHere(s, "dave"), null, "never joined");
+  assert.match(stillHereText("carol"), /^carol is still a builder here\..*only stops new joins.*Suspend next to carol in Builders/);
+  assert.equal(ALLOWLIST_HELP, "Listing lets an account join. People already in stay until you suspend them below.");
 });

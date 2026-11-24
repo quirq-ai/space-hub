@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { Bot, BookOpen, Hash, Folder, FolderGit2, History, Settings, Users } from "lucide-react";
+import { Bot, BookOpen, Hash, Folder, FolderGit2, History, LogIn, Settings, Users } from "lucide-react";
 import { placeUrl, viewUrl, type HubMeta, type Place, type ProjectMeta, type SpaceMeta, type View } from "@/api";
-import { useLive } from "@/hooks/use-live";
+import { useLeaving, useLive } from "@/hooks/use-live";
+import { leavingText, loginUrl } from "@/lib/signed-out";
 import { channelSeenKey, ChannelsContext, useChannels } from "@/hooks/use-channels";
 import { channelCards, channelOf } from "@/lib/channels";
 import { recentProjects, rememberProject, useMe } from "@/hooks/use-me";
@@ -9,7 +10,7 @@ import { hashOf, navigate, useRoute } from "@/router";
 import { Crumbs, Dock, InsetHeader, Inspector, Progress, Sidebar, type DockItem, type SideSection } from "@/shell/shell";
 import { PathBar } from "@/shell/path-bar";
 import { SearchPalette } from "@/shell/search";
-import { Avatar } from "@/ui/primitives";
+import { Avatar, Empty } from "@/ui/primitives";
 import { HomePage } from "@/pages/home";
 import { ActivityPanel } from "@/pages/common";
 import { SpacePage } from "@/pages/space";
@@ -31,6 +32,8 @@ function markSeen(key: string) { try { localStorage.setItem(SEEN, JSON.stringify
 export function App() {
   const route = useRoute();
   const me = useMe();
+  // The hub signed this viewer out (lib/signed-out.ts): the app is going to sign in, so nothing waits for data.
+  const leaving = useLeaving();
   const recoveryOnly = me.recoveryOnly;
   // Sub-hubs and backups: hidden from everyone but hub operators.
   const operator = me.operator;
@@ -195,15 +198,18 @@ export function App() {
     <main className="main" id="main">
       <InsetHeader crumbs={crumbs} live={state} activityTotal={hasActivity ? meta?.activityTotal : undefined} rail={rail} onToggleSidebar={toggleSidebar} activity={hasActivity ? { open: activityOpen, onToggle: toggleActivity } : undefined} recoveryOnly={recoveryOnly} />
       <div className="main-scroll">
+        {leaving && <div className="page"><Empty icon={<LogIn size={20} />} title={leavingText(leaving)}><p>Taking you to sign in… <a href={loginUrl(leaving, location.pathname + location.search + location.hash)}>Go now</a></p></Empty></div>}
+        {!leaving && <>
         {route.page === "home" && route.tab !== "settings" && !recovery && <HomePage tab={route.tab} view={view as View<HubMeta> | undefined} me={me.name} mySpaces={me.spaces.map(s => s.space)} seen={seen} />}
         {recovery && <SettingsPage onConnectionState={setRecoveryState} signedIn={!recoveryOnly && !!me.name} operator={operator} owner={me.owner} />}
         {!recovery && route.page === "subhub" && operator && <SubhubPage name={route.name} backup={route.backup} />}
         {!recovery && route.page === "space" && <SpacePage name={place.space} tab={route.tab} view={view as View<SpaceMeta> | undefined} error={live.error} me={me.name} signIn={signIn} seen={seen} />}
         {!recovery && route.page === "project" && <ChannelsContext.Provider value={channels}><ProjectPage route={route} view={view as View<ProjectMeta> | undefined} error={live.error} me={me.name} signIn={signIn} refresh={live.refresh} /></ChannelsContext.Provider>}
+        </>}
       </div>
       <Dock places={places} switcher={recoveryOnly ? undefined : { ...switcher, signedIn: !!me.name, onSearch: () => setSearching(true) }} account={{ me, signIn, recoveryOnly, links: hubLinks }} />
     </main>
-    {activity && <Inspector title="Activity" note={route.page === "project" ? placeKey : route.page === "space" ? place.space : undefined} onClose={toggleActivity}><ActivityPanel meta={activityOf} /></Inspector>}
-    {searching && !recoveryOnly && <SearchPalette place={place} onClose={() => setSearching(false)} />}
+    {activity && !leaving && <Inspector title="Activity" note={route.page === "project" ? placeKey : route.page === "space" ? place.space : undefined} onClose={toggleActivity}><ActivityPanel meta={activityOf} /></Inspector>}
+    {searching && !recoveryOnly && !leaving && <SearchPalette place={place} onClose={() => setSearching(false)} />}
   </div>;
 }

@@ -258,8 +258,8 @@ export class LiveHub {
 
   /**
    * End the live pages the builder `username` opened (the owner just
-   * suspended it, hubsettings.ts). Its browsers reconnect signed out, and on
-   * a members-only hub are not let back in. The number ended.
+   * suspended it, hubsettings.ts), each with a last "signed-out" event so
+   * the page goes to sign in and says why. The number ended.
    */
   closeFor(username: string): number {
     return closeBuilder(this.clients, username);
