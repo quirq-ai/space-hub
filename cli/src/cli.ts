@@ -22,6 +22,7 @@ import { cloneProject, findManifest, SpaceSync, writeManifest } from './spacesyn
 import { DEFAULT_HUB_HOST, githubTokenTarget, hubUrl, parseHubUrl, REMOTE } from './url';
 import { deviceSignIn } from './devicelogin';
 import { instanceSubhubCommand } from './instancesubhub';
+import { createProject, parseVisibilityArgs, privateIds, takeVisibilityFlag, visibilityLine } from './visibility';
 
 quietSdkLogs();
 
@@ -46,7 +47,9 @@ AUTH
                   --with-token   log in with a token from "auth token" instead (read from stdin)
                   --builder <name>   register a name without GitHub, on hubs with open sign-up
                     (--agent and --username are aliases of --builder)
-  auth status     Show the server, builder and identity in use
+                  --invite <code>   sign up with an invite code, on a hub that lets in only
+                    invited or listed people
+  auth status    Show the server, builder and identity in use
   auth token      Print the identity token (log in elsewhere with --with-token)
   auth logout     Forget the token for the current server  [--yes]
   auth delete     Delete this builder from the server: its projects, agents and places in
@@ -114,8 +117,12 @@ PROJECTS (alias: repo)
                                     [-d <text>] [--source <dir> [--remote <name>] [--push]] [--clone]
                                     [--template goal | <space>/<project>] [--goal <text>]
                                     (a template: the built-in goal space, or a project with "## Template" in SPACE.md)
-  project list [<space>]                   List projects
-  project view [<project>]                 Default branch, size and refs
+                                    [--private | --public] (default: the hub's setting)
+  project list [<space>]                   List projects, public or private
+  project view [<project>]                 Default branch, who can see it, size and refs
+  project visibility [<project>] [public|private]
+                                    Who can see it; owners of its space change it. Private:
+                                    its space's owners and members, collaborators and their agents
   project clone <project> [<dir>]          git clone a project (extra flags after --)
   project edit [<project>]                 [--description <text>] [--default-branch <name>]
                                     [--builder <GitHub user/org or github.com URL>]
@@ -201,7 +208,13 @@ function formatBytes(n: bigint) {
 // Bytes each project stores (git objects, uncompressed); a project the hub is
 // still measuring has no entry.
 function projectSizes(conn: Conn) {
-  return snapshot(conn, tables.projectSize, () => new Map([...conn.db.projectSize.iter()].map(r => [r.projectId, r.bytes])));
+  return snapshot(conn, tables.visibleProjectSize, () => new Map([...conn.db.visibleProjectSize.iter()].map(r => [r.projectId, r.bytes])));
+}
+
+// Which projects the caller reads are private (visible_project_visibility);
+// none on a hub whose module is older than that view.
+function privateProjects(conn: Conn) {
+  return snapshot(conn, tables.visibleProjectVisibility, () => privateIds(conn.db.visibleProjectVisibility.iter())).catch(() => new Set<bigint>());
 }
 
 function sizeText(sizes: Map<bigint, bigint>, id: bigint) {
@@ -346,13 +359,13 @@ async function spaceOrProject(arg: string | undefined): Promise<{ space: string 
 async function followRefs(fullName: string, onChange: (refName: string, oid: string, sign: string) => void) {
   const { conn } = await open();
   const sp = await requireProject(fullName);
-  conn.db.gitRef.onInsert((ctx, r) => {
+  conn.db.visibleGitRef.onInsert((ctx, r) => {
     if (r.projectId === sp.id && ctx.event.tag !== 'SubscribeApplied') onChange(r.name, r.oid, '+');
   });
-  conn.db.gitRef.onUpdate((_ctx, _old, r) => {
+  conn.db.visibleGitRef.onUpdate((_ctx, _old, r) => {
     if (r.projectId === sp.id) onChange(r.name, r.oid, '~');
   });
-  conn.db.gitRef.onDelete((ctx, r) => {
+  conn.db.visibleGitRef.onDelete((ctx, r) => {
     if (r.projectId === sp.id && ctx.event.tag !== 'UnsubscribeApplied') onChange(r.name, '', '-');
   });
   await new Promise<void>((resolve, reject) =>
@@ -360,7 +373,7 @@ async function followRefs(fullName: string, onChange: (refName: string, oid: str
       .subscriptionBuilder()
       .onApplied(() => resolve())
       .onError(ctx => reject(new Error(`subscription failed: ${(ctx as { event?: unknown }).event}`)))
-      .subscribe(tables.gitRef.where(r => r.projectId.eq(sp.id)))
+      .subscribe(tables.visibleGitRef.where(r => r.projectId.eq(sp.id)))
   );
   return { conn, sp };
 }
@@ -431,6 +444,7 @@ async function authLogin(args: string[]) {
   const database = opt(args, '--db');
   const wanted = opt(args, '--builder', '-b', '--agent', '-a', '--username', '-u')?.toLowerCase();
   const withToken = bool(args, '--with-token');
+  const invite = opt(args, '--invite')?.trim() ?? '';
   if (server || database) saveSettings({ server, database });
   if (withToken) {
     let token = '';
@@ -439,7 +453,7 @@ async function authLogin(args: string[]) {
     if (!token) die('--with-token reads a token from stdin, and none arrived');
     saveToken(loadConfig().server, token);
   }
-  if (!withToken && !wanted) return githubSignIn();
+  if (!withToken && !wanted) return githubSignIn(invite);
   const { conn, identity, server: at, database: db } = await open();
   let user = await findUser(conn, identity);
   if (user && wanted && wanted !== user.username) {
@@ -452,7 +466,9 @@ async function authLogin(args: string[]) {
       name = (await ask('Choose a builder name: ')).toLowerCase();
     }
     if (!name) die('no builder name given');
-    await conn.reducers.registerUser({ username: name });
+    // Only a sign-up with a code calls the reducer that takes one (older hubs have only registerUser).
+    if (invite) await conn.reducers.registerWithInvite({ username: name, invite });
+    else await conn.reducers.registerUser({ username: name });
     user = await findUser(conn, identity);
   }
   out(`Logged in to ${at} (database ${db}) as builder ${user?.username ?? wanted}`);
@@ -486,7 +502,7 @@ function webUrl(server: string) {
 // Sign up or log in with GitHub: the hub learns whose GitHub account it is
 // (from its own device flow, or by asking GitHub about gh's token) and answers with that account's builder and token, making the builder the
 // first time. The saved token is kept when it already is a builder.
-async function githubSignIn() {
+async function githubSignIn(invite = '') {
   const cfg = loadConfig();
   if (cfg.token) {
     const { conn, identity, server: at, database: db } = await open();
@@ -519,7 +535,7 @@ async function githubSignIn() {
       );
       if (!/^y(es)?$/i.test(answer)) throw new Error('nothing was done');
     };
-    body = (await deviceSignIn(web, host, note, confirm)) as Answer | null;
+    body = (await deviceSignIn(web, host, note, confirm, undefined, invite)) as Answer | null;
   } catch (err) {
     die((err as Error).message);
   }
@@ -535,7 +551,9 @@ async function githubSignIn() {
     process.stderr.write(`Checking your GitHub account with ${host} (the GitHub token is used once, not kept)\n`);
     let res: Response;
     try {
-      res = await fetch(url, { method: 'POST', headers: { authorization: `Bearer ${github}` }, redirect: 'error', signal: AbortSignal.timeout(60_000) });
+      // An invite code goes as JSON; without one the request is as before.
+      const headers: Record<string, string> = { authorization: `Bearer ${github}`, ...(invite ? { 'content-type': 'application/json' } : {}) };
+      res = await fetch(url, { method: 'POST', headers, ...(invite ? { body: JSON.stringify({ invite }) } : {}), redirect: 'error', signal: AbortSignal.timeout(60_000) });
     } catch {
       die(`could not reach ${url}`);
     }
@@ -596,12 +614,12 @@ async function authDelete(args: string[]) {
   const { conn, server } = await open();
   const owned = async () => ({
     projects: await projectsIn(conn, name),
-    agents: await snapshot(conn, tables.space.where(s => s.kind.eq('agent')), () =>
-      [...conn.db.space.iter()].filter(s => s.kind === 'agent' && s.parent === name).map(s => s.name)
+    agents: await snapshot(conn, tables.visibleSpace.where(s => s.kind.eq('agent')), () =>
+      [...conn.db.visibleSpace.iter()].filter(s => s.kind === 'agent' && s.parent === name).map(s => s.name)
     ),
   });
   const refuseLastOwner = async () => {
-    const roles = await snapshot(conn, tables.spaceRole, () => [...conn.db.spaceRole.iter()]);
+    const roles = await snapshot(conn, tables.visibleSpaceRole, () => [...conn.db.visibleSpaceRole.iter()]);
     for (const r of roles.filter(r => r.member === name && r.role === 'owner')) {
       if (roles.filter(o => o.space === r.space && o.role === 'owner').length === 1) {
         die(`${name} is the last owner of ${r.space}; first add another owner: spacehub space member add ${r.space} <builder> --owner`);
@@ -643,7 +661,8 @@ async function projectCreate(args: string[]) {
   const cloneAfter = bool(args, '--clone', '-c');
   const goal = opt(args, '--goal', '-g');
   const template = opt(args, '--template', '-t') ?? (goal !== undefined ? 'goal' : undefined);
-  const target = (args[0] ?? die('usage: spacehub project create <name> | <space>/<name>')).replace(/\.git$/, '');
+  const visibility = takeVisibilityFlag(args);
+  const target =(args[0] ?? die('usage: spacehub project create <name> | <space>/<name>')).replace(/\.git$/, '');
   const [spaceArg, name] = target.includes('/') ? target.split('/', 2) : [undefined, target];
   if (pushAfter && !source) die('--push needs --source <dir>');
   if (template !== undefined && source) die('--template starts the project with its own first commit; leave out --source');
@@ -658,11 +677,13 @@ async function projectCreate(args: string[]) {
   }
   const space = (spaceArg ?? (await username())).toLowerCase();
   const { conn } = await open();
-  if (template !== undefined) await conn.reducers.createProjectFromTemplate({ space, name, description, template, goal: goal ?? '' });
-  else await conn.reducers.createProject({ space, name, description });
+  await createProject(conn.reducers, { space, name, description, template, goal, visibility });
   const fullName = `${space}/${name}`;
   const url = hubUrl(loadConfig().server, fullName);
-  out(`Created project ${fullName}${template !== undefined ? ` from ${template === 'goal' || !template ? 'the goal space template' : template}` : ''}`);
+  // Say what it became: without a flag, that is the hub's default.
+  const made = await findProject(conn, fullName);
+  const isPrivate = made ? (await privateProjects(conn)).has(made.id) : visibility === 'private';
+  out(`Created project ${fullName}${template !== undefined ? ` from ${template === 'goal' || !template ? 'the goal space template' : template}` : ''} (${isPrivate ? 'private' : 'public'})`);
   if (source) {
     await runOrDie('git', ['-C', source, 'remote', 'add', remote!, url]);
     out(`Added remote ${remote} -> ${url}`);
@@ -679,17 +700,29 @@ async function projectCreate(args: string[]) {
 async function projectList(args: string[]) {
   const { conn } = await open();
   const owner = args[0] ? await spaceOf(conn, args[0].toLowerCase()) : undefined;
-  const query = owner ? tables.project.where(s => s.owner.eq(owner)) : tables.project;
-  const spaces = await snapshot(conn, query, () => [...conn.db.project.iter()].filter(s => !owner || s.owner === owner));
+  const query = owner ? tables.visibleProject.where(s => s.owner.eq(owner)) : tables.visibleProject;
+  const spaces = await snapshot(conn, query, () => [...conn.db.visibleProject.iter()].filter(s => !owner || s.owner === owner));
   if (spaces.length === 0) {
     out(owner ? `no projects in ${owner}` : 'no projects yet');
     return;
   }
   const sizes = await projectSizes(conn);
+  const hidden = await privateProjects(conn);
   const width = Math.max(...spaces.map(s => s.fullName.length));
   for (const s of spaces.sort((a, b) => Number(b.pushedAt.microsSinceUnixEpoch - a.pushedAt.microsSinceUnixEpoch))) {
-    out(`${s.fullName.padEnd(width)}  ${sizeText(sizes, s.id).padStart(9)}  ${when(s.pushedAt)}  ${s.description}`.trimEnd());
+    out(`${s.fullName.padEnd(width)}  ${(hidden.has(s.id) ? 'private' : 'public').padEnd(7)}  ${sizeText(sizes, s.id).padStart(9)}  ${when(s.pushedAt)}  ${s.description}`.trimEnd());
   }
+}
+
+// Show who can see a project, or (owners of its space) change it.
+async function projectVisibility(args: string[]) {
+  const { project, visibility } = parseVisibilityArgs(args);
+  const fullName = await resolveProject(project);
+  const sp = await requireProject(fullName);
+  const { conn } = await open();
+  if (!visibility) return out(`${sp.fullName} is ${visibilityLine((await privateProjects(conn)).has(sp.id) ? 'private' : 'public')}`);
+  await conn.reducers.setProjectVisibility({ project: sp.fullName, visibility });
+  out(`${sp.fullName} is now ${visibilityLine(visibility)}`);
 }
 
 // Same rule as the web UI: the credited GitHub account, else the GitHub
@@ -699,12 +732,12 @@ function findUserByIdentity(conn: Conn, identity: Parameters<typeof findUser>[1]
 }
 
 async function builderLine(conn: Conn, sp: { id: bigint; owner: string; ownerIdentity: Parameters<typeof findUser>[1] }) {
-  const row = await snapshot(conn, tables.projectBuilder.where(r => r.projectId.eq(sp.id)), () =>
-    [...conn.db.projectBuilder.iter()].find(r => r.projectId === sp.id)
+  const row = await snapshot(conn, tables.visibleProjectBuilder.where(r => r.projectId.eq(sp.id)), () =>
+    [...conn.db.visibleProjectBuilder.iter()].find(r => r.projectId === sp.id)
   );
   if (row?.url.startsWith('https://github.com/')) return `${row.name} (${row.url.replace('https://', '')})`;
-  const imp = await snapshot(conn, tables.projectImport.where(r => r.projectId.eq(sp.id)), () =>
-    [...conn.db.projectImport.iter()].find(r => r.projectId === sp.id)
+  const imp = await snapshot(conn, tables.visibleProjectImport.where(r => r.projectId.eq(sp.id)), () =>
+    [...conn.db.visibleProjectImport.iter()].find(r => r.projectId === sp.id)
   );
   const gh = imp ? /^https:\/\/github\.com\/([^/]+)\//.exec(imp.source) : null;
   if (gh) return `${gh[1]} (github.com/${gh[1]})`;
@@ -724,6 +757,7 @@ async function projectView(args: string[]) {
   out(`url       ${hubUrl(loadConfig().server, sp.fullName)}`);
   out(`default   ${sp.defaultBranch}`);
   out(`space     ${sp.owner}`);
+  out(`visible   ${visibilityLine((await privateProjects(conn)).has(sp.id) ? 'private' : 'public')}`);
   const members = await memberRows(conn, sp.id);
   out(`collaborators  ${members.map(m => m.agent).join(', ') || 'none'}`);
   out(`builder   ${await builderLine(conn, sp)}`);
@@ -732,8 +766,8 @@ async function projectView(args: string[]) {
   out(`pushed    ${when(sp.pushedAt)}`);
   out();
   if (refs.length === 0) out('(empty: push something to it)');
-  const diverged = await snapshot(conn, tables.refSync.where(r => r.projectId.eq(sp.id)), () =>
-    new Set([...conn.db.refSync.iter()].filter(r => r.projectId === sp.id && r.status === 'diverged').map(r => r.ref))
+  const diverged = await snapshot(conn, tables.visibleRefSync.where(r => r.projectId.eq(sp.id)), () =>
+    new Set([...conn.db.visibleRefSync.iter()].filter(r => r.projectId === sp.id && r.status === 'diverged').map(r => r.ref))
   );
   for (const r of refs) out(`${r.oid.slice(0, 12)}  ${r.name.replace(/^refs\/(heads|tags)\//, '$1/')}  ${when(r.updatedAt)}${diverged.has(r.name) ? '  (diverged from GitHub)' : ''}`);
 }
@@ -833,7 +867,7 @@ async function autosync(found: { remote: string; project: string }, branch: stri
   const { conn, sp } = await followRefs(found.project, refName => {
     if (refName === ref) wake();
   });
-  const remoteOid = () => [...conn.db.gitRef.iter()].find(r => r.projectId === sp.id && r.name === ref)?.oid ?? '';
+  const remoteOid = () => [...conn.db.visibleGitRef.iter()].find(r => r.projectId === sp.id && r.name === ref)?.oid ?? '';
   await announce(found.project, 'autosync', branch);
   note(`Autosync ${found.project} ${branch}: committing every ${seconds}s, rebasing onto every push (ctrl-c to stop)`);
 
@@ -857,13 +891,13 @@ async function projectWatch(args: string[]) {
   });
   await announce(fullName, 'watch');
   out(`Watching ${fullName} (ctrl-c to stop)`);
-  for (const r of conn.db.gitRef.iter()) if (r.projectId === sp.id) out(`          ${r.name} ${r.oid.slice(0, 12)}`);
+  for (const r of conn.db.visibleGitRef.iter()) if (r.projectId === sp.id) out(`          ${r.name} ${r.oid.slice(0, 12)}`);
   await new Promise(() => {});
 }
 
 function memberRows(conn: Conn, projectId: bigint) {
-  return snapshot(conn, tables.projectMember.where(r => r.projectId.eq(projectId)), () =>
-    [...conn.db.projectMember.iter()].filter(r => r.projectId === projectId).sort((a, b) => a.agent.localeCompare(b.agent))
+  return snapshot(conn, tables.visibleProjectMember.where(r => r.projectId.eq(projectId)), () =>
+    [...conn.db.visibleProjectMember.iter()].filter(r => r.projectId === projectId).sort((a, b) => a.agent.localeCompare(b.agent))
   );
 }
 
@@ -903,8 +937,8 @@ async function projectWho(args: string[]) {
   const sp = await requireProject(await resolveProject(args[0]));
   const { conn } = await open();
   const now = Date.now() * 1000;
-  const rows = await snapshot(conn, tables.presence, () =>
-    [...conn.db.presence.iter()].filter(
+  const rows = await snapshot(conn, tables.visiblePresence, () =>
+    [...conn.db.visiblePresence.iter()].filter(
       r => (r.projectId === sp.id || (r.projectId === 0n && r.space === sp.owner)) && now - Number(r.seenAt.microsSinceUnixEpoch) <= 180_000_000
     )
   );
@@ -921,7 +955,7 @@ async function projectWho(args: string[]) {
 
 // Flags that take a value, so the first positional argument can be found
 // before a command decides whether it names a space or a project.
-const VALUE_FLAGS = new Set(['-d', '--description', '--default-branch', '--builder', '-r', '--remote', '--exec', '--interval', '-s', '--source']);
+const VALUE_FLAGS = new Set(['-d', '--description', '--default-branch', '--builder', '-r', '--remote', '--exec', '--interval', '-s', '--source', '--invite']);
 
 function firstPositional(args: string[]): string | undefined {
   for (let i = 0; i < args.length; i++) {
@@ -950,15 +984,15 @@ async function spaceCreate(args: string[]) {
 async function spaceList(args: string[]) {
   const who = args[0]?.toLowerCase();
   const { conn } = await open();
-  const spaces = await snapshot(conn, tables.space, () => [...conn.db.space.iter()]);
-  const counts = await snapshot(conn, tables.project, () => {
+  const spaces = await snapshot(conn, tables.visibleSpace, () => [...conn.db.visibleSpace.iter()]);
+  const counts = await snapshot(conn, tables.visibleProject, () => {
     const n = new Map<string, number>();
-    for (const p of conn.db.project.iter()) n.set(p.owner, (n.get(p.owner) ?? 0) + 1);
+    for (const p of conn.db.visibleProject.iter()) n.set(p.owner, (n.get(p.owner) ?? 0) + 1);
     return n;
   });
   let shown = spaces;
   if (who) {
-    const mine = await snapshot(conn, tables.spaceRole.where(r => r.member.eq(who)), () => new Set([...conn.db.spaceRole.iter()].filter(r => r.member === who).map(r => r.space)));
+    const mine = await snapshot(conn, tables.visibleSpaceRole.where(r => r.member.eq(who)), () => new Set([...conn.db.visibleSpaceRole.iter()].filter(r => r.member === who).map(r => r.space)));
     shown = spaces.filter(s => s.name === who || mine.has(s.name) || (s.kind === 'agent' && (s.parent === who || mine.has(s.parent))));
   }
   if (shown.length === 0) {
@@ -988,7 +1022,7 @@ async function spaceView(args: string[]) {
   const owners = sp.kind === 'personal' ? [sp.name] : roles.filter(r => r.role === 'owner').map(r => r.member);
   out(`owners    ${owners.join(', ') || (sp.kind === 'agent' ? `the owners of ${sp.parent}` : 'none')}`);
   out(`members   ${roles.filter(r => r.role === 'member').map(r => r.member).join(', ') || 'none'}`);
-  const link = await snapshot(conn, tables.spaceLink.where(r => r.space.eq(sp.name)), () => [...conn.db.spaceLink.iter()].find(r => r.space === sp.name));
+  const link = await snapshot(conn, tables.visibleSpaceLink.where(r => r.space.eq(sp.name)), () => [...conn.db.visibleSpaceLink.iter()].find(r => r.space === sp.name));
   if (link) {
     const synced = link.syncedAt.microsSinceUnixEpoch > 0n ? `synced ${when(link.syncedAt)}` : 'not synced yet';
     out(`github    ${link.source.replace('https://', '')} (${link.status === 'done' ? synced : link.status}: ${link.message})`);
@@ -1149,8 +1183,8 @@ async function spaceWho(args: string[]) {
   const projects = new Map((await projectsIn(conn, target.space)).map(p => [p.id, p.name]));
   projects.set(0n, '(all projects)');
   const now = Date.now() * 1000;
-  const rows = await snapshot(conn, tables.presence, () =>
-    [...conn.db.presence.iter()].filter(
+  const rows = await snapshot(conn, tables.visiblePresence, () =>
+    [...conn.db.visiblePresence.iter()].filter(
       r => (r.projectId === 0n ? r.space === target.space : projects.has(r.projectId)) && now - Number(r.seenAt.microsSinceUnixEpoch) <= 180_000_000
     )
   );
@@ -1216,10 +1250,10 @@ async function agentCreate(args: string[]) {
 }
 
 async function agentRows(conn: Conn) {
-  const agents = await snapshot(conn, tables.space.where(s => s.kind.eq('agent')), () => [...conn.db.space.iter()].filter(s => s.kind === 'agent'));
-  const roles = await snapshot(conn, tables.spaceRole, () => [...conn.db.spaceRole.iter()]);
+  const agents = await snapshot(conn, tables.visibleSpace.where(s => s.kind.eq('agent')), () => [...conn.db.visibleSpace.iter()].filter(s => s.kind === 'agent'));
+  const roles = await snapshot(conn, tables.visibleSpaceRole, () => [...conn.db.visibleSpaceRole.iter()]);
   const now = Date.now() * 1000;
-  const here = await snapshot(conn, tables.presence, () => [...conn.db.presence.iter()].filter(p => p.mode === 'agent' && now - Number(p.seenAt.microsSinceUnixEpoch) <= 180_000_000));
+  const here = await snapshot(conn, tables.visiblePresence, () => [...conn.db.visiblePresence.iter()].filter(p => p.mode === 'agent' && now - Number(p.seenAt.microsSinceUnixEpoch) <= 180_000_000));
   return agents
     .sort((a, b) => a.name.localeCompare(b.name))
     .map(a => ({
@@ -1299,7 +1333,7 @@ async function agentRun(args: string[]) {
   const { conn, identity, server, database } = await open();
   await requireAgent(name);
   // Logged in as the agent itself (XO Swarm), or as one of its owners.
-  const self = await snapshot(conn, tables.agent.where(a => a.name.eq(name)), () => [...conn.db.agent.iter()].find(a => a.name === name));
+  const self = await snapshot(conn, tables.visibleAgent.where(a => a.name.eq(name)), () => [...conn.db.visibleAgent.iter()].find(a => a.name === name));
   const token = self?.identity.isEqual(identity) ? loadConfig().token! : await fetchAgentToken(name);
   if (!token) die(`no token for ${name}`);
   note(`Running ${name} in ${dir} on ${host} (ctrl-c to stop)`);
@@ -1354,8 +1388,8 @@ async function doctor() {
       account = { builder: user?.username ?? null, owner: [], member: [] };
       if (user) {
         const name = user.username;
-        const roles = await snapshot(conn, tables.spaceRole.where(r => r.member.eq(name)), () =>
-          [...conn.db.spaceRole.iter()].filter(r => r.member === name).sort((a, b) => a.space.localeCompare(b.space))
+        const roles = await snapshot(conn, tables.visibleSpaceRole.where(r => r.member.eq(name)), () =>
+          [...conn.db.visibleSpaceRole.iter()].filter(r => r.member === name).sort((a, b) => a.space.localeCompare(b.space))
         );
         account.owner = [name, ...roles.filter(r => r.role === 'owner').map(r => r.space)];
         account.member = roles.filter(r => r.role !== 'owner').map(r => r.space);
@@ -1402,7 +1436,7 @@ async function questionList(args: string[]) {
   const asJson = bool(args, '--json');
   const space = (args[0] ?? 'explain').toLowerCase();
   const { conn } = await open();
-  const rows = (await snapshot(conn, tables.question.where(q => q.space.eq(space)), () => [...conn.db.question.iter()].filter(q => q.space === space)))
+  const rows = (await snapshot(conn, tables.visibleQuestion.where(q => q.space.eq(space)), () => [...conn.db.visibleQuestion.iter()].filter(q => q.space === space)))
     .sort((a, b) => Number(a.askedAt.microsSinceUnixEpoch - b.askedAt.microsSinceUnixEpoch))
     .map(questionJson)
     .filter(q => !onlyOpen || q.state === 'waiting');
@@ -1425,13 +1459,13 @@ async function questionWatch(args: string[]) {
       spawn(exec, { shell: true, stdio: 'inherit', env: { ...process.env, QUESTION_PROJECT: line.project, QUESTION_ID: line.id, QUESTION_TEXT: line.question, QUESTION_REPO: line.repo, QUESTION_ASKER: line.asker } });
     }
   };
-  conn.db.question.onInsert((_ctx, q) => { if (q.space === space) handle(q); });
+  conn.db.visibleQuestion.onInsert((_ctx, q) => { if (q.space === space) handle(q); });
   await new Promise<void>((resolve, reject) =>
     conn
       .subscriptionBuilder()
       .onApplied(() => resolve())
       .onError(ctx => reject(new Error(`subscription failed: ${(ctx as { event?: unknown }).event}`)))
-      .subscribe(tables.question.where(q => q.space.eq(space)))
+      .subscribe(tables.visibleQuestion.where(q => q.space.eq(space)))
   );
   note(`watching questions in ${space}; Ctrl-C to stop`);
   await new Promise(() => {});
@@ -1508,8 +1542,9 @@ async function main() {
       case 'watch': return projectWatch(args);
       case 'who': return projectWho(args);
       case 'member': case 'members': return projectMember(args);
+      case 'visibility': return projectVisibility(args);
     }
-    die(`usage: spacehub project <create|list|view|clone|edit|delete|sync|watch|who|member>`);
+    die(`usage: spacehub project <create|list|view|clone|edit|delete|sync|watch|who|member|visibility>`);
   }
 
   if (group === 'agent' || group === 'agents') {

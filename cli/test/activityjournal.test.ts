@@ -70,7 +70,7 @@ test('fed from a connection: the catch-up in one append, then live changes', asy
   const dir = tmp();
   const journal = new ActivityJournal(dir, () => new Date('2026-11-06T12:00:00Z'));
   const handlers: Record<string, (...args: never[]) => void> = {};
-  const conn = { db: { activity: {
+  const conn = { db: { visibleActivity: {
     onInsert: (cb: never) => { handlers.insert = cb; },
     onUpdate: (cb: never) => { handlers.update = cb; },
     onDelete: (cb: never) => { handlers.delete = cb; },

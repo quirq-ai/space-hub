@@ -8,10 +8,20 @@
 // table gains a column. Adding a table, reducer or procedure breaks no one.
 // OLDEST_PROTOCOL is the oldest client protocol this hub still serves; raise
 // it with PROTOCOL unless the hub keeps the old names working.
-export const PROTOCOL = 1;
-export const OLDEST_PROTOCOL = 1;
+// 2: every table went private; clients read the visible_<table> views.
+export const PROTOCOL = 2;
+export const OLDEST_PROTOCOL = 2;
 
 // The generated client bindings this protocol was decided for. The CLI tests
 // fail when the bindings change (npm run generate) and this does not, so each
 // schema change decides on a bump: then set this to the hash the test prints.
-export const BINDINGS_HASH = '89b4a94cea8d50dc';
+// No bump for project_visibility / project_access (private tables), the
+// setProjectVisibility and rebuildAccess reducers and the checkAccess
+// procedure: all additions, which break no client. Nor for setDefaultVisibility,
+// createProjectWithVisibility and createProjectFromTemplateWithVisibility
+// (new reducers beside createProject / createProjectFromTemplate, whose
+// arguments stay as they were), nor for the setWebSecret reducer (the web
+// service's, over HTTP). Nor for the visible_project_visibility view: a new
+// view, which older clients never subscribe to (and this CLI reads it as
+// "nothing private" from a hub that predates it).
+export const BINDINGS_HASH = 'c624904ae1c37b1f';

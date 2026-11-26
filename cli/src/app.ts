@@ -14,10 +14,15 @@
 //   POST /-/api/space-picture              an org owner picks the GitHub organization whose picture
 //                                          the org shows, or clears it (set_space_github)
 //   POST /-/api/start-chat                 start an org's, an agent's or a project's chat (start_chat)
+//   POST /-/api/project-visibility         an owner of the project's space makes it public or private
+//                                          (set_project_visibility)
+//   POST /-/api/project-member             an owner of the project's space adds or removes a collaborator,
+//                                          or a collaborator leaves (add/remove_project_member)
 //
 // The browser never talks to SpacetimeDB: reads come from the module over
-// HTTP, and a chat is saved with the session's own token, so the module's
-// push rules decide who may write.
+// HTTP, asked for as the verified viewer (modulepage.ts), so a private project
+// is there only for those who may read it; a chat is saved with the session's
+// own token, so the module's push rules decide who may write.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import type http from 'node:http';
@@ -27,6 +32,8 @@ import type { Conn } from './conn';
 import { findUser } from './conn';
 import { forgetAvatar, handleAvatar } from './avatar';
 import { visitorLanding } from './visitor';
+import { asViewer, moduleUrl, type ModuleLink } from './modulepage';
+import { projectMemberAction } from './projectmember';
 
 export const APP_CSP =
   "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self'; connect-src 'self'; frame-src 'self' https:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
@@ -48,9 +55,16 @@ export interface AppDeps {
   db: string;
   /** Run `fn` on a connection made with `token`, closed afterwards. */
   withConn: <T>(token: string, fn: (conn: Conn, identity: Parameters<typeof findUser>[1]) => Promise<T>) => Promise<T>;
+  /** The signed-in builder, verified against the database (web.ts, viewer.ts); the only way this file learns who is asking. */
   sessionOf: (req: http.IncomingMessage) => Promise<{ token: string; username: string } | null>;
   /** Whether the request comes from a hub operator (SPACEHUB_RECOVERY_OPERATORS), who alone sees Sub-hubs and backups. */
   operator?: (req: http.IncomingMessage) => Promise<boolean>;
+  /** The hub owner's builder name, or null (hubowner.ts); the owner alone sees Settings → Hub. */
+  owner?: () => Promise<string | null>;
+  /** The module, asked for data as a viewer (modulepage.ts). */
+  module: ModuleLink;
+  /** The verified builder's name, or null (frontdoor.ts builder, cached briefly). */
+  viewerName: (req: http.IncomingMessage) => Promise<string | null>;
 }
 
 /** Where the built app lives: SPACEHUB_APP_DIR, else app/dist beside this checkout. */
@@ -126,6 +140,17 @@ const ACTIONS: Record<string, { what: string; usage: string; call: (input: Recor
     usage: 'Send a space, and a project or "".',
     call: ({ space, project }) => (typeof space === 'string' && typeof project === 'string' ? conn => conn.reducers.startChat({ space, project }) : null),
   },
+  // Only owners of the project's space may; the module refuses anyone else (setProjectVisibility).
+  '/-/api/project-visibility': {
+    what: 'change who can see the project',
+    usage: 'Send a project (space/name) and a visibility, "public" or "private".',
+    call: ({ project, visibility }) => (typeof project === 'string' && (visibility === 'public' || visibility === 'private')
+      ? conn => conn.reducers.setProjectVisibility({ project, visibility })
+      : null),
+  },
+  // Owners of the project's space add and remove collaborators, and a collaborator may leave; the module
+  // refuses anyone else, and an agent only its own owners add (addProjectMember, removeProjectMember).
+  '/-/api/project-member': projectMemberAction,
 };
 
 /** Handle the app's routes; false when the request is not one of them. */
@@ -155,7 +180,8 @@ export async function handleApp(deps: AppDeps, req: http.IncomingMessage, res: h
   }
 
   if (req.method === 'GET' && route === '/-/api/view') {
-    const upstream = await fetch(`${deps.internalHttp}/v1/database/${encodeURIComponent(deps.db)}/route/api${url.search}`, { headers: { cookie: req.headers.cookie ?? '' } });
+    // As the verified viewer, never as a cookie says: a private project it may not read is not there.
+    const upstream = await fetch(moduleUrl(deps.module, 'api', url.search), { headers: asViewer(deps.module, await deps.viewerName(req)) });
     const body = await upstream.text();
     const etag = upstream.headers.get('etag');
     const matches = etag && (req.headers['if-none-match'] ?? '').split(',').some(value => value.trim().replace(/^W\//, '') === etag);
@@ -171,15 +197,16 @@ export async function handleApp(deps: AppDeps, req: http.IncomingMessage, res: h
 
   if (req.method === 'GET' && route === '/-/api/me') {
     const session = await deps.sessionOf(req);
-    json(res, 200, { name: session?.username ?? null, operator: session && deps.operator ? await deps.operator(req) : false });
+    const owner = session && deps.owner ? (await deps.owner().catch(() => null)) === session.username : false;
+    json(res, 200, { name: session?.username ?? null, operator: session && deps.operator ? await deps.operator(req) : false, ...(owner ? { owner: true } : {}) });
     return true;
   }
 
   if (route === '/-/api/chat') {
     if (req.method !== 'POST') return json(res, 405, { error: 'Send chat messages with POST.' }), true;
     if (req.headers['content-type']?.split(';')[0] !== 'application/json') return json(res, 415, { error: 'Send JSON.' }), true;
-    const token = /(?:^|;\s*)spacehub_session=([^;]*)/.exec(req.headers.cookie ?? '')?.[1];
-    if (!token) return json(res, 401, { error: 'Sign in to save chats.' }), true;
+    const session = await deps.sessionOf(req);
+    if (!session) return json(res, 401, { error: 'Sign in to save chats.' }), true;
     let input: ReturnType<typeof parseChat>;
     try {
       input = parseChat(await readJson(req));
@@ -188,12 +215,7 @@ export async function handleApp(deps: AppDeps, req: http.IncomingMessage, res: h
     }
     if (!input) return json(res, 400, { error: 'Send a space, project, conversation and its new messages.' }), true;
     try {
-      const saved = await deps.withConn(decodeURIComponent(token), async (conn, identity) => {
-        if (!(await findUser(conn, identity))) return false;
-        await conn.reducers.appendChat(input);
-        return true;
-      });
-      if (!saved) return json(res, 401, { error: 'Sign in to save chats.' }), true;
+      await deps.withConn(session.token, conn => conn.reducers.appendChat(input));
       return json(res, 200, { ok: true }), true;
     } catch (error) {
       const message = (error instanceof Error ? error.message : String(error)).replace(/^Error: /, '');
@@ -205,8 +227,8 @@ export async function handleApp(deps: AppDeps, req: http.IncomingMessage, res: h
   if (action) {
     if (req.method !== 'POST') return json(res, 405, { error: `Send it with POST to ${action.what}.` }), true;
     if (req.headers['content-type']?.split(';')[0] !== 'application/json') return json(res, 415, { error: 'Send JSON.' }), true;
-    const token = /(?:^|;\s*)spacehub_session=([^;]*)/.exec(req.headers.cookie ?? '')?.[1];
-    if (!token) return json(res, 401, { error: `Sign in to ${action.what}.` }), true;
+    const session = await deps.sessionOf(req);
+    if (!session) return json(res, 401, { error: `Sign in to ${action.what}.` }), true;
     let input: unknown;
     try {
       input = await readJson(req);
@@ -216,12 +238,7 @@ export async function handleApp(deps: AppDeps, req: http.IncomingMessage, res: h
     const call = object(input) ? action.call(input) : null;
     if (!call) return json(res, 400, { error: action.usage }), true;
     try {
-      const done = await deps.withConn(decodeURIComponent(token), async (conn, identity) => {
-        if (!(await findUser(conn, identity))) return false;
-        await call(conn);
-        return true;
-      });
-      if (!done) return json(res, 401, { error: `Sign in to ${action.what}.` }), true;
+      await deps.withConn(session.token, conn => call(conn));
       action.after?.(input as Record<string, unknown>);
       return json(res, 200, { ok: true }), true;
     } catch (error) {

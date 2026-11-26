@@ -1,15 +1,16 @@
 import { useEffect, useRef, useState } from "react";
-import { Bot, BookOpen, Hash, Folder, FolderGit2, History, Settings, Users } from "lucide-react";
+import { Bot, BookOpen, Hash, Folder, FolderGit2, History, LogIn, Settings, Users } from "lucide-react";
 import { placeUrl, viewUrl, type HubMeta, type Place, type ProjectMeta, type SpaceMeta, type View } from "@/api";
-import { useLive } from "@/hooks/use-live";
+import { useLeaving, useLive } from "@/hooks/use-live";
+import { leavingText, loginUrl } from "@/lib/signed-out";
 import { channelSeenKey, ChannelsContext, useChannels } from "@/hooks/use-channels";
 import { channelCards, channelOf } from "@/lib/channels";
-import { recentProjects, rememberProject, useMe } from "@/hooks/use-me";
+import { privateProjects, recentProjects, rememberProject, rememberVisibility, useMe } from "@/hooks/use-me";
 import { hashOf, navigate, useRoute } from "@/router";
 import { Crumbs, Dock, InsetHeader, Inspector, Progress, Sidebar, type DockItem, type SideSection } from "@/shell/shell";
 import { PathBar } from "@/shell/path-bar";
 import { SearchPalette } from "@/shell/search";
-import { Avatar } from "@/ui/primitives";
+import { Avatar, Empty } from "@/ui/primitives";
 import { HomePage } from "@/pages/home";
 import { ActivityPanel } from "@/pages/common";
 import { SpacePage } from "@/pages/space";
@@ -31,6 +32,8 @@ function markSeen(key: string) { try { localStorage.setItem(SEEN, JSON.stringify
 export function App() {
   const route = useRoute();
   const me = useMe();
+  // The hub signed this viewer out (lib/signed-out.ts): the app is going to sign in, so nothing waits for data.
+  const leaving = useLeaving();
   const recoveryOnly = me.recoveryOnly;
   // Sub-hubs and backups: hidden from everyone but hub operators.
   const operator = me.operator;
@@ -105,9 +108,10 @@ export function App() {
     // Only under a place's own name: a second name moves to it first (above).
     if (recoveryOnly || route.page === "home" || route.page === "subhub" || own !== place.space.toLowerCase()) return;
     if (route.page === "project") rememberProject(placeKey);
+    if (route.page === "project" && fresh?.level === "project") rememberVisibility(placeKey, fresh.visibility === "private");
     markSeen(route.page === "project" ? placeKey : place.space);
     setSeen(readSeen());
-  }, [route.page, placeKey, place.space, own, recoveryOnly]);
+  }, [route.page, placeKey, place.space, own, recoveryOnly, fresh?.level === "project" ? fresh.visibility : undefined]);
   useEffect(() => {
     document.title = recovery ? "Settings · spacehub" : route.page === "subhub" ? `Sub-hub ${route.name} · spacehub` : homeTab === "orgs" ? "Orgs · spacehub" : homeTab === "agents" ? "Agents · spacehub" : homeTab === "builders" ? "Builders · spacehub" : homeTab ? "spacehub" : `${route.page === "project" ? placeKey : place.space} · spacehub`;
   }, [homeTab, route, placeKey, place.space, recovery]);
@@ -137,14 +141,15 @@ export function App() {
   const siblings = route.page === "project" ? space.data?.snapshot.directory.entries : route.page === "space" ? view?.snapshot.directory.entries : undefined;
   if (route.page !== "home" && siblings) sideSections.push({
     key: "projects", title: "Projects", icon: <FolderGit2 size={16} />, limit: 6,
-    items: [...siblings].sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt)).map(entry => ({ key: "p:" + entry.name, label: entry.name, href: placeUrl({ space: place.space, project: entry.name }), icon: <FolderGit2 size={16} />, active: place.project === entry.name })),
+    items: [...siblings].sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt)).map(entry => ({ key: "p:" + entry.name, label: entry.name, href: placeUrl({ space: place.space, project: entry.name }), icon: <FolderGit2 size={16} />, active: place.project === entry.name, locked: entry.private === true })),
   });
   if (route.page === "home" && me.spaces.length) sideSections.push({
     key: "spaces", title: "Your spaces", icon: <Users size={16} />, limit: 6,
     items: me.spaces.map(s => ({ key: "s:" + s.space, label: s.space, href: placeUrl({ space: s.space, project: "" }), icon: <Avatar name={s.space} size={18} kind={s.kind} /> })),
   });
   const recent = recoveryOnly ? [] : recentProjects().filter(name => name !== placeKey);
-  if (recent.length) sideSections.push({ key: "recent", title: "Recent", icon: <History size={16} />, limit: 4, items: recent.map(name => { const [s, p] = name.split("/"); return { key: "r:" + name, label: name, href: placeUrl({ space: s, project: p }), icon: <History size={16} /> }; }) });
+  const lockedRecent = privateProjects();
+  if (recent.length) sideSections.push({ key: "recent", title: "Recent", icon: <History size={16} />, limit: 4, items: recent.map(name => { const [s, p] = name.split("/"); return { key: "r:" + name, label: name, href: placeUrl({ space: s, project: p }), icon: <History size={16} />, locked: lockedRecent.has(name) }; }) });
   // The hub's own pages, in the dock's account menu.
   const settingsLink = { key: "settings", label: "Settings", href: "/#/settings", icon: <Settings size={15} />, active: recovery };
   const hubLinks = [
@@ -167,7 +172,7 @@ export function App() {
     places = roots.slice(0, 8).map(root => { const Icon = SECTION_ICONS.get(root.name.toLowerCase()) ?? FOLDER_ICONS.get(root.name.toLowerCase()) ?? Folder; return { key: root.path, label: root.name, href: placeUrl(place, hashOf("files", { path: root.path })), icon: <Icon size={22} strokeWidth={1.7} />, active: top === root.path }; });
   } else if (!recovery && route.page === "space" && meta?.level === "space") {
     places = [...(view?.snapshot.directory.entries ?? [])].sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt)).slice(0, 8)
-      .map(entry => ({ key: entry.name, label: entry.name, href: placeUrl({ space: place.space, project: entry.name }), icon: <FolderGit2 size={22} strokeWidth={1.7} />, fresh: !!seen[`${place.space}/${entry.name}`] && entry.modifiedAt > seen[`${place.space}/${entry.name}`] }));
+      .map(entry => ({ key: entry.name, label: entry.name, href: placeUrl({ space: place.space, project: entry.name }), icon: <FolderGit2 size={22} strokeWidth={1.7} />, locked: entry.private === true, fresh: !!seen[`${place.space}/${entry.name}`] && entry.modifiedAt > seen[`${place.space}/${entry.name}`] }));
   } else if (route.page === "home" && !recovery) {
     // The hub's own lists, one page each; Home is in the switcher's menu just before them.
     places = [
@@ -195,15 +200,18 @@ export function App() {
     <main className="main" id="main">
       <InsetHeader crumbs={crumbs} live={state} activityTotal={hasActivity ? meta?.activityTotal : undefined} rail={rail} onToggleSidebar={toggleSidebar} activity={hasActivity ? { open: activityOpen, onToggle: toggleActivity } : undefined} recoveryOnly={recoveryOnly} />
       <div className="main-scroll">
+        {leaving && <div className="page"><Empty icon={<LogIn size={20} />} title={leavingText(leaving)}><p>Taking you to sign in… <a href={loginUrl(leaving, location.pathname + location.search + location.hash)}>Go now</a></p></Empty></div>}
+        {!leaving && <>
         {route.page === "home" && route.tab !== "settings" && !recovery && <HomePage tab={route.tab} view={view as View<HubMeta> | undefined} me={me.name} mySpaces={me.spaces.map(s => s.space)} seen={seen} />}
-        {recovery && <SettingsPage onConnectionState={setRecoveryState} signedIn={!recoveryOnly && !!me.name} operator={operator} />}
+        {recovery && <SettingsPage onConnectionState={setRecoveryState} signedIn={!recoveryOnly && !!me.name} operator={operator} owner={me.owner} />}
         {!recovery && route.page === "subhub" && operator && <SubhubPage name={route.name} backup={route.backup} />}
         {!recovery && route.page === "space" && <SpacePage name={place.space} tab={route.tab} view={view as View<SpaceMeta> | undefined} error={live.error} me={me.name} signIn={signIn} seen={seen} />}
         {!recovery && route.page === "project" && <ChannelsContext.Provider value={channels}><ProjectPage route={route} view={view as View<ProjectMeta> | undefined} error={live.error} me={me.name} signIn={signIn} refresh={live.refresh} /></ChannelsContext.Provider>}
+        </>}
       </div>
       <Dock places={places} switcher={recoveryOnly ? undefined : { ...switcher, signedIn: !!me.name, onSearch: () => setSearching(true) }} account={{ me, signIn, recoveryOnly, links: hubLinks }} />
     </main>
-    {activity && <Inspector title="Activity" note={route.page === "project" ? placeKey : route.page === "space" ? place.space : undefined} onClose={toggleActivity}><ActivityPanel meta={activityOf} /></Inspector>}
-    {searching && !recoveryOnly && <SearchPalette place={place} onClose={() => setSearching(false)} />}
+    {activity && !leaving && <Inspector title="Activity" note={route.page === "project" ? placeKey : route.page === "space" ? place.space : undefined} onClose={toggleActivity}><ActivityPanel meta={activityOf} /></Inspector>}
+    {searching && !recoveryOnly && !leaving && <SearchPalette place={place} onClose={() => setSearching(false)} />}
   </div>;
 }

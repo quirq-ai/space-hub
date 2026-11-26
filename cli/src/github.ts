@@ -152,8 +152,8 @@ export async function mirrorProject(conn: Conn, project: { id: bigint; fullName:
     await run('git', ['clone', '--bare', '--quiet', cloneUrl, repo]);
     const github = await readRefs(repo);
     const hub = new Map((await listRefs(conn, project.id)).map(r => [r.name, r.oid]));
-    const last = await snapshot(conn, tables.refSync.where(r => r.projectId.eq(project.id)), () => {
-      const rows = [...conn.db.refSync.iter()].filter(r => r.projectId === project.id);
+    const last = await snapshot(conn, tables.visibleRefSync.where(r => r.projectId.eq(project.id)), () => {
+      const rows = [...conn.db.visibleRefSync.iter()].filter(r => r.projectId === project.id);
       return new Map(rows.map(r => [r.ref, r.githubOid]));
     });
     const plan = await planRefs(repo, github, hub, last);
@@ -214,18 +214,18 @@ export class GithubSync {
     const wanted = (r: { space: string; status: string }) => {
       if (r.status === 'requested') this.enqueue(r.space);
     };
-    conn.db.spaceLink.onInsert((_ctx, r) => wanted(r));
-    conn.db.spaceLink.onUpdate((_ctx, _old, r) => wanted(r));
+    conn.db.visibleSpaceLink.onInsert((_ctx, r) => wanted(r));
+    conn.db.visibleSpaceLink.onUpdate((_ctx, _old, r) => wanted(r));
     await new Promise<void>((resolve, reject) =>
       conn
         .subscriptionBuilder()
         .onApplied(() => {
           // A sync cut short by a restart starts again.
-          for (const r of conn.db.spaceLink.iter()) if (r.status === 'running') this.enqueue(r.space);
+          for (const r of conn.db.visibleSpaceLink.iter()) if (r.status === 'running') this.enqueue(r.space);
           resolve();
         })
         .onError(ctx => reject(new Error(`subscription failed: ${(ctx as { event?: unknown }).event}`)))
-        .subscribe(tables.spaceLink)
+        .subscribe(tables.visibleSpaceLink)
     );
   }
 
@@ -233,7 +233,7 @@ export class GithubSync {
   private due() {
     if (!this.conn) return;
     const cutoff = BigInt(Date.now() - this.config.everyMinutes * 60_000) * 1000n;
-    for (const r of this.conn.db.spaceLink.iter()) {
+    for (const r of this.conn.db.visibleSpaceLink.iter()) {
       if ((r.status === 'done' || r.status === 'failed') && r.updatedAt.microsSinceUnixEpoch < cutoff) this.enqueue(r.space);
     }
   }
@@ -258,7 +258,7 @@ export class GithubSync {
   }
 
   private async sync(conn: Conn, space: string) {
-    const link = [...conn.db.spaceLink.iter()].find(r => r.space === space);
+    const link = [...conn.db.visibleSpaceLink.iter()].find(r => r.space === space);
     if (!link) return;
     const status = (s: string, message: string, projects = 0) => conn.reducers.setLinkStatus({ space, status: s, message, projects });
     const login = link.source.replace(/^https:\/\/github\.com\//, '');

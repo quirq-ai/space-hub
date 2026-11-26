@@ -30,9 +30,11 @@ export async function deviceSignIn(
   note: (line: string) => void,
   // Runs before the code is shown; throws to stop (a hub that is not the default asks first).
   confirm: () => Promise<void> = async () => {},
-  sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+  sleep = (ms: number) => new Promise(r => setTimeout(r, ms)),
+  // An invite code for a first sign-in on a hub that needs one; the hub keeps it until GitHub says yes.
+  invite = ''
 ): Promise<Record<string, unknown> | null> {
-  const start = await postHub(`${web}/-/api/auth/github/device`);
+  const start = await postHub(`${web}/-/api/auth/github/device`, invite ? { invite } : undefined);
   if (start.status === 404) return null;
   const b = start.body;
   if (start.status !== 200 || !b) throw new Error(String(b?.error ?? `GitHub sign-in failed to start (HTTP ${start.status})`));

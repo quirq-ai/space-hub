@@ -27,19 +27,28 @@
 //   GET      /gh/<owner>/<repo>  a public GitHub repository's room: its explainer and group
 //   POST     /-/api/ask          chat, opened on the first visit; asking there (rooms.ts)
 //   POST     /-/api/explain      open a room from a GitHub URL, for the explain org's chat (rooms.ts)
+//   GET      /-/auth/check       members-only: Caddy's forward_auth asks before every request (frontdoor.ts)
+//   GET      /-/ui               the module's own pages (tree, blob, raw, commits, guide, ...): the proxy
+//                                sends them here, and they are asked for as the verified viewer (modulepage.ts)
 //
-// Pages are read by the module (ui.ts); this service only acts. A session is
-// the user's identity token in an HttpOnly cookie, so every action runs as
-// that user and the module's own ownership checks apply.
+// On a members-only hub every route here but the open ones in frontdoor.ts
+// ROUTES (sign-in and sign-up) answers members only.
+//
+// Pages are read by the module (ui.ts) for the viewer this service vouches
+// for (modulepage.ts), so a private project is shown only to those who may
+// read it (canRead); this service reads as the admin, so every route here
+// that names a project checks the same rule first. A session is the user's
+// identity token in an HttpOnly cookie, so every action runs as that user and
+// the module's own ownership checks apply.
 import http from 'node:http';
 import path from 'node:path';
 import { connectTo, errorMessage, findProject, findUser, quietSdkLogs, snapshot, tables, type Conn } from './conn';
 import { configFile, githubLogin, normalizeServer } from './config';
 import { esc, PAGE_CSP, shell } from '../../module/src/style';
-import { signInButtons, signInWays, step, steps, type Hub } from '../../module/src/howto';
+import { cmd, DEFAULT_HOST, signInButtons, signInWays, step, steps, type Hub } from '../../module/src/howto';
 import { Fail, GithubSync, githubApi, githubBuilder as builderOf, githubInfo as infoOf, mirrorProject } from './github';
 import { LiveHub } from './live';
-import { accountsSetting, handleSignIn, signInConfig } from './signin';
+import { accountsSetting, handleSignIn, inviteOf, signInConfig } from './signin';
 import { handleXo, xoConfig } from './xo';
 import { CALLBACK_ROUTE, ConnectGithub, finishSignIn, offerFor, START_ROUTE, startSignIn, STATE_COOKIE, WAIT_SECONDS, xoSignInConfig } from './xosignin';
 import * as githubWeb from './githubsignin';
@@ -56,6 +65,12 @@ import { InstanceConnections } from './instanceconnections';
 import { hubBackupConfig, startHubBackups } from './hubbackup';
 import { activityJournalDir, startActivityJournal } from './activityjournal';
 import { SubhubRelay } from './subhubrelay';
+import { bearerToken, cookieValue, viewerOf, type CheckToken, type Viewer } from './viewer';
+import { hubDefaultVisibility, hubMembersOnly, hubOwnerName, hubPeople, isSuspended, joinPolicy, joinSettings, type JoinPolicy } from './hubowner';
+import { handleHubSettings } from './hubsettings';
+import { FrontDoor, signInNotice, suspendedMessage } from './frontdoor';
+import { asViewer, canReadProject, moduleUrl, proxyPage, registerSecret, webSecret, type ModuleLink } from './modulepage';
+import { createProject, parseVisibility, visibilityField, type Visibility } from './visibility';
 
 quietSdkLogs();
 
@@ -70,7 +85,6 @@ const INTERNAL_HTTP = (process.env.SPACEHUB_INTERNAL_HTTP ?? SERVER.replace(/^ws
 const GITHUB = githubApi();
 const XO = xoConfig(DB, INTERNAL_HTTP, GITHUB);
 const XO_SIGNIN = xoSignInConfig(XO);
-const LIVE = new LiveHub({ server: SERVER, db: DB, http: INTERNAL_HTTP });
 const APP_DIR = appDir();
 const githubInfo = (owner: string, repo: string) => infoOf(GITHUB, owner, repo);
 const githubBuilder = (login: string) => builderOf(GITHUB, login);
@@ -79,6 +93,13 @@ const SIGNIN = signInConfig(DB, INTERNAL_HTTP, GITHUB);
 // Spaces linked to GitHub sync as the hub admin, whose token the entrypoint
 // hands over.
 const ADMIN_TOKEN = process.env.SPACEHUB_ADMIN_TOKEN ?? '';
+// The module's pages and data, asked for as a verified viewer (modulepage.ts):
+// this start's secret, set in the module as the admin before pages need it.
+const MODULE: ModuleLink = { http: INTERNAL_HTTP, db: DB, secret: ADMIN_TOKEN ? webSecret() : null };
+if (MODULE.secret) void registerSecret({ adminToken: ADMIN_TOKEN, http: INTERNAL_HTTP, db: DB }, MODULE.secret);
+else void registerSecret(null, '');
+// Live pages follow every project, so they read as the admin when there is one.
+const LIVE = new LiveHub({ server: SERVER, db: DB, http: INTERNAL_HTTP, module: MODULE, token: ADMIN_TOKEN || undefined });
 // Runners and workers live in the module's private tables; without the admin token or the sealing key, connecting is off.
 // "Connect Agents Hub" (SPACEHUB_LAUNCHPAD_API): Launchpad finds the hub with a pass from a fresh XO sign-in, never
 // stored. A mistyped setting turns the button off (and says so) rather than stopping the hub.
@@ -146,20 +167,6 @@ function page(title: string, viewer: string | null, body: string, wide = false) 
   return shell(title, wide ? `<div class="wide-page">${body}</div>` : `<div class="narrow">${body}</div>`, '', { viewer });
 }
 
-function cookieValue(req: http.IncomingMessage, name: string): string | null {
-  for (const part of (req.headers.cookie ?? '').split(';')) {
-    const eq = part.indexOf('=');
-    if (eq > 0 && part.slice(0, eq).trim() === name) {
-      try {
-        return decodeURIComponent(part.slice(eq + 1).trim());
-      } catch {
-        return null;
-      }
-    }
-  }
-  return null;
-}
-
 function sessionCookies(req: http.IncomingMessage, token: string, username: string, maxAge = YEAR) {
   const secure = req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : '';
   const attrs = `; Path=/; SameSite=Lax; Max-Age=${maxAge}${secure}`;
@@ -214,16 +221,46 @@ async function withConn<T>(token: string | undefined, fn: (conn: Conn, identity:
   }
 }
 
-// The signed-in user for this request, checked against the database.
+// The admin over SQL, for the private rows the web service reads (the hub's
+// owner, suspended builders); null without the admin's token.
+const ADMIN_SQL = ADMIN_TOKEN ? { adminToken: ADMIN_TOKEN, http: INTERNAL_HTTP, db: DB } : null;
+
+// A token's identity and builder name, and whether the hub's owner suspended
+// that builder; throws when the server rejects the token. Also used on the
+// token a sign-in has just produced, before it becomes a session.
+const checkToken: CheckToken = async token => {
+  const { identity, name } = await withConn(token, async (conn, identity) => ({ identity, name: (await findUser(conn, identity))?.username ?? null }));
+  return { identity, name, suspended: name !== null && !!ADMIN_SQL && (await isSuspended(ADMIN_SQL, name)) };
+};
+
+// The hub owner's builder name (hubowner.ts), or null: no owner, or no admin to ask.
+function ownerName(): Promise<string | null> {
+  return ADMIN_SQL ? hubOwnerName(ADMIN_SQL) : Promise.resolve(null);
+}
+
+// What new projects start as (hub_state "defaultVisibility"), for the New
+// project page's choice; null without the admin to ask, and the module then
+// applies the default itself (createProject with no choice).
+async function newProjectVisibility(): Promise<Visibility | null> {
+  return ADMIN_SQL ? hubDefaultVisibility(ADMIN_SQL).catch(() => null) : null;
+}
+
+// Who may join this hub (hubowner.ts): "anyone" when unset, or without the
+// admin to ask (the module enforces it either way; this only shapes pages).
+async function joinMode(): Promise<JoinPolicy> {
+  return ADMIN_SQL ? joinPolicy(ADMIN_SQL).catch(() => 'anyone' as const) : 'anyone';
+}
+
+// Who this request is, checked against the database (viewer.ts). The one
+// lookup every route uses; opts.bearer also accepts an Authorization header.
+function viewer(req: http.IncomingMessage, opts: { bearer?: boolean } = {}): Promise<Viewer | null> {
+  return viewerOf(req, checkToken, opts);
+}
+
+// The signed-in builder for this request (the session cookie only), or null.
 async function sessionOf(req: http.IncomingMessage): Promise<{ token: string; username: string } | null> {
-  const token = cookieValue(req, 'spacehub_session');
-  if (!token) return null;
-  try {
-    const user = await withConn(token, (conn, identity) => findUser(conn, identity));
-    return user ? { token, username: user.username } : null;
-  } catch {
-    return null;
-  }
+  const v = await viewer(req);
+  return v && v.name !== null ? { token: v.token, username: v.name } : null;
 }
 
 // Save chat turns as the builder; the module's push rules decide who may.
@@ -235,8 +272,8 @@ async function appendChat(session: { token: string }, input: { project: string; 
 // the spaces it belongs to.
 async function spacesOf(session: { token: string; username: string }): Promise<string[]> {
   const others = await withConn(session.token, conn =>
-    snapshot(conn, tables.spaceRole.where(r => r.member.eq(session.username)), () =>
-      [...conn.db.spaceRole.iter()].filter(r => r.member === session.username).map(r => r.space)
+    snapshot(conn, tables.visibleSpaceRole.where(r => r.member.eq(session.username)), () =>
+      [...conn.db.visibleSpaceRole.iter()].filter(r => r.member === session.username).map(r => r.space)
     )
   ).catch(() => [] as string[]);
   return [session.username, ...others.sort()];
@@ -247,22 +284,22 @@ async function spacesOf(session: { token: string; username: string }): Promise<s
 async function placesOf(session: { token: string; username: string }): Promise<{ spaces: string[]; projects: string[] }> {
   const base = await spacesOf(session);
   const agents = await withConn(session.token, async conn => {
-    const roles = await snapshot(conn, tables.spaceRole.where(r => r.member.eq(session.username)), () =>
-      [...conn.db.spaceRole.iter()].filter(r => r.member === session.username).map(r => ({ space: r.space, role: r.role }))
+    const roles = await snapshot(conn, tables.visibleSpaceRole.where(r => r.member.eq(session.username)), () =>
+      [...conn.db.visibleSpaceRole.iter()].filter(r => r.member === session.username).map(r => ({ space: r.space, role: r.role }))
     );
-    const all = await snapshot(conn, tables.space.where(s => s.kind.eq('agent')), () =>
-      [...conn.db.space.iter()].filter(s => s.kind === 'agent').map(s => ({ name: s.name, parent: s.parent }))
+    const all = await snapshot(conn, tables.visibleSpace.where(s => s.kind.eq('agent')), () =>
+      [...conn.db.visibleSpace.iter()].filter(s => s.kind === 'agent').map(s => ({ name: s.name, parent: s.parent }))
     );
     return agentSpacesOwnedBy(session.username, roles, all);
   }).catch(() => [] as string[]);
   const spaces = [...new Set([...base, ...agents])];
   const projects = await withConn(session.token, async conn => {
-    const ids = await snapshot(conn, tables.projectMember.where(r => r.agent.eq(session.username)), () =>
-      [...conn.db.projectMember.iter()].filter(r => r.agent === session.username).map(r => r.projectId)
+    const ids = await snapshot(conn, tables.visibleProjectMember.where(r => r.agent.eq(session.username)), () =>
+      [...conn.db.visibleProjectMember.iter()].filter(r => r.agent === session.username).map(r => r.projectId)
     );
     const names: string[] = [];
     for (const id of ids) {
-      const row = await snapshot(conn, tables.project.where(p => p.id.eq(id)), () => [...conn.db.project.iter()].find(p => p.id === id));
+      const row = await snapshot(conn, tables.visibleProject.where(p => p.id.eq(id)), () => [...conn.db.visibleProject.iter()].find(p => p.id === id));
       if (row) names.push(row.fullName);
     }
     return names.sort();
@@ -271,23 +308,38 @@ async function placesOf(session: { token: string; username: string }): Promise<{
 }
 
 async function recoveryOperator(req: http.IncomingMessage): Promise<boolean> {
-  const bearer = /^Bearer (\S+)$/.exec(req.headers.authorization ?? '')?.[1];
+  // The CLI sends its token as a bearer header; a browser sends the session
+  // cookie, so a cookie-only write must also come from this site.
+  const bearer = bearerToken(req);
   if (req.headers.origin && !sameOrigin(req)) return false;
   if (!bearer && req.method !== 'GET' && req.method !== 'HEAD' && !sameOrigin(req)) return false;
-  const token = bearer ?? cookieValue(req, 'spacehub_session');
-  if (!token) return false;
+  const v = await viewer(req, { bearer: true });
+  if (!v) return false;
+  if (v.name !== null && RECOVERY_OPERATORS.has(v.name)) return true;
+  // The hub's owner is always an operator (shown to it in Settings → Hub).
+  if (v.name !== null && v.name === (await ownerName().catch(() => null))) return true;
+  // Once operators are named, only they qualify; the module's global
+  // administrator is the fallback for a hub that names none.
+  if (RECOVERY_OPERATORS.size || !ADMIN_TOKEN) return false;
   try {
-    return await withConn(token, async (conn, identity) => {
-      const user = await findUser(conn, identity);
-      if (user && RECOVERY_OPERATORS.has(user.username)) return true;
-      // Once operators are named, only they qualify; the module's global
-      // administrator is the fallback for a hub that names none.
-      if (RECOVERY_OPERATORS.size || !ADMIN_TOKEN) return false;
-      const rows = await select({ adminToken: ADMIN_TOKEN, http: INTERNAL_HTTP, db: DB }, "SELECT value FROM hub_state WHERE key = 'admin'");
-      return rows[0]?.value === identity.toHexString();
-    });
+    const rows = await select({ adminToken: ADMIN_TOKEN, http: INTERNAL_HTTP, db: DB }, "SELECT value FROM hub_state WHERE key = 'admin'");
+    return rows[0]?.value === v.identity.toHexString();
   } catch { return false; }
 }
+
+// Members-only at the front door (frontdoor.ts). Without the admin to read
+// the flag it stays off here; the database's views still close the hub.
+const DOOR = new FrontDoor({
+  membersOnly: () => (ADMIN_SQL ? hubMembersOnly(ADMIN_SQL) : Promise.resolve(false)),
+  viewer: req => viewer(req),
+  turnedOn: () => LIVE.closeAll(),
+});
+// Live pages stay open between requests, so while any is open the flag is
+// read on the same interval, and turning it on ends them (the cache makes
+// this one admin read per interval at most).
+setInterval(() => {
+  if (LIVE.open) void DOOR.membersOnly();
+}, 5_000).unref();
 
 // ---------------------------------------------------------------- GitHub
 
@@ -346,12 +398,13 @@ function pump() {
 
 // Sign in: the ways to get a token from the terminal (howto.ts), then the
 // form that takes it.
-function loginPage(viewer: string | null, hub: Hub, error = '', next = '/') {
+// `notice`: why the hub sent the viewer here (frontdoor.ts signInNotice); an error wins over it.
+function loginPage(viewer: string | null, hub: Hub, error = '', next = '/', notice: { text: string; error: boolean } | null = null) {
   return page(
     'Sign in · spacehub',
     viewer,
     `<div class="page-title"><h1>Sign in</h1><p>${hub.github || hub.xo ? `There are no passwords here: your account is your GitHub account. Sign in with ${hub.github && hub.xo ? 'GitHub or xo' : hub.github ? 'GitHub' : 'xo'}, or once from your terminal, then paste your token.` : 'There are no passwords here. Sign in once from your terminal, then paste your token to use this site.'}</p></div>
-${error ? `<div class="banner err">${esc(error)}</div>` : ''}
+${error ? `<div class="banner err" role="alert">${esc(error)}</div>` : notice ? `<div class="banner${notice.error ? ' err' : ''}" role="status">${esc(notice.text)}</div>` : ''}
 ${signInButtons(hub, 'Sign in', next)}
 ${signInWays(hub, true)}
 <h2 class="section-title">Paste your token</h2>
@@ -363,28 +416,56 @@ ${hub.accounts === 'open' ? '<p class="muted">New here? <a href="/-/signup">Regi
   );
 }
 
-function signupPage(viewer: string | null, hub: Hub, error = '', username = '') {
+// Who may join, in a sentence, for a hub that chooses (join policy not "anyone").
+function joinNote(join: JoinPolicy) {
+  return join === 'invite'
+    ? '<div class="banner">This hub is invite-only: sign up with the invite code its owner gave you.</div>'
+    : join === 'allowlist'
+      ? '<div class="banner">This hub lets in the GitHub accounts its owner listed, or someone with an invite code.</div>'
+      : '';
+}
+
+// Sign up with an invite code: with GitHub on this site, or from the terminal.
+function inviteWays(hub: Hub, join: JoinPolicy, invite: string) {
+  if (join === 'anyone' && !invite) return '';
+  const server = hub.host === DEFAULT_HOST ? '' : ` --server ${hub.server}`;
+  const github = hub.github
+    ? `<form method="get" action="${githubWeb.START_ROUTE}"><label for="invite">Invite code</label>
+<input type="text" id="invite" name="invite" value="${esc(invite)}" required spellcheck="false" autocomplete="off">
+<p><button class="btn primary" type="submit">Sign up with GitHub and this code</button></p></form>`
+    : '';
+  return `<h2 class="section-title">Have an invite code?</h2>${github}
+<p class="desc">From the terminal:</p>${cmd(`spacehub auth login${server} --invite ${invite || '<code>'}`)}`;
+}
+
+function signupPage(viewer: string | null, hub: Hub, error = '', username = '', join: JoinPolicy = 'anyone', invite = '') {
+  const needsCode = join !== 'anyone';
   return page(
     'Register · spacehub',
     viewer,
     `<h1><b>Register</b></h1>
 <p class="desc">Pick your builder name. It is also your personal space: your projects live at <code>&lt;name&gt;/&lt;project&gt;</code>.</p>
 ${error ? `<div class="banner err">${esc(error)}</div>` : ''}
+${joinNote(join)}
 ${signInButtons(hub, 'Sign up', '/', 'Or pick a name')}
 <form method="post" action="/-/signup"><label for="username">Builder name <span class="muted">lowercase letters, digits and hyphens</span></label>
 <input type="text" id="username" name="username" value="${esc(username)}" required pattern="[a-z0-9][a-z0-9-]{0,38}" autocomplete="username">
+${needsCode || invite ? `<label for="signup-invite">Invite code${needsCode ? '' : ' <span class="muted">optional</span>'}</label>
+<input type="text" id="signup-invite" name="invite" value="${esc(invite)}"${needsCode ? ' required' : ''} spellcheck="false" autocomplete="off">` : ''}
 <p><button class="btn primary" type="submit">Register</button></p></form>
 <p class="muted">Already registered? <a href="/-/login">Sign in</a>.</p>`
   );
 }
 
 // On a hub where builders sign up with GitHub (or xo), they do it from the terminal.
-function terminalSignupPage(viewer: string | null, hub: Hub, error = '') {
+function terminalSignupPage(viewer: string | null, hub: Hub, error = '', join: JoinPolicy = 'anyone', invite = '') {
   return page(
     'Sign up · spacehub',
     viewer,
     `<div class="page-title"><h1>Sign up</h1><p>${hub.github || hub.xo ? 'Your builder on this hub is your GitHub account, named after its login. There is no password: sign in the same way on any machine to get your builder back.' : 'Builders on this hub sign up from the terminal. There is no password: run the same login on any machine to get your builder back.'}</p></div>
 ${error ? `<div class="banner err">${esc(error)}</div>` : ''}
+${joinNote(join)}
+${hub.accounts === 'github' ? inviteWays(hub, join, invite) : ''}
 ${signInButtons(hub, 'Sign up', '/')}
 ${signInWays(hub, true).replace('Paste it below.', 'Paste it at <a href="/-/login">Sign in</a> to use this site too.')}`,
     true
@@ -439,10 +520,11 @@ function serverOf(req: http.IncomingMessage) {
 // The templates a project can start from (the module's ?templates view);
 // the built-in goal space alone when the module cannot be asked.
 type Template = { id: string; title: string; about: string; builtin: boolean };
-async function templatesList(): Promise<Template[]> {
+// Template projects the builder may not read are not offered.
+async function templatesList(viewer: string): Promise<Template[]> {
   const builtin: Template[] = [{ id: 'goal', title: 'Goal space', about: '', builtin: true }];
   try {
-    const response = await fetch(`${INTERNAL_HTTP}/v1/database/${encodeURIComponent(DB)}/route/api?templates`);
+    const response = await fetch(moduleUrl(MODULE, 'api', '?templates'), { headers: asViewer(MODULE, viewer) });
     if (!response.ok) return builtin;
     const body = (await response.json()) as { templates?: Template[] };
     return body.templates?.length ? body.templates : builtin;
@@ -451,7 +533,8 @@ async function templatesList(): Promise<Template[]> {
   }
 }
 
-function newPage(viewer: string, spaces: string[], templates: Template[], error = '', values: Record<string, string> = {}) {
+// `visibility` is the hub's default for new projects, checked unless the form sent another choice back.
+function newPage(viewer: string, spaces: string[], templates: Template[], visibility: Visibility | null, error = '', values: Record<string, string> = {}) {
   const v = (k: string) => esc(values[k] ?? '');
   const chosen = values.space || viewer;
   const options = spaces.map(sp => `<option value="${esc(sp)}"${sp === chosen ? ' selected' : ''}>${esc(sp)}</option>`).join('');
@@ -486,6 +569,7 @@ ${about ? `<p class="muted">${esc(about)}</p>` : ''}
 <input type="text" id="description" name="description" value="${v('description')}" maxlength="500">
 <label for="builder">Built by <span class="muted">optional; a GitHub user or organization (name or github.com URL). Defaults to the GitHub owner when importing, otherwise you</span></label>
 <input type="text" id="builder" name="builder" value="${v('builder')}" maxlength="100">
+${visibilityField(parseVisibility(values.visibility) ?? visibility)}
 <p><button class="btn primary" type="submit">Create project</button></p></form>`
   );
 }
@@ -508,18 +592,20 @@ function welcomePage(username: string, token: string) {
 const ROOMS: Parameters<typeof handleRooms>[0] = {
   space: explainSpace(),
   canOpen: !!ADMIN_TOKEN,
-  exists: async fullName => {
-    const [space, project] = fullName.split('/');
-    const query = new URLSearchParams({ space, project });
-    return (await fetch(`${INTERNAL_HTTP}/v1/database/${encodeURIComponent(DB)}/route/api?${query}`, { signal: AbortSignal.timeout(5_000) })).ok;
-  },
+  buildersOnly: async () => (await joinMode()) !== 'anyone',
+  // A room this viewer may not read is not there for it (canRead).
+  exists: async (fullName, req) => canReadProject(MODULE, req ? await DOOR.builder(req) : null, fullName),
   info: async (owner, repo) => {
     const info = await githubInfo(owner, repo);
     return info && { owner: info.ownerLogin, repo: info.name, description: info.description, private: info.private };
   },
   open: input => withConn(ADMIN_TOKEN, conn => conn.reducers.openRepoRoom(input)),
   sessionOf,
-  ask: (token, input) => withConn(token, conn => conn.reducers.askQuestion(input)),
+  // A room this builder may not read answers as one that does not exist (the module's own words for it).
+  ask: async (token, input, username) => {
+    if (!(await canReadProject(MODULE, username ?? null, input.project))) throw new Error(`project "${input.project}" not found`);
+    await withConn(token, conn => conn.reducers.askQuestion(input));
+  },
   page: (res, status, title, message) => {
     send(res, status, page(`${title} · spacehub`, null, `<h1><b>${esc(title)}</b></h1><div class="banner err">${esc(message)}</div><p><a href="/">Go to the hub</a></p>`));
   },
@@ -530,6 +616,10 @@ const ROOMS: Parameters<typeof handleRooms>[0] = {
 async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   const url = new URL(req.url ?? '/', 'http://local');
   const route = url.pathname;
+  // Members-only (frontdoor.ts): Caddy's question first, then the same check
+  // on this request itself, before any route reads the hub as the admin.
+  if (await DOOR.check(req, res, url)) return;
+  if (await DOOR.guard(req, res)) return;
   // Called by xo.quirq.dev with its key, not from the site's forms.
   if (await handleXo(XO, req, res)) return;
   // Called by the CLI with a GitHub token, not from the site's forms.
@@ -544,7 +634,13 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     relay: RECOVERY_RELAY,
     hubBackups: HUB_BACKUPS,
   }, req, res, url)) return;
-  if (LIVE.handle(req, res, url)) return;
+  // A live page remembers its verified builder, so a suspension can end it (LIVE.closeFor).
+  if (LIVE.handle(req, res, url, route === '/-/live' ? ((await sessionOf(req).catch(() => null))?.username ?? null) : null)) return;
+  // The module's pages, as this viewer (modulepage.ts); the proxy sends the page asked for in X-Spacehub-Uri.
+  if (route === '/-/ui') {
+    const uri = req.headers['x-spacehub-uri'];
+    return proxyPage(MODULE, req, res, typeof uri === 'string' ? uri : '/', await DOOR.builder(req));
+  }
   if (req.method === 'POST' && !sameOrigin(req)) return send(res, 403, page('Forbidden', null, '<h1>Forbidden</h1><p class="desc">This form must be sent from this site.</p>'));
   if (await handleAgentsHub(WORKERS.key ? AGENTS_HUB : null, {
     sessionOf,
@@ -554,23 +650,64 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     send,
     allowLocal: WORKERS.allowLocal,
   }, req, res)) return;
-  if (await handleWorkers(WORKERS, { sessionOf, placesOf, appendChat, sameOrigin, callbackUrl: r => callbackOf(r, CONNECT_CALLBACK) }, req, res, url)) return;
+  if (await handleWorkers(WORKERS, { sessionOf, placesOf, appendChat, sameOrigin, callbackUrl: r => callbackOf(r, CONNECT_CALLBACK),
+    canRead: (session, project) => canReadProject(MODULE, session.username, project) }, req, res, url)) return;
   if (await handleRooms(ROOMS, req, res, url)) return;
-  if (await handleApp({ dir: APP_DIR, internalHttp: INTERNAL_HTTP, db: DB, withConn, sessionOf, operator: recoveryOperator }, req, res, url)) return;
+  if (await handleHubSettings({
+    sessionOf,
+    ownerName,
+    operators: [...RECOVERY_OPERATORS],
+    adminFallback: RECOVERY_OPERATORS.size === 0 && !!ADMIN_TOKEN,
+    people: async () => {
+      const names = await withConn(ADMIN_TOKEN, conn => snapshot(conn, tables.visibleUser, () => [...conn.db.visibleUser.iter()].map(u => u.username)));
+      return hubPeople(ADMIN_SQL!, names);
+    },
+    suspend: (token, username) => withConn(token, conn => conn.reducers.suspendBuilder({ username })),
+    // At once, not after the front door's 5 s cache: its sessions and live pages end now.
+    suspended: username => {
+      DOOR.forgetBuilder(username);
+      LIVE.closeFor(username);
+    },
+    restore: (token, username) => withConn(token, conn => conn.reducers.restoreBuilder({ username })),
+    join: () => joinSettings(ADMIN_SQL!),
+    setJoinPolicy: (token, policy) => withConn(token, conn => conn.reducers.setJoinPolicy({ policy })),
+    allow: (token, login) => withConn(token, conn => conn.reducers.allowJoin({ login })),
+    disallow: (token, login) => withConn(token, conn => conn.reducers.disallowJoin({ login })),
+    createInvite: (token, code, hours) => withConn(token, conn => conn.reducers.createInvite({ code, hours })),
+    revokeInvite: (token, id) => withConn(token, conn => conn.reducers.revokeInvite({ id })),
+    signupUrl: r => callbackOf(r, '/-/signup'),
+    membersOnly: () => hubMembersOnly(ADMIN_SQL!),
+    setMembersOnly: (token, on) => withConn(token, conn => conn.reducers.setMembersOnly({ on })).finally(() => DOOR.forget()),
+    defaultVisibility: () => hubDefaultVisibility(ADMIN_SQL!),
+    setDefaultVisibility: (token, visibility) => withConn(token, conn => conn.reducers.setDefaultVisibility({ visibility })),
+  }, req, res, url)) return;
+  if (await handleApp({ dir: APP_DIR, internalHttp: INTERNAL_HTTP, db: DB, withConn, sessionOf, operator: recoveryOperator, owner: ownerName,
+    module: MODULE, viewerName: r => DOOR.builder(r) }, req, res, url)) return;
 
   if (route === '/-/login') {
     const session = await sessionOf(req);
-    if (req.method === 'GET') return send(res, 200, loginPage(session?.username ?? null, await hubOf(req), '', localPath(url.searchParams.get('next'))));
+    if (req.method === 'GET') {
+      // A session cookie that no longer signs in: say so if its builder was
+      // suspended, and drop it then (a token that merely failed to check, say
+      // with the database away, is kept).
+      const held = session ? null : cookieValue(req, 'spacehub_session');
+      const suspended = held ? await checkToken(held).then(t => !!t.suspended, () => false) : false;
+      const notice = signInNotice(url.searchParams.get('reason'), !!session, suspended);
+      const page = loginPage(session?.username ?? null, await hubOf(req), '', localPath(url.searchParams.get('next')), notice);
+      return send(res, 200, page, suspended ? { 'set-cookie': sessionCookies(req, '', '', 0) } : {});
+    }
     const form = await readForm(req);
     const token = (form.get('token') ?? '').trim();
     const next = localPath(form.get('next'));
     if (!token) return send(res, 400, loginPage(null, await hubOf(req), 'Paste your identity token.', next));
     let username: string | null = null;
+    let suspended = false;
     try {
-      username = (await withConn(token, (conn, identity) => findUser(conn, identity)))?.username ?? null;
+      ({ name: username, suspended = false } = await checkToken(token));
     } catch {
       return send(res, 400, loginPage(null, await hubOf(req), 'That token is not valid on this server.', next));
     }
+    if (username && suspended) return send(res, 403, loginPage(null, await hubOf(req), suspendedMessage(username), next));
     if (!username) return send(res, 400, loginPage(null, await hubOf(req), 'That identity has no builder yet. Log in from the terminal first, as above.', next));
     return redirect(res, next, sessionCookies(req, token, username));
   }
@@ -591,7 +728,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     const next = localPath(url.searchParams.get('next'));
     if (!SIGNIN?.app) return send(res, 404, loginPage(null, await hubOf(req), 'Sign-in with GitHub is not set up on this hub. Sign in from the terminal below.', next));
     try {
-      const { state, location } = githubWeb.startSignIn(SIGNIN, callbackOf(req, githubWeb.CALLBACK_ROUTE), next);
+      const invite = inviteOf(url.searchParams.get('invite'));
+      const { state, location } = githubWeb.startSignIn(SIGNIN, callbackOf(req, githubWeb.CALLBACK_ROUTE), next, Date.now(), invite);
       return redirect(res, location, [githubCookie(req, state)]);
     } catch (err) {
       return send(res, err instanceof Reply ? err.status : 500, loginPage(null, await hubOf(req), errorMessage(err), next));
@@ -606,7 +744,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
       if (!SIGNIN) throw new Reply(404, 'Sign-in with GitHub is not set up on this hub.');
       const q = url.searchParams;
       const out = await githubWeb.finishSignIn(SIGNIN, { state: q.get('state'), cookie: cookieValue(req, githubWeb.STATE_COOKIE), code: q.get('code'), error: q.get('error') });
-      const username = (await withConn(out.token, (conn, identity) => findUser(conn, identity)))?.username;
+      const { name: username, suspended } = await checkToken(out.token);
+      if (suspended) throw new Reply(403, suspendedMessage(username));
       if (username !== out.username) throw new Reply(502, `The builder ${out.username} cannot sign in on this hub.`);
       return redirect(res, out.next, [...sessionCookies(req, out.token, username), spent], quiet);
     } catch (err) {
@@ -624,7 +763,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
       if (!XO_SIGNIN) throw new Reply(404, 'Sign-in with xo is not on for this hub.');
       const q = url.searchParams;
       const out = await finishSignIn(XO_SIGNIN, { state: q.get('state'), cookie: cookieValue(req, STATE_COOKIE), code: q.get('code'), error: q.get('error') });
-      const username = (await withConn(out.token, (conn, identity) => findUser(conn, identity)))?.username;
+      const { name: username, suspended } = await checkToken(out.token);
+      if (suspended) throw new Reply(403, suspendedMessage(username));
       if (username !== out.username) throw new Reply(502, `The builder ${out.username} cannot sign in on this hub.`);
       return redirect(res, out.next, [...sessionCookies(req, out.token, username), spent], quiet);
     } catch (err) {
@@ -637,23 +777,28 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
 
   if (route === '/-/signup') {
     const session = await sessionOf(req);
-    const hub = await hubOf(req);
+    const [hub, join] = await Promise.all([hubOf(req), joinMode()]);
+    // An invite link (Settings → Hub) is /-/signup?invite=<code>.
+    const linked = inviteOf(url.searchParams.get('invite'));
     if (hub.accounts !== 'open') {
       const error = req.method === 'POST' ? 'Builders on this hub sign up from the terminal.' : '';
-      return send(res, error ? 400 : 200, terminalSignupPage(session?.username ?? null, hub, error));
+      return send(res, error ? 400 : 200, terminalSignupPage(session?.username ?? null, hub, error, join, linked));
     }
-    if (req.method === 'GET') return send(res, 200, signupPage(session?.username ?? null, hub));
+    if (req.method === 'GET') return send(res, 200, signupPage(session?.username ?? null, hub, '', '', join, linked));
     const form = await readForm(req);
     const username = (form.get('username') ?? '').trim().toLowerCase();
-    if (!USERNAME.test(username)) return send(res, 400, signupPage(null, hub, 'Use 1 to 39 lowercase letters, digits or inner hyphens.', username));
+    const invite = inviteOf(form.get('invite'));
+    if (!USERNAME.test(username)) return send(res, 400, signupPage(null, hub, 'Use 1 to 39 lowercase letters, digits or inner hyphens.', username, join, invite));
     try {
       const token = await withConn(undefined, async (conn, _identity, issued) => {
-        await conn.reducers.registerUser({ username });
+        // Only a sign-up with a code calls the reducer that takes one; the module decides.
+        if (invite) await conn.reducers.registerWithInvite({ username, invite });
+        else await conn.reducers.registerUser({ username });
         return issued;
       });
       return send(res, 200, welcomePage(username, token), { 'set-cookie': sessionCookies(req, token, username) });
     } catch (err) {
-      return send(res, 400, signupPage(null, hub, errorMessage(err), username));
+      return send(res, /not allowed to join/.test(errorMessage(err)) ? 403 : 400, signupPage(null, hub, errorMessage(err), username, join, invite));
     }
   }
 
@@ -666,13 +811,13 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     // Keep ?template= through sign-in, so "Use this template" still picks it.
     if (!session) return redirect(res, `/-/login?next=${encodeURIComponent('/-/new' + url.search)}`);
     const spaces = await spacesOf(session);
-    const templates = await templatesList();
+    const [templates, visibility] = await Promise.all([templatesList(session.username), newProjectVisibility()]);
     if (req.method === 'GET') {
       const template = url.searchParams.get('template');
-      return send(res, 200, newPage(session.username, spaces, templates, '', template === null ? {} : { template }));
+      return send(res, 200, newPage(session.username, spaces, templates, visibility, '', template === null ? {} : { template }));
     }
     const form = await readForm(req);
-    const values = Object.fromEntries(['github', 'space', 'name', 'description', 'builder', 'template', 'goal'].map(k => [k, (form.get(k) ?? '').trim()]));
+    const values = Object.fromEntries(['github', 'space', 'name', 'description', 'builder', 'template', 'goal', 'visibility'].map(k => [k, (form.get(k) ?? '').trim()]));
     try {
       const source = values.github ? parseGithub(values.github) : null;
       if (values.github && !source) throw new Fail('Use a GitHub repository URL like https://github.com/owner/repo.');
@@ -696,8 +841,9 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
       }
       const project = `${owner}/${name}`;
       await withConn(session.token, async conn => {
-        if (!source && values.template) await conn.reducers.createProjectFromTemplate({ space: owner, name, description, template: values.template, goal: values.goal });
-        else await conn.reducers.createProject({ space: owner, name, description });
+        // No choice (neither box checked) leaves it to the hub's default, in the module.
+        const chosen = parseVisibility(values.visibility) ?? undefined;
+        await createProject(conn.reducers, { space: owner, name, description, visibility: chosen, ...(!source && values.template ? { template: values.template, goal: values.goal } : {}) });
         if (builder) await conn.reducers.setProjectBuilder({ project, ...builder });
         if (source) await conn.reducers.startImport({ project, source: source.url });
       });
@@ -707,7 +853,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
       }
       return redirect(res, `/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`);
     } catch (err) {
-      return send(res, 400, newPage(session.username, spaces, templates, errorMessage(err), values));
+      return send(res, 400, newPage(session.username, spaces, templates, visibility, errorMessage(err), values));
     }
   }
 
@@ -718,17 +864,19 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     const project = `${decodeURIComponent(sync[1])}/${decodeURIComponent(sync[2])}`;
     const back = `/${sync[1]}/${sync[2]}`;
     try {
+      // A project this builder may not read is no project (canRead).
+      if (!(await canReadProject(MODULE, session.username, project))) throw new Fail(`No project ${project}.`);
       const source = await withConn(session.token, async conn => {
         const sp = await findProject(conn, project);
         if (!sp) throw new Fail(`No project ${project}.`);
-        const row = await snapshot(conn, tables.projectImport.where(r => r.projectId.eq(sp.id)), () =>
-          [...conn.db.projectImport.iter()].find(r => r.projectId === sp.id)
+        const row = await snapshot(conn, tables.visibleProjectImport.where(r => r.projectId.eq(sp.id)), () =>
+          [...conn.db.visibleProjectImport.iter()].find(r => r.projectId === sp.id)
         );
         if (!row) throw new Fail(`${project} was not imported from GitHub.`);
         await conn.reducers.startImport({ project, source: row.source });
         // Projects imported before builders existed get theirs on first sync.
-        const credited = await snapshot(conn, tables.projectBuilder.where(r => r.projectId.eq(sp.id)), () =>
-          [...conn.db.projectBuilder.iter()].some(r => r.projectId === sp.id)
+        const credited = await snapshot(conn, tables.visibleProjectBuilder.where(r => r.projectId.eq(sp.id)), () =>
+          [...conn.db.visibleProjectBuilder.iter()].some(r => r.projectId === sp.id)
         );
         const owner = /^https:\/\/github\.com\/([^/]+)\//.exec(row.source)?.[1];
         if (!credited && owner) {
@@ -795,7 +943,7 @@ if (ACTIVITY_DIR) {
           .subscriptionBuilder()
           .onApplied(onApplied)
           .onError(ctx => onError(`subscription failed: ${(ctx as { event?: unknown }).event}`))
-          .subscribe(tables.activity.where(r => r.id.gt(after)));
+          .subscribe(tables.visibleActivity.where(r => r.id.gt(after)));
       },
     });
   });

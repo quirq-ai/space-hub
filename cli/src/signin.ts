@@ -27,6 +27,11 @@
 // The CLI sends the token of the GitHub account logged in on that machine
 // (gh auth token, or GH_TOKEN) and this service asks GitHub whose it is.
 //
+// Both take an invite code for a first sign-in on a hub whose join policy
+// needs one (spacehub auth login --invite <code>): {"invite": "<code>"} as the
+// JSON body of the device route, or of the token route. A refused sign-up
+// answers 403 with the module's reason ("not allowed to join this hub: ...").
+//
 // Either way the service answers with that account's builder and hub token,
 // making the builder on the first sign-in: named after the GitHub login, with
 // a new identity whose token the hub keeps (the private github_account table),
@@ -39,6 +44,7 @@ import { randomBytes } from 'node:crypto';
 import http from 'node:http';
 import { type AdminHttp, call, json, newIdentity, readJson, Reply, select } from './admin.ts';
 import { deviceCode, githubWeb, pollToken } from './device.ts';
+import { isSuspended } from './hubowner.ts';
 import type { GithubApi } from './github';
 
 export const SIGNIN_ROUTE = '/-/api/auth/github';
@@ -147,23 +153,50 @@ async function builderOf(cfg: AdminHttp, id: number) {
   return row ? { builder: String(row.username), token: String(row.token) } : null;
 }
 
-export async function signIn(cfg: SignInConfig, githubToken: string) {
-  return signInUser(cfg, await githubUser(cfg.github, githubToken));
+export async function signIn(cfg: SignInConfig, githubToken: string, invite = '') {
+  return signInUser(cfg, await githubUser(cfg.github, githubToken), invite);
+}
+
+// An invite code as sent: "" for none, else trimmed. Anything longer than the
+// module takes is passed on and refused there, with its reason.
+export function inviteOf(value: unknown): string {
+  return typeof value === 'string' ? value.trim().slice(0, 256) : '';
+}
+
+// The module's join gate refused a new builder (mayJoin): its reason, said as it is.
+export function joinRefusal(err: unknown): Reply | null {
+  const why = err instanceof Reply ? /not allowed to join this hub: [^\n"]*/.exec(err.message)?.[0] : undefined;
+  return why ? new Reply(403, why) : null;
 }
 
 // The builder of a GitHub account, made on its first sign-in (also the
-// website's sign-in, githubsignin.ts).
-export async function signInUser(cfg: SignInConfig, user: { id: number; login: string }) {
+// website's sign-in, githubsignin.ts). `invite` is a code the person brought,
+// for a hub whose join policy needs one; the module checks it.
+export async function signInUser(cfg: SignInConfig, user: { id: number; login: string }, invite = '') {
   const known = await builderOf(cfg, user.id);
-  if (known) return { ...known, created: false };
+  if (known) {
+    if (await isSuspended(cfg, known.builder)) throw new Reply(403, `the builder ${known.builder} is suspended on this hub; ask the hub's owner`);
+    // The account's login is checked just now: it may be the hub's owner,
+    // named after it signed up. A no-op otherwise; a failure only waits for
+    // the next sign-in.
+    await call(cfg, 'github_signed_in', [user.id, user.login]).catch(err => {
+      process.stderr.write(`spacehub-web: noting a GitHub sign-in: ${err instanceof Error ? err.message : String(err)}\n`);
+    });
+    return { ...known, created: false };
+  }
   if ((await accountsSetting(cfg)) === 'xo') throw new Reply(403, 'builders on this hub are made by xo: run xo login');
   const made = await newIdentity(cfg);
   try {
-    await call(cfg, 'github_link_builder', [user.id, user.login, made.identity, made.token]);
+    // Only the sign-ups that carry a code call the reducer that takes one, so a
+    // hub that has none (an older module) signs everyone else up as before.
+    if (invite) await call(cfg, 'github_link_builder_with_invite', [user.id, user.login, made.identity, made.token, invite]);
+    else await call(cfg, 'github_link_builder', [user.id, user.login, made.identity, made.token]);
   } catch (err) {
     // Another sign-in for the same account made it first: that one stands.
     const raced = await builderOf(cfg, user.id);
     if (raced) return { ...raced, created: false };
+    const refused = joinRefusal(err);
+    if (refused) throw refused;
     if (err instanceof Reply && /is taken|is reserved|a name is/.test(err.message)) {
       const why = /"[^"]*" is (taken|reserved)/.exec(err.message)?.[0] ?? err.message;
       throw new Reply(409, `cannot sign up ${user.login}: the name ${why} on this hub; ask the hub's admin`);
@@ -193,6 +226,7 @@ interface Pending {
   interval: number; // seconds between questions to GitHub
   next: number; // not asked again before this time
   until: number;
+  invite: string; // an invite code the CLI sent (spacehub auth login --invite), or ""
 }
 const pending = new Map<string, Pending>();
 export const MAX_PENDING = 500;
@@ -201,7 +235,7 @@ function prune(now: number) {
   for (const [id, p] of pending) if (p.until <= now) pending.delete(id);
 }
 
-async function startDevice(cfg: SignInConfig, app: OAuthApp) {
+async function startDevice(cfg: SignInConfig, app: OAuthApp, invite = '') {
   const now = Date.now();
   prune(now);
   if (pending.size >= MAX_PENDING) throw new Reply(429, 'too many sign-ins on this hub right now; try again in a minute');
@@ -213,7 +247,7 @@ async function startDevice(cfg: SignInConfig, app: OAuthApp) {
   }
   const session = randomBytes(32).toString('base64url');
   const interval = Math.max(1, code.interval);
-  pending.set(session, { device: code.device_code, interval, next: now + interval * 1000, until: now + code.expires_in * 1000 });
+  pending.set(session, { device: code.device_code, interval, next: now + interval * 1000, until: now + code.expires_in * 1000, invite });
   return { session, user_code: code.user_code, verification_uri: code.verification_uri, interval, expires_in: code.expires_in };
 }
 
@@ -242,7 +276,7 @@ async function pollDevice(cfg: SignInConfig, app: OAuthApp, session: unknown) {
   pending.delete(session as string);
   if (poll.kind === 'denied') throw new Reply(403, 'sign-in was cancelled on GitHub');
   if (poll.kind === 'expired') throw new Reply(410, 'the code ran out before it was entered; run spacehub auth login again');
-  return { status: 'done', ...(await signInUser(cfg, await appUser(cfg.github, app, poll.token))) };
+  return { status: 'done', ...(await signInUser(cfg, await appUser(cfg.github, app, poll.token), p.invite)) };
 }
 
 export function resetDeviceSignIns() {
@@ -268,13 +302,16 @@ export async function handleSignIn(cfg: SignInConfig | null, req: http.IncomingM
     }
     if (overLimit()) throw new Reply(429, 'too many sign-ins on this hub right now; try again in a minute');
     if (route === DEVICE_ROUTE) {
-      json(res, 200, await startDevice(cfg, cfg.app!));
+      // The CLI may send {"invite": "<code>"} (spacehub auth login --invite); older ones send {}.
+      const sent = await readJson(req).catch(() => ({}) as Record<string, unknown>);
+      json(res, 200, await startDevice(cfg, cfg.app!, inviteOf(sent.invite)));
       return true;
     }
     if (cfg.app) throw new Reply(403, 'this hub signs in with a code from GitHub, not a token: update spacehub (git pull, then scripts/install-cli.sh)');
     const m = /^Bearer (\S+)$/.exec(req.headers.authorization ?? '');
     if (!m) throw new Reply(401, 'send a GitHub token as "Authorization: Bearer <token>"');
-    json(res, 200, await signIn(cfg, m[1]));
+    const sent = req.headers['content-type']?.split(';')[0] === 'application/json' ? await readJson(req) : {};
+    json(res, 200, await signIn(cfg, m[1], inviteOf(sent.invite)));
   } catch (err) {
     // A database refusal that signIn did not turn into a 409 is not shown as it is.
     if (err instanceof Reply) json(res, err.status, { error: err.status === 530 ? 'the hub database refused this' : err.message });

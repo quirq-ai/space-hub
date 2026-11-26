@@ -95,18 +95,18 @@ export class SpaceSync {
   // resolves true. Once: resolves after one pass.
   async run(): Promise<boolean> {
     const { conn } = this.o;
-    conn.db.project.onInsert((ctx, p) => {
+    conn.db.visibleProject.onInsert((ctx, p) => {
       if (p.owner === this.space && ctx.event.tag !== 'SubscribeApplied') void this.add(p.id, p.name, p.defaultBranch);
     });
-    await this.subscribe(tables.project.where(p => p.owner.eq(this.space)));
-    const rows = [...conn.db.project.iter()].filter(p => p.owner === this.space);
+    await this.subscribe(tables.visibleProject.where(p => p.owner.eq(this.space)));
+    const rows = [...conn.db.visibleProject.iter()].filter(p => p.owner === this.space);
     for (const p of rows) await this.add(p.id, p.name, p.defaultBranch);
     if (this.o.mode === 'once') {
       for (const p of this.projects.values()) await this.pull(p);
       return false;
     }
-    conn.db.gitRef.onInsert((ctx, r) => ctx.event.tag !== 'SubscribeApplied' && this.changed(r.projectId, r.name));
-    conn.db.gitRef.onUpdate((_ctx, _old, r) => this.changed(r.projectId, r.name));
+    conn.db.visibleGitRef.onInsert((ctx, r) => ctx.event.tag !== 'SubscribeApplied' && this.changed(r.projectId, r.name));
+    conn.db.visibleGitRef.onUpdate((_ctx, _old, r) => this.changed(r.projectId, r.name));
     const done = new Promise<boolean>(resolve => {
       this.finish = resolve;
     });
@@ -162,12 +162,12 @@ export class SpaceSync {
   }
 
   private remoteOid(p: Project) {
-    return [...this.o.conn.db.gitRef.iter()].find(r => r.projectId === p.id && r.name === `refs/heads/${p.branch}`)?.oid ?? '';
+    return [...this.o.conn.db.visibleGitRef.iter()].find(r => r.projectId === p.id && r.name === `refs/heads/${p.branch}`)?.oid ?? '';
   }
 
   private async follow(p: Project) {
     if (p.paused) return this.check();
-    await this.subscribe(tables.gitRef.where(r => r.projectId.eq(p.id)));
+    await this.subscribe(tables.visibleGitRef.where(r => r.projectId.eq(p.id)));
     if (this.o.mode === 'watch') return void this.pull(p);
     if (!p.branch) {
       this.log(p.name, 'paused: not on a branch (an unfinished rebase or merge?)');

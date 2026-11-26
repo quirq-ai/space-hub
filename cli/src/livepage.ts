@@ -37,8 +37,27 @@ export const LIVE_JS = `(function () {
     if (main.querySelector('details[open]')) waiting = page;
     else apply(page);
   });
+  // The hub ended this viewer's access (signedOutEvent): stop, and say why on the sign-in page.
+  source.addEventListener('signed-out', function (e) {
+    source.close();
+    var reason = 'signed-out';
+    try { reason = JSON.parse(e.data).reason || reason; } catch (err) {}
+    location.assign('/-/login?reason=' + encodeURIComponent(reason) + '&next=' + encodeURIComponent(location.pathname + location.search));
+  });
 })();
 `;
+
+/** Why the hub signed a viewer out: the owner suspended it, or its session is no longer good. */
+export type SignedOutReason = 'suspended' | 'signed-out';
+
+/**
+ * The live stream's last event before the hub ends it on purpose: the page
+ * leaves for the sign-in page with the reason (LIVE_JS), instead of retrying
+ * into a refusal.
+ */
+export function signedOutEvent(reason: SignedOutReason): string {
+  return `event: signed-out\ndata: ${JSON.stringify({ type: 'signed-out', reason })}\n\n`;
+}
 
 // Which changes a page follows: the home page everything, a space's page
 // that space, a project's pages that project. The hub's own pages (/-/...),
@@ -67,4 +86,20 @@ export function pageParts(html: string): { title: string; main: string } | null 
   if (!main) return null;
   const title = /<title>([\s\S]*?)<\/title>/.exec(html)?.[1] ?? '';
   return { title: title.replace(/&(amp|lt|gt|quot|#39);/g, m => ENTITIES[m]), main: main[1] };
+}
+
+/**
+ * End the live pages opened by the builder `name` (the owner just suspended
+ * it): each is told why first (signedOutEvent), so the page goes to the
+ * sign-in page and says so. The number ended. Used by live.ts closeFor.
+ */
+export function closeBuilder(clients: Iterable<{ builder: string | null; res: { write(chunk: string): unknown; end(): void } }>, name: string): number {
+  let ended = 0;
+  for (const c of [...clients]) {
+    if (c.builder !== name) continue;
+    c.res.write(signedOutEvent('suspended'));
+    c.res.end();
+    ended++;
+  }
+  return ended;
 }

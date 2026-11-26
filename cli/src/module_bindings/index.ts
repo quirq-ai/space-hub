@@ -36,43 +36,61 @@ import {
 // Import all reducer arg schemas
 import AddProjectMemberReducer from "./add_project_member_reducer";
 import AddSpaceMemberReducer from "./add_space_member_reducer";
+import AllowJoinReducer from "./allow_join_reducer";
+import AnswerQuestionReducer from "./answer_question_reducer";
 import AppendChatReducer from "./append_chat_reducer";
+import AskQuestionReducer from "./ask_question_reducer";
 import ClaimAdminReducer from "./claim_admin_reducer";
+import ClaimQuestionReducer from "./claim_question_reducer";
 import ConnectAgentReducer from "./connect_agent_reducer";
 import CreateAgentReducer from "./create_agent_reducer";
+import CreateInviteReducer from "./create_invite_reducer";
 import CreateOrgReducer from "./create_org_reducer";
 import CreateProjectReducer from "./create_project_reducer";
 import CreateProjectFromTemplateReducer from "./create_project_from_template_reducer";
+import CreateProjectFromTemplateWithVisibilityReducer from "./create_project_from_template_with_visibility_reducer";
+import CreateProjectWithVisibilityReducer from "./create_project_with_visibility_reducer";
 import DeleteAgentReducer from "./delete_agent_reducer";
 import DeleteBuilderReducer from "./delete_builder_reducer";
 import DeleteOrgReducer from "./delete_org_reducer";
 import DeleteProjectReducer from "./delete_project_reducer";
+import DisallowJoinReducer from "./disallow_join_reducer";
 import DisconnectAgentReducer from "./disconnect_agent_reducer";
 import EditProjectReducer from "./edit_project_reducer";
 import EditSpaceReducer from "./edit_space_reducer";
 import FinishObjectReducer from "./finish_object_reducer";
 import GithubLinkBuilderReducer from "./github_link_builder_reducer";
+import GithubLinkBuilderWithInviteReducer from "./github_link_builder_with_invite_reducer";
+import GithubSignedInReducer from "./github_signed_in_reducer";
 import LinkSpaceReducer from "./link_space_reducer";
+import OpenRepoRoomReducer from "./open_repo_room_reducer";
 import PutChunkReducer from "./put_chunk_reducer";
 import PutObjectsReducer from "./put_objects_reducer";
+import RebuildAccessReducer from "./rebuild_access_reducer";
 import RecordRefSyncReducer from "./record_ref_sync_reducer";
 import RegisterUserReducer from "./register_user_reducer";
+import RegisterWithInviteReducer from "./register_with_invite_reducer";
 import RemoveProjectMemberReducer from "./remove_project_member_reducer";
 import RemoveSpaceMemberReducer from "./remove_space_member_reducer";
 import RequestSyncReducer from "./request_sync_reducer";
+import RestoreBuilderReducer from "./restore_builder_reducer";
+import RevokeInviteReducer from "./revoke_invite_reducer";
 import RunnerAddReducer from "./runner_add_reducer";
 import RunnerDeleteReducer from "./runner_delete_reducer";
 import RunnerUpdateReducer from "./runner_update_reducer";
 import SetAccountsReducer from "./set_accounts_reducer";
+import SetDefaultVisibilityReducer from "./set_default_visibility_reducer";
+import SetJoinPolicyReducer from "./set_join_policy_reducer";
 import SetLinkStatusReducer from "./set_link_status_reducer";
+import SetMembersOnlyReducer from "./set_members_only_reducer";
+import SetOwnerLoginReducer from "./set_owner_login_reducer";
 import SetProjectBuilderReducer from "./set_project_builder_reducer";
+import SetProjectVisibilityReducer from "./set_project_visibility_reducer";
 import SetSpaceGithubReducer from "./set_space_github_reducer";
+import SetWebSecretReducer from "./set_web_secret_reducer";
 import StartChatReducer from "./start_chat_reducer";
-import OpenRepoRoomReducer from "./open_repo_room_reducer";
-import AskQuestionReducer from "./ask_question_reducer";
-import ClaimQuestionReducer from "./claim_question_reducer";
-import AnswerQuestionReducer from "./answer_question_reducer";
 import StartImportReducer from "./start_import_reducer";
+import SuspendBuilderReducer from "./suspend_builder_reducer";
 import UnlinkSpaceReducer from "./unlink_space_reducer";
 import UnwatchReducer from "./unwatch_reducer";
 import UpdateImportReducer from "./update_import_reducer";
@@ -87,373 +105,236 @@ import XoPutRecordReducer from "./xo_put_record_reducer";
 
 // Import all procedure arg schemas
 import * as AgentTokenProcedure from "./agent_token_procedure";
+import * as CheckAccessProcedure from "./check_access_procedure";
 import * as ClientProtocolProcedure from "./client_protocol_procedure";
 
 // Import all table schema definitions
-import ActivityRow from "./activity_table";
-import AgentRow from "./agent_table";
-import GitObjectRow from "./git_object_table";
-import GitRefRow from "./git_ref_table";
-import ObjectChunkRow from "./object_chunk_table";
-import PresenceRow from "./presence_table";
-import ProjectRow from "./project_table";
-import ProjectBuilderRow from "./project_builder_table";
-import ProjectImportRow from "./project_import_table";
-import ProjectMemberRow from "./project_member_table";
-import ProjectSizeRow from "./project_size_table";
-import QuestionRow from "./question_table";
-import RefSyncRow from "./ref_sync_table";
-import SpaceRow from "./space_table";
-import SpaceAliasRow from "./space_alias_table";
-import SpaceGithubRow from "./space_github_table";
-import SpaceLinkRow from "./space_link_table";
-import SpaceRoleRow from "./space_role_table";
-import UserRow from "./user_table";
+import VisibleActivityRow from "./visible_activity_table";
+import VisibleAgentRow from "./visible_agent_table";
+import VisibleGitObjectRow from "./visible_git_object_table";
+import VisibleGitRefRow from "./visible_git_ref_table";
+import VisibleObjectChunkRow from "./visible_object_chunk_table";
+import VisiblePresenceRow from "./visible_presence_table";
+import VisibleProjectRow from "./visible_project_table";
+import VisibleProjectBuilderRow from "./visible_project_builder_table";
+import VisibleProjectImportRow from "./visible_project_import_table";
+import VisibleProjectMemberRow from "./visible_project_member_table";
+import VisibleProjectSizeRow from "./visible_project_size_table";
+import VisibleProjectVisibilityRow from "./visible_project_visibility_table";
+import VisibleQuestionRow from "./visible_question_table";
+import VisibleRefSyncRow from "./visible_ref_sync_table";
+import VisibleSpaceRow from "./visible_space_table";
+import VisibleSpaceAliasRow from "./visible_space_alias_table";
+import VisibleSpaceGithubRow from "./visible_space_github_table";
+import VisibleSpaceLinkRow from "./visible_space_link_table";
+import VisibleSpaceRoleRow from "./visible_space_role_table";
+import VisibleUserRow from "./visible_user_table";
 
 /** Type-only namespace exports for generated type groups. */
 
 /** The schema information for all tables in this module. This is defined the same was as the tables would have been defined in the server. */
 const tablesSchema = __schema({
-  activity: __table({
-    name: 'activity',
+  visibleActivity: __table({
+    name: 'visible_activity',
     indexes: [
-      { accessor: 'at', name: 'activity_at_idx_btree', algorithm: 'btree', columns: [
-        'at',
-      ] },
-      { accessor: 'id', name: 'activity_id_idx_btree', algorithm: 'btree', columns: [
-        'id',
-      ] },
-      { accessor: 'projectId', name: 'activity_project_id_idx_btree', algorithm: 'btree', columns: [
-        'projectId',
-      ] },
     ],
     constraints: [
-      { name: 'activity_id_key', constraint: 'unique', columns: ['id'] },
     ],
-  }, ActivityRow),
-  agent: __table({
-    name: 'agent',
+  }, VisibleActivityRow),
+  visibleAgent: __table({
+    name: 'visible_agent',
     indexes: [
-      { accessor: 'identity', name: 'agent_identity_idx_btree', algorithm: 'btree', columns: [
-        'identity',
-      ] },
-      { accessor: 'name', name: 'agent_name_idx_btree', algorithm: 'btree', columns: [
-        'name',
-      ] },
     ],
     constraints: [
-      { name: 'agent_identity_key', constraint: 'unique', columns: ['identity'] },
-      { name: 'agent_name_key', constraint: 'unique', columns: ['name'] },
     ],
-  }, AgentRow),
-  gitObject: __table({
-    name: 'git_object',
+  }, VisibleAgentRow),
+  visibleGitObject: __table({
+    name: 'visible_git_object',
     indexes: [
-      { accessor: 'id', name: 'git_object_id_idx_btree', algorithm: 'btree', columns: [
-        'id',
-      ] },
-      { accessor: 'key', name: 'git_object_key_idx_btree', algorithm: 'btree', columns: [
-        'key',
-      ] },
-      { accessor: 'byProjectPos', name: 'git_object_project_id_pos_idx_btree', algorithm: 'btree', columns: [
-        'projectId',
-        'pos',
-      ] },
     ],
     constraints: [
-      { name: 'git_object_id_key', constraint: 'unique', columns: ['id'] },
-      { name: 'git_object_key_key', constraint: 'unique', columns: ['key'] },
     ],
-  }, GitObjectRow),
-  gitRef: __table({
-    name: 'git_ref',
+  }, VisibleGitObjectRow),
+  visibleGitRef: __table({
+    name: 'visible_git_ref',
     indexes: [
-      { accessor: 'id', name: 'git_ref_id_idx_btree', algorithm: 'btree', columns: [
-        'id',
-      ] },
-      { accessor: 'key', name: 'git_ref_key_idx_btree', algorithm: 'btree', columns: [
-        'key',
-      ] },
-      { accessor: 'projectId', name: 'git_ref_project_id_idx_btree', algorithm: 'btree', columns: [
-        'projectId',
-      ] },
     ],
     constraints: [
-      { name: 'git_ref_id_key', constraint: 'unique', columns: ['id'] },
-      { name: 'git_ref_key_key', constraint: 'unique', columns: ['key'] },
     ],
-  }, GitRefRow),
-  objectChunk: __table({
-    name: 'object_chunk',
+  }, VisibleGitRefRow),
+  visibleObjectChunk: __table({
+    name: 'visible_object_chunk',
     indexes: [
-      { accessor: 'id', name: 'object_chunk_id_idx_btree', algorithm: 'btree', columns: [
-        'id',
-      ] },
-      { accessor: 'key', name: 'object_chunk_key_idx_btree', algorithm: 'btree', columns: [
-        'key',
-      ] },
-      { accessor: 'byProjectOid', name: 'object_chunk_project_id_oid_idx_btree', algorithm: 'btree', columns: [
-        'projectId',
-        'oid',
-      ] },
     ],
     constraints: [
-      { name: 'object_chunk_id_key', constraint: 'unique', columns: ['id'] },
-      { name: 'object_chunk_key_key', constraint: 'unique', columns: ['key'] },
     ],
-  }, ObjectChunkRow),
-  presence: __table({
-    name: 'presence',
+  }, VisibleObjectChunkRow),
+  visiblePresence: __table({
+    name: 'visible_presence',
     indexes: [
-      { accessor: 'connectionId', name: 'presence_connection_id_idx_btree', algorithm: 'btree', columns: [
-        'connectionId',
-      ] },
-      { accessor: 'projectId', name: 'presence_project_id_idx_btree', algorithm: 'btree', columns: [
-        'projectId',
-      ] },
     ],
     constraints: [
-      { name: 'presence_connection_id_key', constraint: 'unique', columns: ['connectionId'] },
     ],
-  }, PresenceRow),
-  project: __table({
-    name: 'project',
+  }, VisiblePresenceRow),
+  visibleProject: __table({
+    name: 'visible_project',
     indexes: [
-      { accessor: 'fullName', name: 'project_full_name_idx_btree', algorithm: 'btree', columns: [
-        'fullName',
-      ] },
-      { accessor: 'id', name: 'project_id_idx_btree', algorithm: 'btree', columns: [
-        'id',
-      ] },
-      { accessor: 'owner', name: 'project_owner_idx_btree', algorithm: 'btree', columns: [
-        'owner',
-      ] },
     ],
     constraints: [
-      { name: 'project_full_name_key', constraint: 'unique', columns: ['fullName'] },
-      { name: 'project_id_key', constraint: 'unique', columns: ['id'] },
     ],
-  }, ProjectRow),
-  projectBuilder: __table({
-    name: 'project_builder',
+  }, VisibleProjectRow),
+  visibleProjectBuilder: __table({
+    name: 'visible_project_builder',
     indexes: [
-      { accessor: 'handle', name: 'project_builder_handle_idx_btree', algorithm: 'btree', columns: [
-        'handle',
-      ] },
-      { accessor: 'projectId', name: 'project_builder_project_id_idx_btree', algorithm: 'btree', columns: [
-        'projectId',
-      ] },
     ],
     constraints: [
-      { name: 'project_builder_project_id_key', constraint: 'unique', columns: ['projectId'] },
     ],
-  }, ProjectBuilderRow),
-  projectImport: __table({
-    name: 'project_import',
+  }, VisibleProjectBuilderRow),
+  visibleProjectImport: __table({
+    name: 'visible_project_import',
     indexes: [
-      { accessor: 'projectId', name: 'project_import_project_id_idx_btree', algorithm: 'btree', columns: [
-        'projectId',
-      ] },
     ],
     constraints: [
-      { name: 'project_import_project_id_key', constraint: 'unique', columns: ['projectId'] },
     ],
-  }, ProjectImportRow),
-  projectMember: __table({
-    name: 'project_member',
+  }, VisibleProjectImportRow),
+  visibleProjectMember: __table({
+    name: 'visible_project_member',
     indexes: [
-      { accessor: 'agent', name: 'project_member_agent_idx_btree', algorithm: 'btree', columns: [
-        'agent',
-      ] },
-      { accessor: 'id', name: 'project_member_id_idx_btree', algorithm: 'btree', columns: [
-        'id',
-      ] },
-      { accessor: 'key', name: 'project_member_key_idx_btree', algorithm: 'btree', columns: [
-        'key',
-      ] },
-      { accessor: 'projectId', name: 'project_member_project_id_idx_btree', algorithm: 'btree', columns: [
-        'projectId',
-      ] },
     ],
     constraints: [
-      { name: 'project_member_id_key', constraint: 'unique', columns: ['id'] },
-      { name: 'project_member_key_key', constraint: 'unique', columns: ['key'] },
     ],
-  }, ProjectMemberRow),
-  projectSize: __table({
-    name: 'project_size',
+  }, VisibleProjectMemberRow),
+  visibleProjectSize: __table({
+    name: 'visible_project_size',
     indexes: [
-      { accessor: 'projectId', name: 'project_size_project_id_idx_btree', algorithm: 'btree', columns: [
-        'projectId',
-      ] },
     ],
     constraints: [
-      { name: 'project_size_project_id_key', constraint: 'unique', columns: ['projectId'] },
     ],
-  }, ProjectSizeRow),
-  question: __table({
-    name: 'question',
+  }, VisibleProjectSizeRow),
+  visibleProjectVisibility: __table({
+    name: 'visible_project_visibility',
     indexes: [
-      { accessor: 'asker', name: 'question_asker_idx_btree', algorithm: 'btree', columns: [
-        'asker',
-      ] },
-      { accessor: 'key', name: 'question_key_idx_btree', algorithm: 'btree', columns: [
-        'key',
-      ] },
-      { accessor: 'projectId', name: 'question_project_id_idx_btree', algorithm: 'btree', columns: [
-        'projectId',
-      ] },
-      { accessor: 'space', name: 'question_space_idx_btree', algorithm: 'btree', columns: [
-        'space',
-      ] },
     ],
     constraints: [
-      { name: 'question_key_key', constraint: 'unique', columns: ['key'] },
     ],
-  }, QuestionRow),
-  refSync: __table({
-    name: 'ref_sync',
+  }, VisibleProjectVisibilityRow),
+  visibleQuestion: __table({
+    name: 'visible_question',
     indexes: [
-      { accessor: 'key', name: 'ref_sync_key_idx_btree', algorithm: 'btree', columns: [
-        'key',
-      ] },
-      { accessor: 'projectId', name: 'ref_sync_project_id_idx_btree', algorithm: 'btree', columns: [
-        'projectId',
-      ] },
     ],
     constraints: [
-      { name: 'ref_sync_key_key', constraint: 'unique', columns: ['key'] },
     ],
-  }, RefSyncRow),
-  space: __table({
-    name: 'space',
+  }, VisibleQuestionRow),
+  visibleRefSync: __table({
+    name: 'visible_ref_sync',
     indexes: [
-      { accessor: 'kind', name: 'space_kind_idx_btree', algorithm: 'btree', columns: [
-        'kind',
-      ] },
-      { accessor: 'name', name: 'space_name_idx_btree', algorithm: 'btree', columns: [
-        'name',
-      ] },
     ],
     constraints: [
-      { name: 'space_name_key', constraint: 'unique', columns: ['name'] },
     ],
-  }, SpaceRow),
-  spaceAlias: __table({
-    name: 'space_alias',
+  }, VisibleRefSyncRow),
+  visibleSpace: __table({
+    name: 'visible_space',
     indexes: [
-      { accessor: 'name', name: 'space_alias_name_idx_btree', algorithm: 'btree', columns: [
-        'name',
-      ] },
-      { accessor: 'space', name: 'space_alias_space_idx_btree', algorithm: 'btree', columns: [
-        'space',
-      ] },
     ],
     constraints: [
-      { name: 'space_alias_name_key', constraint: 'unique', columns: ['name'] },
     ],
-  }, SpaceAliasRow),
-  spaceGithub: __table({
-    name: 'space_github',
+  }, VisibleSpaceRow),
+  visibleSpaceAlias: __table({
+    name: 'visible_space_alias',
     indexes: [
-      { accessor: 'space', name: 'space_github_space_idx_btree', algorithm: 'btree', columns: [
-        'space',
-      ] },
     ],
     constraints: [
-      { name: 'space_github_space_key', constraint: 'unique', columns: ['space'] },
     ],
-  }, SpaceGithubRow),
-  spaceLink: __table({
-    name: 'space_link',
+  }, VisibleSpaceAliasRow),
+  visibleSpaceGithub: __table({
+    name: 'visible_space_github',
     indexes: [
-      { accessor: 'space', name: 'space_link_space_idx_btree', algorithm: 'btree', columns: [
-        'space',
-      ] },
     ],
     constraints: [
-      { name: 'space_link_space_key', constraint: 'unique', columns: ['space'] },
     ],
-  }, SpaceLinkRow),
-  spaceRole: __table({
-    name: 'space_role',
+  }, VisibleSpaceGithubRow),
+  visibleSpaceLink: __table({
+    name: 'visible_space_link',
     indexes: [
-      { accessor: 'id', name: 'space_role_id_idx_btree', algorithm: 'btree', columns: [
-        'id',
-      ] },
-      { accessor: 'key', name: 'space_role_key_idx_btree', algorithm: 'btree', columns: [
-        'key',
-      ] },
-      { accessor: 'member', name: 'space_role_member_idx_btree', algorithm: 'btree', columns: [
-        'member',
-      ] },
-      { accessor: 'space', name: 'space_role_space_idx_btree', algorithm: 'btree', columns: [
-        'space',
-      ] },
     ],
     constraints: [
-      { name: 'space_role_id_key', constraint: 'unique', columns: ['id'] },
-      { name: 'space_role_key_key', constraint: 'unique', columns: ['key'] },
     ],
-  }, SpaceRoleRow),
-  user: __table({
-    name: 'user',
+  }, VisibleSpaceLinkRow),
+  visibleSpaceRole: __table({
+    name: 'visible_space_role',
     indexes: [
-      { accessor: 'identity', name: 'user_identity_idx_btree', algorithm: 'btree', columns: [
-        'identity',
-      ] },
-      { accessor: 'username', name: 'user_username_idx_btree', algorithm: 'btree', columns: [
-        'username',
-      ] },
     ],
     constraints: [
-      { name: 'user_identity_key', constraint: 'unique', columns: ['identity'] },
-      { name: 'user_username_key', constraint: 'unique', columns: ['username'] },
     ],
-  }, UserRow),
+  }, VisibleSpaceRoleRow),
+  visibleUser: __table({
+    name: 'visible_user',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, VisibleUserRow),
 });
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
   __reducerSchema("add_project_member", AddProjectMemberReducer),
   __reducerSchema("add_space_member", AddSpaceMemberReducer),
+  __reducerSchema("allow_join", AllowJoinReducer),
   __reducerSchema("answer_question", AnswerQuestionReducer),
-  __reducerSchema("ask_question", AskQuestionReducer),
   __reducerSchema("append_chat", AppendChatReducer),
+  __reducerSchema("ask_question", AskQuestionReducer),
   __reducerSchema("claim_admin", ClaimAdminReducer),
   __reducerSchema("claim_question", ClaimQuestionReducer),
   __reducerSchema("connect_agent", ConnectAgentReducer),
   __reducerSchema("create_agent", CreateAgentReducer),
+  __reducerSchema("create_invite", CreateInviteReducer),
   __reducerSchema("create_org", CreateOrgReducer),
   __reducerSchema("create_project", CreateProjectReducer),
   __reducerSchema("create_project_from_template", CreateProjectFromTemplateReducer),
+  __reducerSchema("create_project_from_template_with_visibility", CreateProjectFromTemplateWithVisibilityReducer),
+  __reducerSchema("create_project_with_visibility", CreateProjectWithVisibilityReducer),
   __reducerSchema("delete_agent", DeleteAgentReducer),
   __reducerSchema("delete_builder", DeleteBuilderReducer),
   __reducerSchema("delete_org", DeleteOrgReducer),
   __reducerSchema("delete_project", DeleteProjectReducer),
+  __reducerSchema("disallow_join", DisallowJoinReducer),
   __reducerSchema("disconnect_agent", DisconnectAgentReducer),
   __reducerSchema("edit_project", EditProjectReducer),
   __reducerSchema("edit_space", EditSpaceReducer),
   __reducerSchema("finish_object", FinishObjectReducer),
   __reducerSchema("github_link_builder", GithubLinkBuilderReducer),
+  __reducerSchema("github_link_builder_with_invite", GithubLinkBuilderWithInviteReducer),
+  __reducerSchema("github_signed_in", GithubSignedInReducer),
   __reducerSchema("link_space", LinkSpaceReducer),
   __reducerSchema("open_repo_room", OpenRepoRoomReducer),
   __reducerSchema("put_chunk", PutChunkReducer),
   __reducerSchema("put_objects", PutObjectsReducer),
+  __reducerSchema("rebuild_access", RebuildAccessReducer),
   __reducerSchema("record_ref_sync", RecordRefSyncReducer),
   __reducerSchema("register_user", RegisterUserReducer),
+  __reducerSchema("register_with_invite", RegisterWithInviteReducer),
   __reducerSchema("remove_project_member", RemoveProjectMemberReducer),
   __reducerSchema("remove_space_member", RemoveSpaceMemberReducer),
   __reducerSchema("request_sync", RequestSyncReducer),
+  __reducerSchema("restore_builder", RestoreBuilderReducer),
+  __reducerSchema("revoke_invite", RevokeInviteReducer),
   __reducerSchema("runner_add", RunnerAddReducer),
   __reducerSchema("runner_delete", RunnerDeleteReducer),
   __reducerSchema("runner_update", RunnerUpdateReducer),
   __reducerSchema("set_accounts", SetAccountsReducer),
+  __reducerSchema("set_default_visibility", SetDefaultVisibilityReducer),
+  __reducerSchema("set_join_policy", SetJoinPolicyReducer),
   __reducerSchema("set_link_status", SetLinkStatusReducer),
+  __reducerSchema("set_members_only", SetMembersOnlyReducer),
+  __reducerSchema("set_owner_login", SetOwnerLoginReducer),
   __reducerSchema("set_project_builder", SetProjectBuilderReducer),
+  __reducerSchema("set_project_visibility", SetProjectVisibilityReducer),
   __reducerSchema("set_space_github", SetSpaceGithubReducer),
+  __reducerSchema("set_web_secret", SetWebSecretReducer),
   __reducerSchema("start_chat", StartChatReducer),
   __reducerSchema("start_import", StartImportReducer),
+  __reducerSchema("suspend_builder", SuspendBuilderReducer),
   __reducerSchema("unlink_space", UnlinkSpaceReducer),
   __reducerSchema("unwatch", UnwatchReducer),
   __reducerSchema("update_import", UpdateImportReducer),
@@ -470,6 +351,7 @@ const reducersSchema = __reducers(
 /** The schema information for all procedures in this module. This is defined the same way as the procedures would have been defined in the server. */
 const proceduresSchema = __procedures(
   __procedureSchema("agent_token", AgentTokenProcedure.params, AgentTokenProcedure.returnType),
+  __procedureSchema("check_access", CheckAccessProcedure.params, CheckAccessProcedure.returnType),
   __procedureSchema("client_protocol", ClientProtocolProcedure.params, ClientProtocolProcedure.returnType),
 );
 

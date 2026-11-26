@@ -101,6 +101,24 @@ test('a hub without the admin token opens no rooms, and opening is limited per m
   s.server.close();
 });
 
+test('on a hub that chooses who joins, only builders open new rooms; existing rooms open for all', async () => {
+  const { deps, opened, rooms } = fake({ buildersOnly: async () => true });
+  const s = await serve(deps);
+  assert.equal((await s.get('/gh/octo/hello-world')).status, 403);
+  const explained = await s.explain({ url: 'https://github.com/octo/hello-world' });
+  assert.equal(explained.status, 403);
+  assert.match(String(((await explained.json()) as { error: string }).error), /only its builders open new rooms/);
+  assert.equal(opened.length, 0);
+  assert.equal((await s.get('/gh/octo/hello-world', 'spacehub_session=tok')).status, 303);
+  assert.ok(rooms.has('explain/octo.hello-world'));
+  assert.equal((await s.get('/gh/octo/hello-world')).status, 303, 'signed out reaches the room once it exists');
+  s.server.close();
+  // A policy that cannot be read refuses nobody here (the module still does).
+  const unread = await serve(fake({ buildersOnly: async () => { throw new Error('down'); } }).deps);
+  assert.equal((await unread.get('/gh/octo/hello-world')).status, 303);
+  unread.server.close();
+});
+
 test('asking needs a session and passes the module\'s caps on', async () => {
   const { deps, asked } = fake();
   const s = await serve(deps);

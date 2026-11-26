@@ -51,18 +51,18 @@ export class AgentRun {
     const { conn } = await connectTo(this.o.server, this.o.db, this.o.token, { reconnect: true });
     this.main = conn;
     const me = this.o.agent;
-    conn.db.spaceRole.onInsert((ctx, r) => {
+    conn.db.visibleSpaceRole.onInsert((ctx, r) => {
       if (r.member === me && ctx.event.tag !== 'SubscribeApplied') void this.start(r.space);
     });
-    conn.db.spaceRole.onDelete((ctx, r) => {
+    conn.db.visibleSpaceRole.onDelete((ctx, r) => {
       if (r.member === me && ctx.event.tag !== 'UnsubscribeApplied') void this.drop(r.space);
     });
     const connected = await new Promise<string[]>((resolve, reject) =>
       conn
         .subscriptionBuilder()
-        .onApplied(() => resolve([...conn.db.spaceRole.iter()].filter(r => r.member === me).map(r => r.space)))
+        .onApplied(() => resolve([...conn.db.visibleSpaceRole.iter()].filter(r => r.member === me).map(r => r.space)))
         .onError(ctx => reject(new Error(`subscription failed: ${(ctx as { event?: unknown }).event}`)))
-        .subscribe(tables.spaceRole.where(r => r.member.eq(me)))
+        .subscribe(tables.visibleSpaceRole.where(r => r.member.eq(me)))
     );
     for (const space of [me, ...connected]) await this.start(space);
     await new Promise<void>(resolve => {

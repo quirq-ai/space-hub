@@ -1,6 +1,7 @@
 // Sign up and sign in to this website with GitHub, served by the web service:
 //
 //   GET /-/login/github?next=/path    off to GitHub, to approve the hub's OAuth App
+//       (&invite=<code>: a first sign-in on a hub whose join policy needs a code)
 //   GET /-/login/github/callback      back from it, signed in as that account's builder
 //
 // The same OAuth App and the same builders as the CLI's sign-in (signin.ts):
@@ -32,6 +33,7 @@ interface Pending {
   redirect: string;
   next: string;
   until: number;
+  invite: string; // an invite code from the sign-up page, or ""
 }
 const pending = new Map<string, Pending>();
 export const MAX_PENDING = 500;
@@ -48,8 +50,9 @@ export function resetGithubSignIns() {
 const b64url = (b: Buffer) => b.toString('base64url');
 
 // A new sign-in: its state (for the cookie) and where to send the browser.
-// `redirect` is this hub's callback, as the browser reached it.
-export function startSignIn(cfg: SignInConfig, redirect: string, next: string, now = Date.now()): { state: string; location: string } {
+// `redirect` is this hub's callback, as the browser reached it; `invite` an
+// invite code the person brought (kept here, never sent to GitHub).
+export function startSignIn(cfg: SignInConfig, redirect: string, next: string, now = Date.now(), invite = ''): { state: string; location: string } {
   if (!cfg.app) throw new Reply(404, 'Sign-in with GitHub is not set up on this hub.');
   for (const [id, p] of pending) if (p.until <= now) pending.delete(id);
   if (now - window.start >= 60_000) window = { start: now, count: 0 };
@@ -58,7 +61,7 @@ export function startSignIn(cfg: SignInConfig, redirect: string, next: string, n
   }
   const state = b64url(randomBytes(32));
   const verifier = b64url(randomBytes(48));
-  pending.set(state, { verifier, redirect, next, until: now + WAIT_SECONDS * 1000 });
+  pending.set(state, { verifier, redirect, next, until: now + WAIT_SECONDS * 1000, invite });
   const query = new URLSearchParams({
     client_id: cfg.app.clientId,
     redirect_uri: redirect,
@@ -104,6 +107,6 @@ export async function finishSignIn(cfg: SignInConfig, back: Returned, now = Date
   } catch (err) {
     throw new Reply(502, (err as Error).message);
   }
-  const out = await signInUser(cfg, await appUser(cfg.github, cfg.app, token));
+  const out = await signInUser(cfg, await appUser(cfg.github, cfg.app, token), p.invite);
   return { username: out.builder, token: out.token, next: p.next, created: out.created };
 }

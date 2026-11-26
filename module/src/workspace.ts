@@ -13,8 +13,9 @@
 //
 // Reads come straight from the tables, so nothing is cached and every answer
 // is current. Writes go through the append_chat reducer (chat.ts).
-import { PRESENCE_STALE_SECONDS, inSpace, objectKey, readObject, refKey, spaceFor, type Db } from './store';
+import { PRESENCE_STALE_SECONDS, inSpace, isPrivate, objectKey, ownsSpace, readObject, refKey, spaceFor, type Db, type Visibility } from './store';
 import { Sha1 } from './sha1';
+import { readerDb } from './reader';
 import { CodeError, README_BYTES, commitView, commitsView, filesView, refsView, treeView } from './code';
 import { DEPS_FILE, depsText, depsView, parseDeps } from './deps';
 import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_FILES, SPACE_FILE, parseSpace, progressOf, textFiles, type SpaceGoal, type TemplateFile } from './space';
@@ -70,6 +71,8 @@ export interface Entry {
   goal?: string;
   progress?: { done: number; total: number };
   template?: boolean;
+  /** A private project (project_visibility); absent when public. Only projects the viewer reads are listed. */
+  private?: boolean;
 }
 
 /** A Markdown document of a folder, shown under its listing. */
@@ -125,6 +128,8 @@ export interface ProjectCard {
   fullName: string;
   description: string;
   pushedAt: string;
+  /** A private project; absent when public. */
+  private?: boolean;
 }
 
 /** An agent seen from a space: whether the space owns it, whether it may push here, where it runs. */
@@ -173,6 +178,8 @@ export type Meta =
       /** Agents connected to this space or owned by it, for the Agents tab. */
       agentList: AgentInfo[];
       collaborates: string[];
+      /** Which of `collaborates` are private projects. */
+      privateCollaborates: string[];
       here: Here[];
       activity: ActivityItem[];
       activityTotal: number;
@@ -191,6 +198,12 @@ export type Meta =
       /** Repositories pinned by the DEPS file at the root (deps.ts); 0 without one. */
       deps: number;
       canWrite: boolean;
+      /** Who may read it: anyone who reads the hub, or (private) its space's owners and members, collaborators and their agents. */
+      visibility: Visibility;
+      /** The viewer owns the project's space, so may change its visibility (setProjectVisibility). */
+      canSetVisibility: boolean;
+      /** The viewer owns the project's space, so may add and remove its collaborators (addProjectMember, removeProjectMember). */
+      canManageCollaborators: boolean;
       /** Who started the project's org (see the space meta); "" in a builder's space. */
       founder: string;
       owners: string[];
@@ -580,6 +593,11 @@ function rootId(key: string) {
   return new Sha1().update(encoder.encode(`hub\0${key}`)).hex();
 }
 
+// `private: true` for a private project, nothing for a public one. `db` is the
+// viewer's (readerDb), which holds visibility rows only of projects the viewer
+// reads, so nothing is said of any other.
+const privateFlag = (db: Db, projectId: bigint): { private?: boolean } => (isPrivate(db, projectId) ? { private: true } : {});
+
 const isAgent = (db: Db, name: string) => db.space.name.find(name)?.kind === 'agent';
 
 /** Owners, the people who are members, and the agents connected as members. */
@@ -681,7 +699,7 @@ function hubLevel(db: Db, now: number) {
       ...activity(db, () => true),
       here: here(db, now, () => true),
       allProjects: projects
-        .map(project => ({ fullName: project.fullName, description: project.description, pushedAt: iso(project.pushedAt) }))
+        .map(project => ({ fullName: project.fullName, description: project.description, pushedAt: iso(project.pushedAt), ...privateFlag(db, project.id) }))
         .sort((a, b) => b.pushedAt.localeCompare(a.pushedAt))
         .slice(0, 1000),
       // Every agent on the hub, running ones first, for the home page's Agents tab.
@@ -702,6 +720,7 @@ function spaceLevel(db: Db, name: string, now: number) {
     .map(project => ({
       ...entryOf(project.name, 'directory', 0, iso(project.pushedAt), project.description || `${headOf(db, project) ? 'branch ' + project.defaultBranch : 'empty'}`),
       ...goalFields(goalOf(db, project)),
+      ...privateFlag(db, project.id),
     }))
     .sort(compareEntries);
   const { owners, members } = rolesOf(db, name);
@@ -730,6 +749,7 @@ function spaceLevel(db: Db, name: string, now: number) {
       agents: [...db.space.kind.filter('agent')].filter(agent => agent.parent === name).map(agent => agent.name).sort(),
       agentList,
       collaborates: [...db.projectMember.agent.filter(name)].map(row => db.project.id.find(row.projectId)?.fullName ?? '').filter(Boolean).sort(),
+      privateCollaborates: [...db.projectMember.agent.filter(name)].filter(row => isPrivate(db, row.projectId)).map(row => db.project.id.find(row.projectId)?.fullName ?? '').filter(Boolean).sort(),
       here: here(db, now, row => (row.projectId === 0n ? row.space === name : ids.has(row.projectId)) || row.agent === name),
       ...activity(db, spaceKeep(db, name)),
       ...(isExplainSpace(db, name) ? { rooms: true } : {}),
@@ -793,6 +813,10 @@ function projectLevel(db: Db, project: Project, requested: string, viewer: strin
       head: commit ? { oid: head, subject: commit.subject, author: commit.author, time } : null,
       deps,
       canWrite,
+      visibility: isPrivate(db, project.id) ? 'private' : 'public',
+      canSetVisibility: ownsSpace(db, project.owner, viewer),
+      // The reducers' rule for a builder: requireProjectAdmin (owners of the space; the syncer is never a web viewer).
+      canManageCollaborators: ownsSpace(db, project.owner, viewer),
       ...projectPeople(db, project),
       here: here(db, now, row => row.projectId === project.id),
       ...activity(db, row => row.projectId === project.id),
@@ -913,7 +937,7 @@ export function parseQuery(qs: string) {
 
 export interface ApiRequest {
   query: Map<string, string>;
-  /** The signed-in builder's name, from the display cookie; only used to show what is possible. */
+  /** The verified builder asking (index.ts api, reader.ts webViewer), or null when signed out. */
   viewer: string | null;
   now: number;
 }
@@ -951,13 +975,21 @@ export function codeView(db: Db, req: ApiRequest): unknown {
   }
 }
 
-export function renderApi(db: Db, req: ApiRequest): { status: number; headers: Record<string, string>; body: string } {
+export function renderApi(all: Db, req: ApiRequest): { status: number; headers: Record<string, string>; body: string } {
+  // Only what this viewer may read: a private project is a missing one.
+  const db = readerDb(all, req.viewer);
   const headers: Record<string, string> = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' };
   try {
     // A builder's second name answers as the builder.
     for (const key of ['space', 'avatar']) {
       const name = req.query.get(key);
       if (name) req = { ...req, query: new Map([...req.query, [key, spaceFor(db, name.toLowerCase())]]) };
+    }
+    // ?readable=<space>/<project>: whether the viewer may read it (the web service's one check, cli/src/modulepage.ts).
+    if (req.query.has('readable')) {
+      const [space = '', ...name] = (req.query.get('readable') ?? '').split('/');
+      const readable = !!space && !!db.project.fullName.find(`${spaceFor(db, space.toLowerCase())}/${name.join('/')}`);
+      return { status: 200, headers, body: JSON.stringify({ readable }) };
     }
     if (req.query.has('avatar')) return { status: 200, headers, body: JSON.stringify(avatarOf(db, (req.query.get('avatar') ?? '').toLowerCase())) };
     if (req.query.has('activity')) return { status: 200, headers, body: JSON.stringify(activityPage(db, req)) };

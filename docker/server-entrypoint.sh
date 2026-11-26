@@ -172,15 +172,49 @@ if [ -n "${SPACEHUB_XO_KEY:-}" ] && [ -z "$SPACEHUB_ADMIN_TOKEN" ]; then
   exit 1
 fi
 spacetime --root-dir "$ROOT" call --server "http://$INTERNAL" "$DB" set_accounts "\"$ACCOUNTS\"" >/dev/null
+# The hub's owner, from SPACEHUB_OWNER: a GitHub login. Applied on every start
+# (the same login again changes nothing); the first sign-in with GitHub as that
+# login records the account's id as the owner. Unset: no owner, as before.
+OWNER="${SPACEHUB_OWNER:-}"
+# Empty is fine (no owner). grep sees no line at all for an empty value, so
+# check with case instead.
+case "$OWNER" in
+  *[!A-Za-z0-9-]*)
+    echo "spacehub: SPACEHUB_OWNER must be a GitHub login" >&2
+    exit 1 ;;
+esac
+if [ "${#OWNER}" -gt 39 ]; then
+  echo "spacehub: SPACEHUB_OWNER must be a GitHub login" >&2
+  exit 1
+fi
+spacetime --root-dir "$ROOT" call --server "http://$INTERNAL" "$DB" set_owner_login "\"$OWNER\"" >/dev/null
+# Who may read which project (project_access) is derived from the other
+# tables. Rebuilding it fills it on a hub from before it (one row a project)
+# and changes nothing after; it writes only that table.
+spacetime --root-dir "$ROOT" call --server "http://$INTERNAL" "$DB" rebuild_access >/dev/null
+
+# The web service first: the proxy asks it about every request (members-only,
+# cli/src/frontdoor.ts), so it should be answering before the port is handed over.
+# A new secret every start, for the web service alone: it sets it in the
+# module as the admin (set_web_secret, a private hub_state row) and sends it
+# with each module page it asks for on a signed-in viewer's behalf, which is
+# how the module knows the viewer is real (cli/src/modulepage.ts). It is in no
+# other process's environment and never leaves the container; Caddy drops it
+# from client requests.
+SPACEHUB_WEB_SECRET="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))')"
+SPACEHUB_WEB_SECRET="$SPACEHUB_WEB_SECRET" SPACEHUB_SERVER="ws://$INTERNAL" SPACEHUB_INTERNAL_HTTP="http://$INTERNAL" SPACEHUB_DB="$DB" node /opt/spacehub/cli/dist/web.mjs &
+web=$!
+unset SPACEHUB_WEB_SECRET
+for _ in $(seq 1 50); do
+  curl -s -o /dev/null "http://127.0.0.1:${SPACEHUB_WEB_PORT:-3002}/-/auth/check" && break
+  sleep 0.2
+done
 
 # Ready: hand the public port to the allowlist proxy.
 kill -TERM "$proxy" 2>/dev/null || true
 wait "$proxy" 2>/dev/null || true
 caddy run --config /opt/spacehub/Caddyfile --adapter caddyfile &
 proxy=$!
-
-SPACEHUB_SERVER="ws://$INTERNAL" SPACEHUB_INTERNAL_HTTP="http://$INTERNAL" SPACEHUB_DB="$DB" node /opt/spacehub/cli/dist/web.mjs &
-web=$!
 echo "spacehub: serving database \"$DB\" on port $PORT"
 
 while kill -0 "$server" 2>/dev/null && kill -0 "$proxy" 2>/dev/null && kill -0 "$web" 2>/dev/null; do

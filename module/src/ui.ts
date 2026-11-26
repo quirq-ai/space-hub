@@ -24,8 +24,11 @@
 // Behind the server's proxy the original request URI arrives in an
 // X-Spacehub-Uri header and links are written as /<path>. Opened directly on
 // SpacetimeDB (/v1/database/<db>/route/ui?p=<path>) links stay as ?p=<path>.
-// Sign-in state comes from a display-only cookie; every write goes through
-// the web service (/-/...), which checks the real session.
+// Who is looking comes from the web service, which checks the session and
+// names the builder (reader.ts webViewer); every page shows only the projects
+// that builder may read (readerDb), and every write goes through the web
+// service (/-/...).
+import { readerDb } from './reader';
 import { PRESENCE_STALE_SECONDS, inSpace, objectSize, ownsSpace, readObject, readObjectRange, spaceFor, type Db } from './store';
 import { DELETE, INSERT, diffLines, toHunks } from './diff';
 import { renderMarkdown, type Resolve } from './markdown';
@@ -35,7 +38,8 @@ import { guideHome, guidePage } from './guide';
 export interface UiRequest {
   uri: string;
   forwardedUri: string | null;
-  cookie: string | null;
+  /** The verified builder looking (index.ts ui, reader.ts webViewer), or null when signed out. */
+  viewer: string | null;
   proto: string | null;
   /** The Range header, for raw files a video plays in pieces. */
   range?: string | null;
@@ -174,14 +178,6 @@ function parseRequest(req: UiRequest) {
   const segs = (query.get('p') ?? '').split('/').filter(Boolean);
   query.delete('p');
   return { segs, query };
-}
-
-function cookie(header: string | null, name: string): string | null {
-  for (const part of (header ?? '').split(';')) {
-    const eq = part.indexOf('=');
-    if (eq > 0 && part.slice(0, eq).trim() === name) return decodeParam(part.slice(eq + 1).trim());
-  }
-  return null;
 }
 
 function hostOf(uri: string) {
@@ -341,10 +337,9 @@ export class Renderer {
     this.base = proxied ? '/' : null;
     this.host = hostOf(req.uri);
     this.secure = req.proto === 'https' || !/^(localhost|127\.|\[::1\])/.test(this.host);
-    const who = proxied ? cookie(req.cookie, 'spacehub_user') : null;
-    // Display only (the web service checks the real session); still, never
-    // show a username this database does not know.
-    this.viewer = who && /^[a-z0-9-]{1,39}$/.test(who) && db.user.username.find(who) ? who : null;
+    const who = proxied ? req.viewer : null;
+    // Never a username this database does not know.
+    this.viewer = who && db.user.username.find(who) ? who : null;
     this.now = req.now;
     this.range = req.range ?? null;
   }
@@ -1476,7 +1471,8 @@ ${bodyText ? `<pre>${esc(bodyText)}</pre>` : ''}
 
 export function renderUi(db: Db, req: UiRequest): UiResponse {
   const { segs, query } = parseRequest(req);
-  const r = new Renderer(db, req, query);
+  // Only what this viewer may read: a private project is a missing one.
+  const r = new Renderer(readerDb(db, req.viewer), req, query);
   let res: UiResponse;
   try {
     res = r.route(segs);

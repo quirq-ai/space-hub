@@ -1,7 +1,7 @@
 // Which pages are live and what the live stream carries (npm test).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { LIVE_JS, liveTopic, pageParts } from '../src/livepage.ts';
+import { closeBuilder, LIVE_JS, liveTopic, pageParts, signedOutEvent } from '../src/livepage.ts';
 import { shell } from '../../module/src/style.ts';
 
 test('pages follow the hub, a space or a project', () => {
@@ -32,6 +32,25 @@ test('live.js is plain JavaScript', () => {
   assert.match(LIVE_JS, /new EventSource\('\/-\/live\?path='/);
 });
 
+test('live.js leaves for the sign-in page, with the reason, on a signed-out event', () => {
+  const listeners: Record<string, (e: { data: string }) => void> = {};
+  let closed = false;
+  let went = '';
+  class FakeSource {
+    onopen: unknown;
+    onerror: unknown;
+    addEventListener(type: string, fn: (e: { data: string }) => void) { listeners[type] = fn; }
+    close() { closed = true; }
+  }
+  const main = { innerHTML: '', textContent: '', querySelector: () => null };
+  const document = { querySelector: (s: string) => (s === 'main' ? main : null), createElement: () => ({}), addEventListener() {} };
+  const location = { pathname: '/ada', search: '?x=1', assign: (to: string) => { went = to; } };
+  new Function('window', 'document', 'EventSource', 'location', LIVE_JS)({ EventSource: FakeSource }, document, FakeSource, location);
+  listeners['signed-out']({ data: signedOutEvent('suspended').split('data: ')[1].trim() });
+  assert.equal(closed, true, 'stops: no retry into a refusal');
+  assert.equal(went, '/-/login?reason=suspended&next=%2Fada%3Fx%3D1');
+});
+
 test('server pages draw the app frame: the shared stylesheet, the sidebar and the inset header, no top bar', () => {
   const html = shell('Guide · spacehub', '<h1>Guide</h1>', '', { viewer: 'ada', current: 'guide' });
   assert.match(html, /<link rel="stylesheet" href="\/-\/app\/shell.css">/);
@@ -54,3 +73,20 @@ test('server pages draw the app frame: the shared stylesheet, the sidebar and th
   for (const page of ['Sign in', 'Guide', 'Settings', 'Builders']) assert.ok(guest.includes(`${page}</a>`), page);
 });
 
+test("a suspended builder's live pages are told why, then end at once; everyone else's stay open", () => {
+  const ended: string[] = [];
+  const sent: string[] = [];
+  const clients = new Set<{ builder: string | null; res: { write(chunk: string): unknown; end(): void } }>();
+  // Ending a page takes it out of the set, as live.ts does on 'close'.
+  for (const [id, builder] of [['carol-1', 'carol'], ['alice', 'alice'], ['carol-2', 'carol'], ['anon', null]] as const) {
+    const c = { builder, res: { write: (chunk: string) => sent.push(`${id} ${chunk}`), end: () => (ended.push(id), sent.push(`${id} end`), void clients.delete(c)) } };
+    clients.add(c);
+  }
+  assert.equal(closeBuilder(clients, 'carol'), 2);
+  assert.deepEqual(ended, ['carol-1', 'carol-2']);
+  const event = signedOutEvent('suspended');
+  assert.deepEqual(sent, [`carol-1 ${event}`, 'carol-1 end', `carol-2 ${event}`, 'carol-2 end'], 'the signed-out event goes before the close');
+  assert.equal(event, 'event: signed-out\ndata: {"type":"signed-out","reason":"suspended"}\n\n');
+  assert.deepEqual([...clients].map(c => c.builder), ['alice', null]);
+  assert.equal(closeBuilder(clients, 'nobody'), 0);
+});

@@ -398,6 +398,14 @@ public port (`$PORT`, default 3000) is a built-in Caddy allowlist. It serves:
 - `/-/*`: the web service (sign in, sign up, create and import projects, live pages);
 - everything else: the web UI (see below).
 
+The module's pages (the code views, the guide, builders) always go through the
+web service, which checks who is signed in and asks the module as that builder
+(`X-Spacehub-Viewer`), vouched for by a secret made fresh on every start
+(`X-Spacehub-Secret`, set in the module's private `hub_state`). The proxy drops
+both headers from clients, and without the secret the module answers as for
+someone signed out. So a private project shows only to those who may read it,
+everywhere, and to anyone else is exactly like one that does not exist.
+
 Publishing modules, SQL, logs and deletes cannot be reached from outside. On
 every start, the module is published or updated in place. A schema change
 that would delete data makes startup fail rather than wipe projects, with one
@@ -443,6 +451,8 @@ Once the new hub is in use, delete the old database with
 | `SPACEHUB_ACTIVITY_DIR` | `/data/activity` | Where the web service journals every activity row, append-only (see Activity; `off`: not at all). Only without `SPACEHUB_RECOVERY_DIR` or `_URL` |
 | `SPACEHUB_BACKUP_KEEP` | `3` | How many of its own backups the hub keeps |
 | `SPACEHUB_BACKUP_DIR` | `/data/.spacehub/backups` | Where the hub keeps them |
+| `SPACEHUB_OWNER` | unset | The GitHub login of the hub's owner, who manages it in Settings → Hub (join policy, invites, members-only, suspending builders, the default for new projects) and is always a recovery operator. The first GitHub sign-in by that account records its GitHub id, so renames can't move ownership. Applied on every start (a no-op once recorded); a value that isn't a GitHub login stops the start. Unset: no owner, as before |
+| `SPACEHUB_WEB_SECRET` | made at start | Internal: don't set it. The entrypoint makes a new one at every start and gives it only to the web service, which sends it with the signed-in viewer's name when it asks the module for a page; the module believes that name only with the secret, so nobody can read a private project by forging a name. A value you set is replaced |
 | `SPACEHUB_RECOVERY_OPERATORS` | unset | Builders (comma-separated) who see and use Sub-hubs and backups (Settings → Sub-hubs, `/subhub/<name>`); everyone else never sees them. When unset, only the database's owner identity can |
 | `SPACEHUB_VISITOR_HOME` | `quirq/quirq` | Where a visitor who is not signed in lands from the hub's address (`/`): a space or project, once it is on the hub (`off`: the home page for everyone). Signed in, `/` is the home page |
 | `SPACEHUB_SECRET_KEY` | unset | Turns on workers on your own runners (see below): base64 of at least 32 random bytes (`openssl rand -base64 32`). Runner tokens are sealed with it (AES-256-GCM) before they are stored. Keep it in the environment, not in `/data`; lose it and everyone connects their runners again. Needs `SPACEHUB_ADMIN_TOKEN` |
@@ -459,6 +469,33 @@ platform volumes usually mount root-owned. It then runs everything as uid
 
 Admin tasks run inside the container. For example, to follow the logs:
 `docker exec spacehub spacetime --root-dir /data logs --server http://127.0.0.1:3001 spacehub -f`.
+
+**Rehearse a deploy before it reaches a hub with real data.** Before
+deploying a new image to a hub people use, run it once on a copy of that
+hub's data. `scripts/rehearse.sh` (Linux or WSL, with Docker) copies a backup
+of the hub's `/data` (it never writes to the backup), opens the copy as it
+is and records every table's row count and a checksum of its rows, and, per
+project, its refs, git objects and chunks. It then starts the new image on
+the copy (its own start: publish, `claim_admin`, `set_accounts`, ...,
+`rebuild_access`), records
+again and compares. Tables the image adds are listed and allowed; anything
+else that changed is printed and the script exits 1 (2 if it could not run,
+or if the image would not start on the data).
+
+```sh
+scripts/rehearse.sh --backup <backup> --image <new image> -e SPACEHUB_ACCOUNTS=github
+```
+
+`<backup>` is one of the hub's backups (a vault's `snapshots/<id>`, from a
+Sub-hub or `SPACEHUB_BACKUP_DIR`), a folder `spacehub subhub restore` made, or
+a copy of `/data`. Give the hub's own settings with `-e`, at least
+`SPACEHUB_ACCOUNTS`, which every start sets: a different value shows up as a
+changed `hub_state` row. The test hub runs with no network, so the real
+hub's tokens in the copy reach nothing. Without Docker, `--module <module
+folder or bundle.js> --accounts <mode>` publishes a module with the local
+`spacetime` CLI instead (on port 3293, `--port` changes it). `--keep` keeps
+the copy and the two records (`before.txt`, `after.txt`). Only an identical
+result goes to the hub.
 
 **With HTTPS (compose).** `SPACEHUB_DOMAIN=hub.example.com docker compose up -d --build`
 adds a Caddy front that gets a certificate and forwards to the server. Add
@@ -688,7 +725,7 @@ Raw files are served as `text/plain`, an image or video type, or
 `application/octet-stream`, inside a sandbox, so a pushed HTML file can't
 run on the server's origin. On a bare `spacetime start` (no web service),
 browse at `http://127.0.0.1:3000/v1/database/spacehub/route/ui`, where links
-use `?p=<path>`.
+use `?p=<path>`; there every page is for someone signed out (public projects only).
 
 ## Install the client
 

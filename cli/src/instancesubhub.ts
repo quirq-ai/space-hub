@@ -106,6 +106,7 @@ async function serve(args: string[], sourceMode = false) {
       }
       if (req.method === 'GET' && url.pathname.startsWith('/-/app/') && await handleApp({ dir, internalHttp: '', db: '', sessionOf: async () => null,
         withConn: async () => { throw new Error('Recovery UI does not create database sessions'); },
+        module: { http: '', db: '', secret: null }, viewerName: async () => null,
       }, req, res, url)) return;
       res.writeHead(404); res.end('This service provides full-instance Sub-hubs only');
     })().catch(() => { if (!res.headersSent) { res.writeHead(500); res.end('Recovery service request failed'); } else res.destroy(); });

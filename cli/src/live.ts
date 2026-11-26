@@ -8,10 +8,14 @@
 // imports, builder credits). When rows behind a
 // page change, it renders that page again on the server, through the
 // module's own UI route, and streams the result; live.js swaps it in. The
-// browser only ever talks to this service, never to SpacetimeDB.
+// browser only ever talks to this service, never to SpacetimeDB. Each page is
+// rendered as the verified builder who opened it (modulepage.ts), so it only
+// ever shows that builder what it may read; viewers share a render only when
+// they are the same builder (or both signed out).
 import http from 'node:http';
 import { connectTo, errorMessage, tables, type Conn } from './conn';
-import { LIVE_JS, liveTopic, pageParts } from './livepage';
+import { closeBuilder, LIVE_JS, liveTopic, pageParts } from './livepage';
+import { asViewer, moduleUrl, type ModuleLink } from './modulepage';
 
 const MAX_CLIENTS = 500;
 const DEBOUNCE_MS = 250;
@@ -22,6 +26,8 @@ interface Client {
   res: http.ServerResponse;
   path: string;
   topic: string;
+  /** The verified builder who opened it (null: anonymous), to end its pages when it is suspended. */
+  builder: string | null;
   headers: Record<string, string>;
   timer: NodeJS.Timeout | null;
   busy: boolean;
@@ -34,6 +40,10 @@ export interface LiveConfig {
   server: string; // websocket address of SpacetimeDB
   db: string;
   http: string; // its HTTP address, where the module's UI route answers
+  /** The module, asked for pages as a viewer (modulepage.ts); without it every page is rendered signed out. */
+  module?: ModuleLink;
+  /** Who follows the tables: the hub admin's token (sees every project), or none (anonymous). */
+  token?: string;
 }
 
 export class LiveHub {
@@ -59,7 +69,7 @@ export class LiveHub {
   }
 
   private async connect() {
-    const { conn } = await connectTo(this.config.server, this.config.db, undefined, { reconnect: true });
+    const { conn } = await connectTo(this.config.server, this.config.db, this.config.token, { reconnect: true });
     this.conn = conn;
     const db = conn.db;
     const live = (ctx: { event: { tag: string } }) => ctx.event.tag !== 'SubscribeApplied' && ctx.event.tag !== 'UnsubscribeApplied';
@@ -70,36 +80,36 @@ export class LiveHub {
     };
     const remember = (r: { id: bigint; fullName: string; owner: string }) => this.projectsById.set(r.id, { fullName: r.fullName, owner: r.owner });
 
-    db.project.onInsert((ctx, r) => {
+    db.visibleProject.onInsert((ctx, r) => {
       remember(r);
       if (live(ctx)) forProject(r.id);
     });
     // A push's object uploads only move counters; wait for the ref.
-    db.project.onUpdate((_ctx, old, r) => {
+    db.visibleProject.onUpdate((_ctx, old, r) => {
       remember(r);
       if (old.description !== r.description || old.defaultBranch !== r.defaultBranch || old.pushedAt.microsSinceUnixEpoch !== r.pushedAt.microsSinceUnixEpoch) forProject(r.id);
     });
     // The name stays known for rows of the same project that go with it.
-    db.project.onDelete((ctx, r) => {
+    db.visibleProject.onDelete((ctx, r) => {
       if (live(ctx)) forProject(r.id);
     });
     const row = (ctx: { event: { tag: string } }, r: { projectId: bigint }) => {
       if (live(ctx)) forProject(r.projectId);
     };
-    db.gitRef.onInsert(row);
-    db.gitRef.onUpdate((ctx, _old, r) => row(ctx, r));
-    db.gitRef.onDelete(row);
-    db.projectImport.onInsert(row);
-    db.projectImport.onUpdate((ctx, _old, r) => row(ctx, r));
-    db.projectImport.onDelete(row);
-    db.projectBuilder.onInsert(row);
-    db.projectBuilder.onUpdate((ctx, _old, r) => row(ctx, r));
-    db.projectBuilder.onDelete(row);
+    db.visibleGitRef.onInsert(row);
+    db.visibleGitRef.onUpdate((ctx, _old, r) => row(ctx, r));
+    db.visibleGitRef.onDelete(row);
+    db.visibleProjectImport.onInsert(row);
+    db.visibleProjectImport.onUpdate((ctx, _old, r) => row(ctx, r));
+    db.visibleProjectImport.onDelete(row);
+    db.visibleProjectBuilder.onInsert(row);
+    db.visibleProjectBuilder.onUpdate((ctx, _old, r) => row(ctx, r));
+    db.visibleProjectBuilder.onDelete(row);
     const member = (ctx: { event: { tag: string } }, r: { projectId: bigint; agent: string }) => {
       if (live(ctx)) forProject(r.projectId, `space:${r.agent}`);
     };
-    db.projectMember.onInsert(member);
-    db.projectMember.onDelete(member);
+    db.visibleProjectMember.onInsert(member);
+    db.visibleProjectMember.onDelete(member);
     // Heartbeats only move seenAt; who is here changes on join, leave or
     // mode. Someone following a whole space shows on all of its projects.
     const here = (r: { projectId: bigint; space: string }) => {
@@ -107,9 +117,9 @@ export class LiveHub {
       const projects = [...this.projectsById.entries()].filter(([, p]) => p.owner === r.space).map(([, p]) => `project:${p.fullName}`);
       this.touch(['hub', `space:${r.space}`, ...projects]);
     };
-    db.presence.onInsert((ctx, r) => live(ctx) && here(r));
-    db.presence.onDelete((ctx, r) => live(ctx) && here(r));
-    db.presence.onUpdate((_ctx, old, r) => {
+    db.visiblePresence.onInsert((ctx, r) => live(ctx) && here(r));
+    db.visiblePresence.onDelete((ctx, r) => live(ctx) && here(r));
+    db.visiblePresence.onUpdate((_ctx, old, r) => {
       if (old.projectId !== r.projectId || old.space !== r.space || old.mode !== r.mode || old.branch !== r.branch) {
         here(old);
         here(r);
@@ -118,39 +128,39 @@ export class LiveHub {
     const builder = (ctx: { event: { tag: string } }, r: { username: string }) => {
       if (live(ctx)) this.touch(['hub', `space:${r.username}`]);
     };
-    db.user.onInsert(builder);
-    db.user.onDelete(builder);
+    db.visibleUser.onInsert(builder);
+    db.visibleUser.onDelete(builder);
     const space = (ctx: { event: { tag: string } }, r: { name: string; parent: string }) => {
       if (live(ctx)) this.touch(['hub', `space:${r.name}`, ...(r.parent ? [`space:${r.parent}`] : [])]);
     };
-    db.space.onInsert(space);
-    db.space.onUpdate((ctx, _old, r) => space(ctx, r));
-    db.space.onDelete(space);
+    db.visibleSpace.onInsert(space);
+    db.visibleSpace.onUpdate((ctx, _old, r) => space(ctx, r));
+    db.visibleSpace.onDelete(space);
     const role = (ctx: { event: { tag: string } }, r: { space: string; member: string }) => {
       if (live(ctx)) this.touch(['hub', `space:${r.space}`, `space:${r.member}`]);
     };
     const link = (ctx: { event: { tag: string } }, r: { space: string }) => {
       if (live(ctx)) this.touch(['hub', `space:${r.space}`]);
     };
-    db.spaceLink.onInsert(link);
-    db.spaceLink.onUpdate((ctx, _old, r) => link(ctx, r));
-    db.spaceLink.onDelete(link);
+    db.visibleSpaceLink.onInsert(link);
+    db.visibleSpaceLink.onUpdate((ctx, _old, r) => link(ctx, r));
+    db.visibleSpaceLink.onDelete(link);
     // A project measured for the first time (or gone). Sizes that grow with a
     // push show up with the push's own ref update.
     const measured = (ctx: { event: { tag: string } }, r: { projectId: bigint }) => {
       if (live(ctx)) forProject(r.projectId);
     };
-    db.projectSize.onInsert(measured);
-    db.projectSize.onDelete(measured);
+    db.visibleProjectSize.onInsert(measured);
+    db.visibleProjectSize.onDelete(measured);
     const synced = (ctx: { event: { tag: string } }, r: { projectId: bigint }) => {
       if (live(ctx)) forProject(r.projectId);
     };
-    db.refSync.onInsert(synced);
-    db.refSync.onUpdate((ctx, _old, r) => synced(ctx, r));
-    db.refSync.onDelete(synced);
-    db.spaceRole.onInsert(role);
-    db.spaceRole.onUpdate((ctx, _old, r) => role(ctx, r));
-    db.spaceRole.onDelete(role);
+    db.visibleRefSync.onInsert(synced);
+    db.visibleRefSync.onUpdate((ctx, _old, r) => synced(ctx, r));
+    db.visibleRefSync.onDelete(synced);
+    db.visibleSpaceRole.onInsert(role);
+    db.visibleSpaceRole.onUpdate((ctx, _old, r) => role(ctx, r));
+    db.visibleSpaceRole.onDelete(role);
 
     await new Promise<void>((resolve, reject) => {
       let first = true;
@@ -163,7 +173,7 @@ export class LiveHub {
           resolve();
         })
         .onError(ctx => reject(new Error(`subscription failed: ${(ctx as { event?: unknown }).event}`)))
-        .subscribe([tables.user, tables.space, tables.spaceRole, tables.spaceLink, tables.refSync, tables.projectSize, tables.project, tables.gitRef, tables.projectMember, tables.presence, tables.projectImport, tables.projectBuilder]);
+        .subscribe([tables.visibleUser, tables.visibleSpace, tables.visibleSpaceRole, tables.visibleSpaceLink, tables.visibleRefSync, tables.visibleProjectSize, tables.visibleProject, tables.visibleGitRef, tables.visibleProjectMember, tables.visiblePresence, tables.visibleProjectImport, tables.visibleProjectBuilder]);
     });
   }
 
@@ -223,7 +233,7 @@ export class LiveHub {
 
   // The page as the browser would get it through the server's proxy.
   private fetchPage(path: string, headers: Record<string, string>): Promise<string | null> {
-    const url = new URL(`${this.config.http}/v1/database/${encodeURIComponent(this.config.db)}/route/ui`);
+    const url = new URL(moduleUrl(this.config.module ?? { http: this.config.http, db: this.config.db, secret: null }, 'ui'));
     return new Promise((resolve, reject) => {
       const req = http.request(
         url,
@@ -241,8 +251,31 @@ export class LiveHub {
     });
   }
 
-  // Serves /-/live.js and /-/live; false for any other path.
-  handle(req: http.IncomingMessage, res: http.ServerResponse, url: URL): boolean {
+  /** How many live pages are open. */
+  get open(): number {
+    return this.clients.size;
+  }
+
+  /**
+   * End every live page (a hub that just became members-only, frontdoor.ts).
+   * Each browser reconnects in a few seconds, and only members get back in.
+   */
+  closeAll() {
+    for (const c of [...this.clients]) c.res.end();
+  }
+
+  /**
+   * End the live pages the builder `username` opened (the owner just
+   * suspended it, hubsettings.ts), each with a last "signed-out" event so
+   * the page goes to sign in and says why. The number ended.
+   */
+  closeFor(username: string): number {
+    return closeBuilder(this.clients, username);
+  }
+
+  // Serves /-/live.js and /-/live; false for any other path. `builder` is
+  // the verified builder asking (web.ts), remembered for closeFor.
+  handle(req: http.IncomingMessage, res: http.ServerResponse, url: URL, builder: string | null = null): boolean {
     if (url.pathname === '/-/live.js') {
       res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-cache', 'x-content-type-options': 'nosniff' });
       res.end(LIVE_JS);
@@ -268,12 +301,12 @@ export class LiveHub {
       res.end('too many live pages open\n');
       return true;
     }
-    // Pages depend only on the display name cookie, the host and the scheme.
-    const user = /(?:^|;\s*)spacehub_user=([^;]*)/.exec(req.headers.cookie ?? '')?.[1];
-    const headers: Record<string, string> = { host: req.headers.host ?? 'localhost' };
+    // Pages depend only on the verified builder, the host and the scheme.
+    const headers: Record<string, string> = { host: req.headers.host ?? 'localhost', ...(this.config.module ? asViewer(this.config.module, builder) : {}) };
     const proto = req.headers['x-forwarded-proto'];
     if (typeof proto === 'string') headers['x-forwarded-proto'] = proto;
-    if (user) headers.cookie = `spacehub_user=${user}`;
+    // Gone while its builder was looked up: its 'close' has already fired.
+    if (res.destroyed || req.socket?.destroyed) return true;
     res.writeHead(200, {
       'content-type': 'text/event-stream; charset=utf-8',
       'cache-control': 'no-store',
@@ -281,7 +314,7 @@ export class LiveHub {
       connection: 'keep-alive',
     });
     res.write('retry: 3000\n\n');
-    const c: Client = { res, path, topic, headers, timer: null, busy: false, again: false, closed: false, last: '' };
+    const c: Client = { res, path, topic, builder, headers, timer: null, busy: false, again: false, closed: false, last: '' };
     this.clients.add(c);
     const ping = setInterval(() => res.write(': ping\n\n'), PING_MS);
     res.on('close', () => {
